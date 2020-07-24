@@ -112,10 +112,7 @@ pub fn get_device_info(device_name: &str) -> Result<DeviceInfo> {
     let kvps = parse_key_value_pairs::<HashMap<String, String>>(&output_data)
         .context(format!("Failed to parse output of {}", PROCESS_NAME))?;
 
-    match kvps.get("SUBSYSTEM") {
-        Some(s) if s == "block" => (),
-        _ => return Err(anyhow!("Not a block device.")),
-    }
+    kvps.get("SUBSYSTEM").filter(|&s| s == "block").ok_or(anyhow!("Not a block device."))?;
 
     let mut device_info = envy::from_iter::<_, DeviceInfo>(kvps.clone()).context(format!(
         "Failed loading the device information from {} output.",

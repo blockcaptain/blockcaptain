@@ -1,0 +1,24 @@
+[package]
+name = "pnsystem"
+version = "0.1.0"
+authors = ["rebeagle"]
+edition = "2018"
+
+[dependencies]
+clap = "3.0.0-beta.1"
+duct = "0.13.4"
+serde = { version = "1.0.114", features = ["derive"] }
+envy = "0.4"
+anyhow = "1.0.31"
+thiserror = "1.0.20"
+mnt = "0.3.1"
+btrfsutil = "0.1.0"
+
+[dev-dependencies]
+mockall = "0.7"
+serial_test = "0.4"
+indoc = "0.3"
+
+[profile.release]
+opt-level = 1
+overflow-checks = true

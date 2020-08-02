@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use duct;
 use mnt;
-use mnt::MountEntry;
+use mnt::{MountEntry, MountIter};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -26,8 +26,12 @@ macro_rules! duct_cmd {
 use duct::cmd as duct_cmd;
 // }}}
 
-pub fn get_mountpoint(target: &Path) -> Result<Option<MountEntry>, mnt::ParseError> {
-    mnt::get_mount(target)
+pub fn lookup_mountentry(target: &Path) -> Result<Option<MountEntry>, mnt::ParseError> {
+    let iter = MountIter::new_from_proc()?;
+    match iter.filter(|m| m.as_ref().map_or(true, |mr|mr.file == target)).next() {
+        Some(v) => v.map(|x|Some(x)),
+        None => Ok(None)
+    }
 }
 
 #[derive(Debug)]
@@ -86,7 +90,7 @@ impl TryFrom<MountEntry> for BtrfsMountEntry {
 }
 
 #[derive(Deserialize, Debug, PartialEq)]
-pub struct DeviceInfo {
+pub struct BlockDeviceInfo {
     #[serde(rename = "devname")]
     pub name: String,
     pub devtype: String,
@@ -98,41 +102,45 @@ pub struct DeviceInfo {
     pub serial_short: Option<String>,
 }
 
-pub fn get_device_info(device_name: &str) -> Result<DeviceInfo> {
-    const PROCESS_NAME: &str = "udevadm";
-    let output_data = duct_cmd!(
-        PROCESS_NAME,
-        "info",
-        "--query=property",
-        format!("--name={}", device_name)
-    )
-    .read()
-    .context(format!("Failed to run {} to get device information.", PROCESS_NAME))?;
+impl BlockDeviceInfo {
+    pub fn lookup(device_name: &str) -> Result<Self> {
+        const PROCESS_NAME: &str = "udevadm";
+        let output_data = duct_cmd!(
+            PROCESS_NAME,
+            "info",
+            "--query=property",
+            format!("--name={}", device_name)
+        )
+        .read()
+        .context(format!("Failed to run {} to get device information.", PROCESS_NAME))?;
 
-    let kvps = parse_key_value_pairs::<HashMap<String, String>>(&output_data)
-        .context(format!("Failed to parse output of {}", PROCESS_NAME))?;
+        let kvps = parse_key_value_pairs::<HashMap<String, String>>(&output_data)
+            .context(format!("Failed to parse output of {}", PROCESS_NAME))?;
 
-    kvps.get("SUBSYSTEM").filter(|&s| s == "block").ok_or(anyhow!("Not a block device."))?;
+        kvps.get("SUBSYSTEM")
+            .filter(|&s| s == "block")
+            .ok_or(anyhow!("Not a block device."))?;
 
-    let mut device_info = envy::from_iter::<_, DeviceInfo>(kvps.clone()).context(format!(
-        "Failed loading the device information from {} output.",
-        PROCESS_NAME
-    ))?;
+        let mut device_info = envy::from_iter::<_, Self>(kvps.clone()).context(format!(
+            "Failed loading the device information from {} output.",
+            PROCESS_NAME
+        ))?;
 
-    if device_info.model.is_none() {
-        if kvps.get("DEVPATH").cloned().unwrap_or_default().contains("/virtio") {
-            device_info.model = Some("VirtIO".to_string());
-            if device_info.serial.is_none() && device_info.serial_short.is_none() {
-                device_info.serial = Some("None".to_string())
+        if device_info.model.is_none() {
+            if kvps.get("DEVPATH").cloned().unwrap_or_default().contains("/virtio") {
+                device_info.model = Some("VirtIO".to_string());
+                if device_info.serial.is_none() && device_info.serial_short.is_none() {
+                    device_info.serial = Some("None".to_string())
+                }
             }
         }
-    }
 
-    Ok(device_info)
+        Ok(device_info)
+    }
 }
 
 #[derive(Deserialize, Debug, PartialEq)]
-pub struct DeviceIds {
+pub struct BlockDeviceIds {
     #[serde(rename = "devname")]
     pub name: String,
     pub uuid: Option<String>,
@@ -140,22 +148,26 @@ pub struct DeviceIds {
     pub label: Option<String>,
 }
 
-pub fn get_device_ids(device_name: &str) -> Result<DeviceIds> {
-    const PROCESS_NAME: &str = "blkid";
-    let output_data = duct_cmd!(PROCESS_NAME, "-o", "export", device_name)
-        .read()
-        .context(format!("Failed to run {} to get device information.", PROCESS_NAME))?;
+impl BlockDeviceIds {
+    pub fn lookup(device_name: &str) -> Result<Self> {
+        const PROCESS_NAME: &str = "blkid";
+        let output_data = duct_cmd!(PROCESS_NAME, "-o", "export", device_name)
+            .read()
+            .context(format!("Failed to run {} to get device information.", PROCESS_NAME))?;
 
-    let kvps = parse_key_value_pairs::<Vec<(String, String)>>(&output_data)
-        .context(format!("Failed to parse output of {}", PROCESS_NAME))?;
+        let kvps = parse_key_value_pairs::<Vec<StringPair>>(&output_data)
+            .context(format!("Failed to parse output of {}", PROCESS_NAME))?;
 
-    envy::from_iter::<_, DeviceIds>(kvps).context(format!(
-        "Failed loading the device information from {} output.",
-        PROCESS_NAME
-    ))
+        envy::from_iter::<_, Self>(kvps).context(format!(
+            "Failed loading the device information from {} output.",
+            PROCESS_NAME
+        ))
+    }
 }
 
-fn parse_key_value_pairs<T: FromIterator<(String, String)>>(data: &str) -> Result<T> {
+type StringPair = (String, String);
+
+fn parse_key_value_pairs<T: FromIterator<StringPair>>(data: &str) -> Result<T> {
     data.lines()
         .map(|x| {
             let parts: Vec<&str> = x.splitn(2, "=").collect();
@@ -259,10 +271,7 @@ mod tests {
         let ctx = MockFakeCmd::data_context();
         ctx.expect().returning(|| UDEVADM_DATA.to_string());
 
-        assert!(get_device_info("/dev/nvme0")
-            .unwrap_err()
-            .to_string()
-            .contains("Not a block"))
+        assert!(BlockDeviceInfo::lookup("/dev/nvme0").unwrap_err().to_string().contains("Not a block"))
     }
 
     #[test]
@@ -291,19 +300,16 @@ mod tests {
         let ctx = MockFakeCmd::data_context();
         ctx.expect().returning(|| UDEVADM_DATA.to_string());
 
-        assert_eq!(get_device_info("/dev/nvme0").unwrap(), DeviceInfo {
-            name: String::from("/dev/nvme0n1"),
-            devtype: String::from("disk"),
-            model: Some(
-                String::from("Samsung SSD 970 EVO Plus 500GB"),
-            ),
-            serial: Some(
-                String::from("Samsung SSD 970 EVO Plus 500GB_S000000000N"),
-            ),
-            serial_short: Some(
-                String::from("S000000000N"),
-            ),
-        })
+        assert_eq!(
+            BlockDeviceInfo::lookup("/dev/nvme0").unwrap(),
+            BlockDeviceInfo {
+                name: String::from("/dev/nvme0n1"),
+                devtype: String::from("disk"),
+                model: Some(String::from("Samsung SSD 970 EVO Plus 500GB"),),
+                serial: Some(String::from("Samsung SSD 970 EVO Plus 500GB_S000000000N"),),
+                serial_short: Some(String::from("S000000000N"),),
+            }
+        )
     }
 
     #[test]
@@ -346,19 +352,16 @@ mod tests {
         let ctx = MockFakeCmd::data_context();
         ctx.expect().returning(|| UDEVADM_DATA.to_string());
 
-        assert_eq!(get_device_info("/dev/nvme0").unwrap(), DeviceInfo {
-            name: String::from("/dev/nvme0n1p1"),
-            devtype: String::from("partition"),
-            model: Some(
-                String::from("Samsung SSD 970 EVO Plus 500GB"),
-            ),
-            serial: Some(
-                String::from("Samsung SSD 970 EVO Plus 500GB_S000000000N"),
-            ),
-            serial_short: Some(
-                String::from("S000000000N"),
-            ),
-        })
+        assert_eq!(
+            BlockDeviceInfo::lookup("/dev/nvme0").unwrap(),
+            BlockDeviceInfo {
+                name: String::from("/dev/nvme0n1p1"),
+                devtype: String::from("partition"),
+                model: Some(String::from("Samsung SSD 970 EVO Plus 500GB"),),
+                serial: Some(String::from("Samsung SSD 970 EVO Plus 500GB_S000000000N"),),
+                serial_short: Some(String::from("S000000000N"),),
+            }
+        )
     }
 
     #[test]
@@ -375,17 +378,14 @@ mod tests {
         );
         let ctx = MockFakeCmd::data_context();
         ctx.expect().returning(|| BLKID_DATA.to_string());
-        assert_eq!(get_device_ids("/dev/nvme0n1p2").unwrap(), DeviceIds {
-            name: String::from("/dev/nvme0n1p2"),
-            label: Some(
-                String::from("default"),
-            ),
-            uuid: Some(
-                String::from("da43bcae-1497-45e7-b17c-512979097fcc"),
-            ),
-            uuid_sub: Some(
-                String::from("000247c0-4d96-4e55-8955-05eea1d8d121"),
-            ),
-        })
+        assert_eq!(
+            BlockDeviceIds::lookup("/dev/nvme0n1p2").unwrap(),
+            BlockDeviceIds {
+                name: String::from("/dev/nvme0n1p2"),
+                label: Some(String::from("default"),),
+                uuid: Some(String::from("da43bcae-1497-45e7-b17c-512979097fcc"),),
+                uuid_sub: Some(String::from("000247c0-4d96-4e55-8955-05eea1d8d121"),),
+            }
+        )
     }
 }

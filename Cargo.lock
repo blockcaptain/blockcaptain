@@ -506,6 +506,7 @@ dependencies = [
  "duct",
  "envy",
  "indoc",
+ "lazy_static",
  "log",
  "mnt",
  "mockall",

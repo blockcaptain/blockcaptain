@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use duct;
 use mnt;
 use mnt::{MountEntry, MountIter};
 use serde::Deserialize;
@@ -8,23 +7,6 @@ use std::convert::TryFrom;
 use std::iter::FromIterator;
 use std::path::Path;
 use std::str::FromStr;
-
-// Test Macro Support {{{
-#[cfg(test)]
-#[macro_export]
-macro_rules! duct_cmd {
-    ( $program:expr $(, $arg:expr )* ) => {
-        {
-        use mocks::FakeCmd;
-        $( let _ = $arg; )*
-        duct::cmd!("echo", mocks::MockFakeCmd::data())
-        }
-    };
-}
-
-#[cfg(not(test))]
-use duct::cmd as duct_cmd;
-// }}}
 
 pub fn lookup_mountentry(target: &Path) -> Result<Option<MountEntry>, mnt::ParseError> {
     let iter = MountIter::new_from_proc()?;
@@ -180,17 +162,8 @@ fn parse_key_value_pairs<T: FromIterator<StringPair>>(data: &str) -> Result<T> {
 }
 
 #[cfg(test)]
-mod mocks {
-    use mockall::automock;
-    #[automock]
-    pub trait FakeCmd {
-        fn data() -> String;
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    use super::mocks::MockFakeCmd;
+    use crate::process::mocks::MockFakeCmd;
     use super::*;
     use indoc::indoc;
     use serial_test::serial;

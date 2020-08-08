@@ -21,7 +21,7 @@ impl Validation {
         if state {
             debug!("Requirement satisified: {}", name);
         } else {
-            error!("{}", name);
+            error!("{}", Self::capitolize(self.name.clone()));
         }
     }
 
@@ -30,11 +30,14 @@ impl Validation {
             debug!("Fully validated: {}", self.name);
             Ok(())
         } else {
-            let mut upper = self.name.to_string();
-            if let Some(c) = upper.get_mut(0..1) {
-                c.make_ascii_uppercase();
-            }
-            Err(anyhow!("{} failed validation.", upper))
+            Err(anyhow!("{} failed validation.", Self::capitolize(self.name.clone())))
         }
+    }
+
+    fn capitolize(mut string: String) -> String {
+        if let Some(c) = string.get_mut(0..1) {
+            c.make_ascii_uppercase();
+        }
+        string
     }
 }

@@ -2,19 +2,27 @@ use anyhow::{anyhow, Context, Result};
 use duct;
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::{ffi::OsStr, path::{Path, PathBuf}};
 use uuid::Uuid;
 
 #[derive(Debug, PartialEq)]
 pub struct Filesystem {
-    uuid: Uuid,
-    devices: Vec<PathBuf>,
+    pub uuid: Uuid,
+    pub devices: Vec<PathBuf>,
 }
 
 impl Filesystem {
-    pub fn query_device(device: &Path) -> Result<Self> {
+    pub fn query_device(device: &dyn AsRef<Path>) -> Result<Self> {
+        Self::query_raw(device.as_ref().as_os_str())
+    }
+
+    pub fn query_uuid(uuid: &Uuid) -> Result<Self> {
+        Self::query_raw(uuid.to_string().as_ref())
+    }
+
+    fn query_raw(identifier: &OsStr) -> Result<Self> {
         const PROCESS_NAME: &str = "btrfs";
-        let output_data = duct_cmd!(PROCESS_NAME, "filesystem", "show", "--raw", device.as_os_str())
+        let output_data = duct_cmd!(PROCESS_NAME, "filesystem", "show", "--raw", identifier)
             .read()
             .context(format!("Failed to run {} to get filesystem information.", PROCESS_NAME))?;
 
@@ -44,14 +52,6 @@ impl Filesystem {
                 .collect(),
         })
     }
-
-    // pub fn query_uuid(uuid: &Uuid) -> Self {
-
-    // }
-
-    // fn query_raw(identifier: &str) -> Self {
-
-    // }
 }
 
 #[cfg(test)]
@@ -75,7 +75,7 @@ mod tests {
         ctx.expect().returning(|| BTRFS_DATA.to_string());
 
         assert_eq!(
-            Filesystem::query_device(PathBuf::from("/dev/sdb").as_path()).unwrap(),
+            Filesystem::query_device(&PathBuf::from("/dev/sdb")).unwrap(),
             Filesystem {
                 uuid: Uuid::parse_str("338a0b41-e857-4e5b-6544-6fd617277722").unwrap(),
                 devices: vec![PathBuf::from("/dev/sdb"), PathBuf::from("/dev/sdd")]

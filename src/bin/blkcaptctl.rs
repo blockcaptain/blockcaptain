@@ -1,13 +1,16 @@
 use anyhow::{Context, Result};
 use clap::{crate_version, Clap};
 use log::*;
+use pnsystem::btrfs;
 use pnsystem::contextualize::Validation;
-use pnsystem::filesystem::{self, BtrfsMountEntry, BlockDeviceIds};
+use pnsystem::filesystem::{self, BlockDeviceIds, BtrfsMountEntry};
 use pnsystem::managed::BtrfsPool;
+use pnsystem::state;
 use pretty_env_logger;
 use regex::Regex;
 use std::path::PathBuf;
 use std::{convert::TryFrom, path::Path};
+use uuid::Uuid;
 
 fn main() {
     let options: CliOptions = CliOptions::parse();
@@ -32,9 +35,14 @@ fn main() {
 
 fn command_dispath(options: CliOptions) -> Result<()> {
     match options.subcmd {
-        TopCommands::Pool(initialize_options) => match initialize_options.subcmd {
+        TopCommands::Pool(top_options) => match top_options.subcmd {
             PoolSubCommands::Attach(options) => {
                 attach_pool(options)?;
+            }
+        },
+        TopCommands::Dataset(top_options) => match top_options.subcmd {
+            DatasetSubCommands::Attach(options) => {
+                attach_dataset(options)?;
             }
         },
     }
@@ -54,11 +62,12 @@ struct CliOptions {
 
 #[derive(Clap)]
 enum TopCommands {
-    Pool(PoolCommand),
+    Pool(PoolCommands),
+    Dataset(DatasetCommands),
 }
 
 #[derive(Clap)]
-struct PoolCommand {
+struct PoolCommands {
     #[clap(subcommand)]
     subcmd: PoolSubCommands,
 }
@@ -66,6 +75,17 @@ struct PoolCommand {
 #[derive(Clap)]
 enum PoolSubCommands {
     Attach(PoolAttachOptions),
+}
+
+#[derive(Clap)]
+struct DatasetCommands {
+    #[clap(subcommand)]
+    subcmd: DatasetSubCommands,
+}
+
+#[derive(Clap)]
+enum DatasetSubCommands {
+    Attach(DatasetAttachOptions),
 }
 
 // #[derive(Clap, Debug)]
@@ -120,6 +140,8 @@ struct PoolAttachOptions {
 fn attach_pool(options: PoolAttachOptions) -> Result<()> {
     debug!("Command 'attach_pool': {:?}", options);
 
+    let mut entities = state::load_entity_state();
+
     let mountentry = filesystem::lookup_mountentry(options.mountpoint.as_path())
         .expect("All mount points are parsable.")
         .context("Mountpoint does not exist.")?;
@@ -128,19 +150,75 @@ fn attach_pool(options: PoolAttachOptions) -> Result<()> {
     let mut validation = Validation::new("existing mountpoint");
     validation.require("mountpoint must be a btrfs subvolume", mountentry.is_ok());
     validation.require(
-        "mountpoint must not be the fstree subvolume",
-        mountentry.map_or(true, |m| !m.is_toplevel_subvolume()),
+        "mountpoint must be the fstree subvolume",
+        mountentry.map_or(false, |m| m.is_toplevel_subvolume()),
     );
     validation.validate()?;
 
-    // pull info about the filesystem devices and get their IDs.
-    // let ids = 
+    let btrfs_info =
+        btrfs::Filesystem::query_device(&options.mountpoint).expect("Valid btrfs mount should have filesystem info.");
 
-    // let foo = BtrfsPool {
-    //     name: options.name,
-    //     mountpoint_path: options.mountpoint,
-    // };
+    let mut validation = Validation::new("existing pool");
+    validation.require(
+        "filesystem must not back a pool already.",
+        entities.pool_by_uuid(&btrfs_info.uuid).is_none(),
+    );
+    validation.require(
+        "mountpoint must not be used by a pool already.",
+        entities.pool_by_mountpoint(options.mountpoint.as_path()).is_none(),
+    );
+    validation.validate()?;
+
+    let device_infos = btrfs_info
+        .devices
+        .iter()
+        .map(|d| filesystem::BlockDeviceIds::lookup(d.to_str().expect("Device path should convert to string.")))
+        .collect::<Result<Vec<BlockDeviceIds>>>()
+        .context("All devices for a btrfs filesystem should resolve with blkid.")?;
+
+    let device_uuid_subs = device_infos
+        .iter()
+        .map(|d| {
+            d.uuid_sub
+                .context("All devices for a btrfs filesystem should have a uuid_subs.")
+        })
+        .collect::<Result<Vec<Uuid>>>()?;
+
+    let new_pool = BtrfsPool {
+        name: options.name,
+        mountpoint_path: options.mountpoint,
+        uuid: btrfs_info.uuid,
+        uuid_subs: device_uuid_subs,
+    };
+
+    entities.btrfs_pools.push(new_pool);
+    state::store_entity_state(entities);
+
+    Ok(())
+}
+
+#[derive(Clap, Debug)]
+struct DatasetAttachOptions {
+    /// Existing path to subvolume to attach to.
+    path: PathBuf,
+
+    /// Name of the dataset. [default: path basename]
+    name: Option<String>,
+}
+
+fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
+    debug!("Command 'attach_dataset': {:?}", options);
+
+    let mut entities = state::load_entity_state();
+
+    let mountentry = filesystem::find_mountentry(options.path.as_path())
+        .expect("All mount points are parsable.")
+        .context(format!("Failed to detect mountpoint for {:?}.", options.path))?;
+    
+    let pool = entities.pool_by_mountpoint(mountentry.file.as_path())
+        .context(format!("No pool found for mountpoint {:?}.", mountentry.file))?;
     
     
+
     Ok(())
 }

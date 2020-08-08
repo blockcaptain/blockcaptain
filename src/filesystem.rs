@@ -7,13 +7,20 @@ use std::convert::TryFrom;
 use std::iter::FromIterator;
 use std::path::Path;
 use std::str::FromStr;
+use uuid::Uuid;
 
+/// Lookup an exact mount entry at target.
 pub fn lookup_mountentry(target: &Path) -> Result<Option<MountEntry>, mnt::ParseError> {
     let iter = MountIter::new_from_proc()?;
     match iter.filter(|m| m.as_ref().map_or(true, |mr|mr.file == target)).next() {
         Some(v) => v.map(|x|Some(x)),
         None => Ok(None)
     }
+}
+
+/// Find the mount entry at target or the mount that contains target.
+pub fn find_mountentry(target: &Path) -> Result<Option<MountEntry>, mnt::ParseError> {
+    mnt::get_mount(target)
 }
 
 #[derive(Debug)]
@@ -125,8 +132,8 @@ impl BlockDeviceInfo {
 pub struct BlockDeviceIds {
     #[serde(rename = "devname")]
     pub name: String,
-    pub uuid: Option<String>,
-    pub uuid_sub: Option<String>,
+    pub uuid: Option<Uuid>,
+    pub uuid_sub: Option<Uuid>,
     pub label: Option<String>,
 }
 
@@ -356,8 +363,8 @@ mod tests {
             BlockDeviceIds {
                 name: String::from("/dev/nvme0n1p2"),
                 label: Some(String::from("default"),),
-                uuid: Some(String::from("da43bcae-1497-45e7-b17c-512979097fcc"),),
-                uuid_sub: Some(String::from("000247c0-4d96-4e55-8955-05eea1d8d121"),),
+                uuid: Some(Uuid::parse_str("da43bcae-1497-45e7-b17c-512979097fcc").unwrap()),
+                uuid_sub: Some(Uuid::parse_str("000247c0-4d96-4e55-8955-05eea1d8d121").unwrap()),
             }
         )
     }

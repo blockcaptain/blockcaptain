@@ -1,5 +1,6 @@
 #[macro_use]
-pub mod process;
+mod process;
+mod parsing;
 
 pub mod filesystem;
 pub mod contextualize;

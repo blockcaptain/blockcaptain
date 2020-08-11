@@ -4,13 +4,14 @@ use log::*;
 use pnsystem::btrfs;
 use pnsystem::contextualize::Validation;
 use pnsystem::filesystem::{self, BlockDeviceIds, BtrfsMountEntry};
-use pnsystem::managed::BtrfsPool;
+use pnsystem::managed::{BtrfsPool, BtrfsDataset};
 use pnsystem::state;
 use pretty_env_logger;
 use regex::Regex;
 use std::path::PathBuf;
 use std::{convert::TryFrom, path::Path};
 use uuid::Uuid;
+
 
 fn main() {
     let options: CliOptions = CliOptions::parse();
@@ -189,6 +190,7 @@ fn attach_pool(options: PoolAttachOptions) -> Result<()> {
         mountpoint_path: options.mountpoint,
         uuid: btrfs_info.uuid,
         uuid_subs: device_uuid_subs,
+        datasets: Vec::<BtrfsDataset>::default()
     };
 
     entities.btrfs_pools.push(new_pool);
@@ -215,9 +217,17 @@ fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
         .expect("All mount points are parsable.")
         .context(format!("Failed to detect mountpoint for {:?}.", options.path))?;
     
-    let pool = entities.pool_by_mountpoint(mountentry.file.as_path())
+    let subvol = btrfs::Subvolume::from_path(options.path).context("Path does not resolve to a subvolume.")?;
+    let dataset = BtrfsDataset {
+        name: subvol.name,
+        uuid: subvol.uuid,
+    };
+    
+    let pool = entities.pool_by_mountpoint_mut(mountentry.file.as_path())
         .context(format!("No pool found for mountpoint {:?}.", mountentry.file))?;
     
+    pool.datasets.push(dataset);
+    state::store_entity_state(entities);
     
 
     Ok(())

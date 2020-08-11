@@ -1,9 +1,23 @@
+use crate::parsing::{parse_key_value_pair_lines, StringPair};
 use anyhow::{anyhow, Context, Result};
 use duct;
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::{ffi::OsStr, path::{Path, PathBuf}};
+use serde::{de, Deserialize, Deserializer};
+use std::{
+    ffi::OsStr,
+    fmt,
+    path::{Path, PathBuf},
+};
 use uuid::Uuid;
+
+macro_rules! btrfs_cmd {
+    ( $( $arg:expr ),+ ) => {
+        duct_cmd!("btrfs", $($arg),+)
+            .read()
+            .context(format!("Failed to run btrfs command."))
+    };
+}
 
 #[derive(Debug, PartialEq)]
 pub struct Filesystem {
@@ -21,10 +35,7 @@ impl Filesystem {
     }
 
     fn query_raw(identifier: &OsStr) -> Result<Self> {
-        const PROCESS_NAME: &str = "btrfs";
-        let output_data = duct_cmd!(PROCESS_NAME, "filesystem", "show", "--raw", identifier)
-            .read()
-            .context(format!("Failed to run {} to get filesystem information.", PROCESS_NAME))?;
+        let output_data = btrfs_cmd!("filesystem", "show", "--raw", identifier)?;
 
         lazy_static! {
             static ref RE_UUID: Regex = Regex::new(r"(?m)\buuid:\s+(.*?)\s*$").unwrap();
@@ -54,6 +65,31 @@ impl Filesystem {
     }
 }
 
+#[derive(Deserialize, Debug, PartialEq)]
+pub struct Subvolume {
+    pub uuid: Uuid,
+    pub name: PathBuf,
+    #[serde(rename = "parent uuid")]
+    pub parent_uuid: Option<Uuid>,
+}
+
+impl Subvolume {
+    pub fn from_path<T: AsRef<Path>>(path: T) -> Result<Self> {
+        let output_data = btrfs_cmd!("subvolume", "show", "--raw", path.as_ref())?;
+        let kvps = parse_key_value_pair_lines::<_, Vec<StringPair>>(output_data.lines().skip(1).take(5), ":")
+            .context("Failed to parse output of btrfs subvolume.")?;
+
+        envy::from_iter::<_, Self>(kvps.into_iter().filter_map(|x| {
+            if x.1 != "-" {
+                Some((x.0.to_uppercase(), x.1))
+            } else {
+                None
+            }
+        }))
+        .context("Failed loading information from btrfs subvolume output.")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,6 +115,38 @@ mod tests {
             Filesystem {
                 uuid: Uuid::parse_str("338a0b41-e857-4e5b-6544-6fd617277722").unwrap(),
                 devices: vec![PathBuf::from("/dev/sdb"), PathBuf::from("/dev/sdd")]
+            }
+        );
+    }
+
+    #[test]
+    #[serial(fakecmd)]
+    fn btrfs_subvolume_show_parses() {
+        const BTRFS_DATA: &str = indoc!(
+            r#"
+            @
+                Name: 			@
+                UUID: 			0c61d287-c754-2944-a71e-ee6f0cbfb40e
+                Parent UUID: 		-
+                Received UUID: 		-
+                Creation time: 		2020-08-06 04:14:17 +0000
+                Subvolume ID: 		256
+                Generation: 		587
+                Gen at creation: 	6
+                Parent ID: 		5
+                Top level ID: 		5
+                Flags: 			-
+                Snapshot(s): "#
+        );
+        let ctx = MockFakeCmd::data_context();
+        ctx.expect().returning(|| BTRFS_DATA.to_string());
+
+        assert_eq!(
+            Subvolume::from_path(PathBuf::from("/mnt/os_pool")).unwrap(),
+            Subvolume {
+                name: PathBuf::from("@"),
+                uuid: Uuid::parse_str("0c61d287-c754-2944-a71e-ee6f0cbfb40e").unwrap(),
+                parent_uuid: None
             }
         );
     }

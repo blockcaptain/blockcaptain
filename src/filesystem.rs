@@ -4,10 +4,10 @@ use mnt::{MountEntry, MountIter};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::iter::FromIterator;
 use std::path::Path;
 use std::str::FromStr;
 use uuid::Uuid;
+use crate::parsing::{StringPair, parse_key_value_data};
 
 /// Lookup an exact mount entry at target.
 pub fn lookup_mountentry(target: &Path) -> Result<Option<MountEntry>, mnt::ParseError> {
@@ -103,7 +103,7 @@ impl BlockDeviceInfo {
         .read()
         .context(format!("Failed to run {} to get device information.", PROCESS_NAME))?;
 
-        let kvps = parse_key_value_pairs::<HashMap<String, String>>(&output_data)
+        let kvps = parse_key_value_data::<HashMap<String, String>>(&output_data)
             .context(format!("Failed to parse output of {}", PROCESS_NAME))?;
 
         kvps.get("SUBSYSTEM")
@@ -144,7 +144,7 @@ impl BlockDeviceIds {
             .read()
             .context(format!("Failed to run {} to get device information.", PROCESS_NAME))?;
 
-        let kvps = parse_key_value_pairs::<Vec<StringPair>>(&output_data)
+        let kvps = parse_key_value_data::<Vec<StringPair>>(&output_data)
             .context(format!("Failed to parse output of {}", PROCESS_NAME))?;
 
         envy::from_iter::<_, Self>(kvps).context(format!(
@@ -152,20 +152,6 @@ impl BlockDeviceIds {
             PROCESS_NAME
         ))
     }
-}
-
-type StringPair = (String, String);
-
-fn parse_key_value_pairs<T: FromIterator<StringPair>>(data: &str) -> Result<T> {
-    data.lines()
-        .map(|x| {
-            let parts: Vec<&str> = x.splitn(2, "=").collect();
-            match parts.len() {
-                2 => Ok((parts[0].to_string(), parts[1].to_string())),
-                _ => Err(anyhow!("Invalid line in key value pair data.")),
-            }
-        })
-        .collect::<Result<T>>()
 }
 
 #[cfg(test)]

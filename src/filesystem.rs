@@ -1,3 +1,4 @@
+use crate::parsing::{parse_key_value_data, StringPair};
 use anyhow::{anyhow, Context, Result};
 use mnt;
 use mnt::{MountEntry, MountIter};
@@ -7,14 +8,13 @@ use std::convert::TryFrom;
 use std::path::Path;
 use std::str::FromStr;
 use uuid::Uuid;
-use crate::parsing::{StringPair, parse_key_value_data};
 
 /// Lookup an exact mount entry at target.
 pub fn lookup_mountentry(target: &Path) -> Result<Option<MountEntry>, mnt::ParseError> {
     let iter = MountIter::new_from_proc()?;
-    match iter.filter(|m| m.as_ref().map_or(true, |mr|mr.file == target)).next() {
-        Some(v) => v.map(|x|Some(x)),
-        None => Ok(None)
+    match iter.filter(|m| m.as_ref().map_or(true, |mr| mr.file == target)).next() {
+        Some(v) => v.map(|x| Some(x)),
+        None => Ok(None),
     }
 }
 
@@ -73,7 +73,11 @@ impl TryFrom<MountEntry> for BtrfsMountEntry {
     fn try_from(other: MountEntry) -> Result<Self, Self::Error> {
         match other.vfstype.as_str() {
             "btrfs" => Ok(BtrfsMountEntry { 0: other }),
-            x => Err(anyhow!("{} is not a btrfs mount (it's {}).", other.file.to_string_lossy(), x)),
+            x => Err(anyhow!(
+                "{} is not a btrfs mount (it's {}).",
+                other.file.to_string_lossy(),
+                x
+            )),
         }
     }
 }
@@ -156,8 +160,8 @@ impl BlockDeviceIds {
 
 #[cfg(test)]
 mod tests {
-    use crate::process::mocks::MockFakeCmd;
     use super::*;
+    use crate::process::mocks::MockFakeCmd;
     use indoc::indoc;
     use serial_test::serial;
 
@@ -237,7 +241,10 @@ mod tests {
         let ctx = MockFakeCmd::data_context();
         ctx.expect().returning(|| UDEVADM_DATA.to_string());
 
-        assert!(BlockDeviceInfo::lookup("/dev/nvme0").unwrap_err().to_string().contains("Not a block"))
+        assert!(BlockDeviceInfo::lookup("/dev/nvme0")
+            .unwrap_err()
+            .to_string()
+            .contains("Not a block"))
     }
 
     #[test]

@@ -1,10 +1,10 @@
-use serde::{Deserialize, Serialize};
-use std::path::{PathBuf};
-use uuid::Uuid;
-use anyhow::{anyhow, Context, Result};
-use crate::btrfs::{Filesystem};
+use crate::btrfs::Filesystem;
 use crate::filesystem::{self, BlockDeviceIds, BtrfsMountEntry};
+use anyhow::{anyhow, Context, Result};
+use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
+use std::path::PathBuf;
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BtrfsPool {
@@ -25,9 +25,8 @@ impl BtrfsPool {
         if BtrfsMountEntry::try_from(mountentry)?.is_toplevel_subvolume() {
             return Err(anyhow!("Mountpoint must be the fstree (top-level) subvolume."));
         }
-       
-        let btrfs_info =
-            Filesystem::query_device(&mountpoint).expect("Valid btrfs mount should have filesystem info.");
+
+        let btrfs_info = Filesystem::query_device(&mountpoint).expect("Valid btrfs mount should have filesystem info.");
 
         let device_infos = btrfs_info
             .devices
@@ -49,7 +48,7 @@ impl BtrfsPool {
             mountpoint_path: mountpoint,
             uuid: btrfs_info.uuid,
             uuid_subs: device_uuid_subs,
-            datasets: Vec::<BtrfsDataset>::default()
+            datasets: Vec::<BtrfsDataset>::default(),
         })
     }
 }

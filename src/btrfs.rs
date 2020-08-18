@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use duct;
 use lazy_static::lazy_static;
 use regex::Regex;
-use serde::{Deserialize};
+use serde::Deserialize;
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},

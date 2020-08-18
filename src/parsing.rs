@@ -12,7 +12,9 @@ where
     T: Iterator<Item = &'a str>,
     U: FromIterator<StringPair>,
 {
-    lines.map(|s| parse_key_value_pair_line(s, seperator)).collect::<Result<U>>()
+    lines
+        .map(|s| parse_key_value_pair_line(s, seperator))
+        .collect::<Result<U>>()
 }
 
 fn parse_key_value_pair_line(line: &str, seperator: &str) -> Result<StringPair> {

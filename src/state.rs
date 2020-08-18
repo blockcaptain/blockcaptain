@@ -1,13 +1,13 @@
-use crate::managed;
+use crate::model;
 use serde_json;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
 
-pub fn load_entity_state() -> managed::Entities {
+pub fn load_entity_state() -> model::Entities {
     let path = Path::new("/etc/blkcapt/entities.json");
     if !path.exists() {
-        return managed::Entities::default();
+        return model::Entities::default();
     }
 
     let file = File::open(path).unwrap();
@@ -16,7 +16,7 @@ pub fn load_entity_state() -> managed::Entities {
     serde_json::from_reader(reader).unwrap()
 }
 
-pub fn store_entity_state(entities: managed::Entities) -> () {
+pub fn store_entity_state(entities: model::Entities) -> () {
     // need the libc renameat2 PR merged to make this safe.
 
     let path = Path::new("/etc/blkcapt");

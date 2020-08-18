@@ -73,7 +73,7 @@ impl TryFrom<MountEntry> for BtrfsMountEntry {
     fn try_from(other: MountEntry) -> Result<Self, Self::Error> {
         match other.vfstype.as_str() {
             "btrfs" => Ok(BtrfsMountEntry { 0: other }),
-            _ => Err(anyhow!("{} is not a btrfs mount.", other.file.to_string_lossy())),
+            x => Err(anyhow!("{} is not a btrfs mount (it's {}).", other.file.to_string_lossy(), x)),
         }
     }
 }

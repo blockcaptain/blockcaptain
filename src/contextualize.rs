@@ -1,5 +1,5 @@
 use log::*;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 
 pub struct Validation {
     name: String,

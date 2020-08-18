@@ -1,12 +1,11 @@
 use crate::parsing::{parse_key_value_pair_lines, StringPair};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use duct;
 use lazy_static::lazy_static;
 use regex::Regex;
-use serde::{de, Deserialize, Deserializer};
+use serde::{Deserialize};
 use std::{
     ffi::OsStr,
-    fmt,
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
@@ -14,6 +13,7 @@ use uuid::Uuid;
 macro_rules! btrfs_cmd {
     ( $( $arg:expr ),+ ) => {
         duct_cmd!("btrfs", $($arg),+)
+            .stderr_null()
             .read()
             .context(format!("Failed to run btrfs command."))
     };
@@ -26,8 +26,8 @@ pub struct Filesystem {
 }
 
 impl Filesystem {
-    pub fn query_device(device: &dyn AsRef<Path>) -> Result<Self> {
-        Self::query_raw(device.as_ref().as_os_str())
+    pub fn query_device(device: &Path) -> Result<Self> {
+        Self::query_raw(device.as_os_str())
     }
 
     pub fn query_uuid(uuid: &Uuid) -> Result<Self> {
@@ -74,8 +74,8 @@ pub struct Subvolume {
 }
 
 impl Subvolume {
-    pub fn from_path<T: AsRef<Path>>(path: T) -> Result<Self> {
-        let output_data = btrfs_cmd!("subvolume", "show", "--raw", path.as_ref())?;
+    pub fn from_path(path: &Path) -> Result<Self> {
+        let output_data = btrfs_cmd!("subvolume", "show", "--raw", path)?;
         let kvps = parse_key_value_pair_lines::<_, Vec<StringPair>>(output_data.lines().skip(1).take(5), ":")
             .context("Failed to parse output of btrfs subvolume.")?;
 
@@ -142,7 +142,7 @@ mod tests {
         ctx.expect().returning(|| BTRFS_DATA.to_string());
 
         assert_eq!(
-            Subvolume::from_path(PathBuf::from("/mnt/os_pool")).unwrap(),
+            Subvolume::from_path(&PathBuf::from("/mnt/os_pool")).unwrap(),
             Subvolume {
                 name: PathBuf::from("@"),
                 uuid: Uuid::parse_str("0c61d287-c754-2944-a71e-ee6f0cbfb40e").unwrap(),

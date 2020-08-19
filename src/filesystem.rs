@@ -9,18 +9,20 @@ use std::path::Path;
 use std::str::FromStr;
 use uuid::Uuid;
 
+const MOUNT_EXPECTATION: &str = "All entries in mount list must be parsable.";
+
 /// Lookup an exact mount entry at target.
-pub fn lookup_mountentry(target: &Path) -> Result<Option<MountEntry>, mnt::ParseError> {
-    let iter = MountIter::new_from_proc()?;
-    match iter.filter(|m| m.as_ref().map_or(true, |mr| mr.file == target)).next() {
-        Some(v) => v.map(|x| Some(x)),
-        None => Ok(None),
-    }
+pub fn lookup_mountentry(target: &Path) -> Option<MountEntry> {
+    let iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
+    iter.filter_map(|m| match m.expect(MOUNT_EXPECTATION) {
+        m if m.file == target => Some(m),
+        _ => None
+    }).next()
 }
 
 /// Find the mount entry at target or the mount that contains target.
-pub fn find_mountentry(target: &Path) -> Result<Option<MountEntry>, mnt::ParseError> {
-    mnt::get_mount(target)
+pub fn find_mountentry(target: &Path) -> Option<MountEntry> {
+    mnt::get_mount(target).expect(MOUNT_EXPECTATION)
 }
 
 #[derive(Debug)]

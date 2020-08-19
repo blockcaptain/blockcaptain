@@ -68,15 +68,16 @@ impl Filesystem {
 #[derive(Deserialize, Debug, PartialEq)]
 pub struct Subvolume {
     pub uuid: Uuid,
-    pub name: PathBuf,
+    pub name: String,
+    pub path: PathBuf,
     #[serde(rename = "parent uuid")]
     pub parent_uuid: Option<Uuid>,
 }
 
 impl Subvolume {
     pub fn from_path(path: &Path) -> Result<Self> {
-        let output_data = btrfs_cmd!("subvolume", "show", "--raw", path)?;
-        let kvps = parse_key_value_pair_lines::<_, Vec<StringPair>>(output_data.lines().skip(1).take(5), ":")
+        let output_data = String::from("path: ") + btrfs_cmd!("subvolume", "show", "--raw", path)?.as_ref();
+        let kvps = parse_key_value_pair_lines::<_, Vec<StringPair>>(output_data.lines().take(6), ":")
             .context("Failed to parse output of btrfs subvolume.")?;
 
         envy::from_iter::<_, Self>(kvps.into_iter().filter_map(|x| {
@@ -144,7 +145,8 @@ mod tests {
         assert_eq!(
             Subvolume::from_path(&PathBuf::from("/mnt/os_pool")).unwrap(),
             Subvolume {
-                name: PathBuf::from("@"),
+                name: String::from("@"),
+                path: PathBuf::from("@"),
                 uuid: Uuid::parse_str("0c61d287-c754-2944-a71e-ee6f0cbfb40e").unwrap(),
                 parent_uuid: None
             }

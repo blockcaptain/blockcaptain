@@ -16,6 +16,8 @@ impl Entities {
             .map_or(Ok(()), |p| Err(anyhow!("uuid already used by pool {}.", p.name)))?;
         self.pool_by_mountpoint(&pool.mountpoint_path)
             .map_or(Ok(()), |p| Err(anyhow!("mountpoint already used by pool {}.", p.name)))?;
+
+        self.btrfs_pools.push(pool);
         Ok(())
     }
 
@@ -27,7 +29,11 @@ impl Entities {
         self.btrfs_pools.iter().filter(|p| p.mountpoint_path == path).next()
     }
 
-    // fn pool_by_mountpoint_mut(&mut self, path: &Path) -> Option<&mut BtrfsPool> {
-    //     self.btrfs_pools.iter_mut().filter(|p| p.mountpoint_path == path).next()
-    // }
+    pub fn pool_by_mountpoint_mut(&mut self, path: &Path) -> Option<&mut BtrfsPool> {
+        self.btrfs_pools.iter_mut().filter(|p| p.mountpoint_path == path).next()
+    }
+}
+
+trait Entity {
+    fn name(&self) -> &str;
 }

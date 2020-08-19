@@ -166,20 +166,22 @@ fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
     let mut entities = state::load_entity_state();
 
     let mountentry = filesystem::find_mountentry(&options.path)
-        .expect("All mount points are parsable.")
         .context(format!("Failed to detect mountpoint for {:?}.", options.path))?;
 
-    let subvol = btrfs::Subvolume::from_path(&options.path).context("Path does not resolve to a subvolume.")?;
+    let path = &options.path;
+    let name = options.name.unwrap_or_else(|| {
+        path.file_name()
+            .expect("Path should end with a directory name.")
+            .to_string_lossy()
+            .to_string()
+    });
+    let dataset = BtrfsDataset::new(name, options.path)?;
 
-    let dataset = BtrfsDataset {
-        name: subvol.name,
-        uuid: subvol.uuid,
-    };
+    let pool = entities
+        .pool_by_mountpoint_mut(mountentry.file.as_path())
+        .context(format!("No pool found for mountpoint {:?}.", mountentry.file))?;
 
-    // let pool = entities.pool_by_mountpoint_mut(mountentry.file.as_path())
-    //     .context(format!("No pool found for mountpoint {:?}.", mountentry.file))?;
-
-    // pool.datasets.push(dataset);
+    pool.attach_dataset(dataset)?;
     state::store_entity_state(entities);
 
     Ok(())

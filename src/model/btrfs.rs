@@ -1,14 +1,15 @@
+use super::{Entity, EntityType};
 use crate::btrfs::{Filesystem, Subvolume};
 use crate::filesystem::{self, BlockDeviceIds, BtrfsMountEntry};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
-use std::path::{PathBuf, Path};
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
-use super::Entity;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BtrfsPool {
+    id: Uuid,
     pub name: String,
     pub mountpoint_path: PathBuf,
     pub uuid: Uuid,
@@ -20,8 +21,7 @@ pub struct BtrfsPool {
 
 impl BtrfsPool {
     pub fn new(name: String, mountpoint: PathBuf) -> Result<Self> {
-        let mountentry = filesystem::lookup_mountentry(&mountpoint)
-            .context("Mountpoint does not exist.")?;
+        let mountentry = filesystem::lookup_mountentry(&mountpoint).context("Mountpoint does not exist.")?;
 
         if !BtrfsMountEntry::try_from(mountentry)?.is_toplevel_subvolume() {
             return Err(anyhow!("Mountpoint must be the fstree (top-level) subvolume."));
@@ -45,6 +45,7 @@ impl BtrfsPool {
             .collect::<Result<Vec<Uuid>>>()?;
 
         Ok(BtrfsPool {
+            id: Uuid::new_v4(),
             name: name,
             mountpoint_path: mountpoint,
             uuid: btrfs_info.uuid,
@@ -55,21 +56,35 @@ impl BtrfsPool {
     }
 
     pub fn attach_dataset(&mut self, dataset: BtrfsDataset) -> Result<()> {
-        self.dataset_by_uuid(dataset.uuid())
-            .map_or(Ok(()), |d| Err(anyhow!("uuid already used by dataset {}.", d.name())))?;
-        self.dataset_by_path(dataset.path())
-            .map_or(Ok(()), |d| Err(anyhow!("path already used by dataset {}.", d.name())))?;
+        self.subvolume_by_uuid(dataset.uuid()).map_or(Ok(()), |d| {
+            Err(anyhow!("uuid already used by {} {}.", d.entity_type(), d.name()))
+        })?;
+        self.subvolume_by_path(dataset.path()).map_or(Ok(()), |d| {
+            Err(anyhow!("path already used by {} {}.", d.entity_type(), d.name()))
+        })?;
 
         self.datasets.push(dataset);
         Ok(())
     }
 
-    fn dataset_by_uuid(&self, uuid: &Uuid) -> Option<&BtrfsDataset> {
-        self.datasets.iter().filter(|d| d.uuid() == uuid).next()
+    pub fn attach_container(&mut self, container: BtrfsContainer) -> Result<()> {
+        self.subvolume_by_uuid(container.uuid()).map_or(Ok(()), |d| {
+            Err(anyhow!("uuid already used by {} {}.", d.entity_type(), d.name()))
+        })?;
+        self.subvolume_by_path(container.path()).map_or(Ok(()), |d| {
+            Err(anyhow!("path already used by {} {}.", d.entity_type(), d.name()))
+        })?;
+
+        self.containers.push(container);
+        Ok(())
     }
 
-    fn dataset_by_path(&self, path: &Path) -> Option<&BtrfsDataset> {
-        self.datasets.iter().filter(|d| d.path() == path).next()
+    fn subvolume_by_uuid(&self, uuid: &Uuid) -> Option<&dyn SubvolumeEntity> {
+        self.subvolumes().filter(|d| d.uuid() == uuid).next()
+    }
+
+    fn subvolume_by_path(&self, path: &Path) -> Option<&dyn SubvolumeEntity> {
+        self.subvolumes().filter(|d| d.path() == path).next()
     }
 
     fn subvolumes(&self) -> impl Iterator<Item = &dyn SubvolumeEntity> {
@@ -79,25 +94,50 @@ impl BtrfsPool {
     }
 }
 
-trait SubvolumeEntity: Entity {
+impl Entity for BtrfsPool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn id(&self) -> Uuid {
+        self.id
+    }
+    fn entity_type(&self) -> EntityType {
+        EntityType::Pool
+    }
+}
+
+pub trait SubvolumeEntity: Entity {
     fn path(&self) -> &Path;
     fn uuid(&self) -> &Uuid;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BtrfsDataset {
-    _name: String,
-    _path: PathBuf,
-    _uuid: Uuid,
+    id: Uuid,
+    name: String,
+    path: PathBuf,
+    uuid: Uuid,
 }
 
 impl SubvolumeEntity for BtrfsDataset {
-    fn path(&self) -> &Path { &self._path }
-    fn uuid(&self) -> &Uuid { &self._uuid }
+    fn path(&self) -> &Path {
+        &self.path
+    }
+    fn uuid(&self) -> &Uuid {
+        &self.uuid
+    }
 }
 
 impl Entity for BtrfsDataset {
-    fn name(&self) -> &str { &self._name }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn id(&self) -> Uuid {
+        self.id
+    }
+    fn entity_type(&self) -> EntityType {
+        EntityType::Dataset
+    }
 }
 
 impl BtrfsDataset {
@@ -105,18 +145,20 @@ impl BtrfsDataset {
         let subvol = Subvolume::from_path(&path).context("Path does not resolve to a subvolume.")?;
 
         Ok(Self {
-            _name: name,
-            _path: subvol.path,
-            _uuid: subvol.uuid,
+            id: Uuid::new_v4(),
+            name: name,
+            path: subvol.path,
+            uuid: subvol.uuid,
         })
     }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BtrfsContainer {
-    _name: String,
-    _path: PathBuf,
-    _uuid: Uuid,
+    id: Uuid,
+    name: String,
+    path: PathBuf,
+    uuid: Uuid,
 }
 
 impl BtrfsContainer {
@@ -124,18 +166,35 @@ impl BtrfsContainer {
         let subvol = Subvolume::from_path(&path).context("Path does not resolve to a subvolume.")?;
 
         Ok(Self {
-            _name: name,
-            _path: subvol.path,
-            _uuid: subvol.uuid,
+            id: Uuid::new_v4(),
+            name: name,
+            path: subvol.path,
+            uuid: subvol.uuid,
         })
     }
 }
 
 impl SubvolumeEntity for BtrfsContainer {
-    fn path(&self) -> &Path { &self._path }
-    fn uuid(&self) -> &Uuid { &self._uuid }
+    fn path(&self) -> &Path {
+        &self.path
+    }
+    fn uuid(&self) -> &Uuid {
+        &self.uuid
+    }
 }
 
 impl Entity for BtrfsContainer {
-    fn name(&self) -> &str { &self._name }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn id(&self) -> Uuid {
+        self.id
+    }
+    fn entity_type(&self) -> EntityType {
+        EntityType::Container
+    }
+}
+
+pub fn full_path(pool: &BtrfsPool, dataset: &impl SubvolumeEntity) -> PathBuf {
+    pool.mountpoint_path.join(dataset.path())
 }

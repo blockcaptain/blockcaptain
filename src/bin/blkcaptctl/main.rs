@@ -5,7 +5,7 @@ use log::*;
 use pnsystem::btrfs;
 use pnsystem::contextualize::Validation;
 use pnsystem::filesystem::{self, BlockDeviceIds, BtrfsMountEntry};
-use pnsystem::model::btrfs::{BtrfsDataset, BtrfsPool};
+use pnsystem::model::btrfs::{BtrfsDataset, BtrfsContainer, BtrfsPool};
 use pnsystem::state;
 use pretty_env_logger;
 use std::convert::TryFrom;
@@ -47,6 +47,11 @@ fn command_dispath(options: CliOptions) -> Result<()> {
                 attach_dataset(options)?;
             }
         },
+        TopCommands::Container(top_options) => match top_options.subcmd {
+            ContainerSubCommands::Attach(options) => {
+                attach_container(options)?;
+            }
+        },
     }
 
     Ok(())
@@ -66,6 +71,7 @@ struct CliOptions {
 enum TopCommands {
     Pool(PoolCommands),
     Dataset(DatasetCommands),
+    Container(ContainerCommands),
 }
 
 #[derive(Clap)]
@@ -88,6 +94,17 @@ struct DatasetCommands {
 #[derive(Clap)]
 enum DatasetSubCommands {
     Attach(DatasetAttachOptions),
+}
+
+#[derive(Clap)]
+struct ContainerCommands {
+    #[clap(subcommand)]
+    subcmd: ContainerSubCommands,
+}
+
+#[derive(Clap)]
+enum ContainerSubCommands {
+    Attach(ContainerAttachOptions),
 }
 
 // #[derive(Clap, Debug)]
@@ -182,6 +199,42 @@ fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
         .context(format!("No pool found for mountpoint {:?}.", mountentry.file))?;
 
     pool.attach_dataset(dataset)?;
+    state::store_entity_state(entities);
+
+    Ok(())
+}
+
+#[derive(Clap, Debug)]
+struct ContainerAttachOptions {
+    /// Existing path to subvolume to attach to.
+    path: PathBuf,
+
+    /// Name of the container. [default: path basename]
+    name: Option<String>,
+}
+
+fn attach_container(options: ContainerAttachOptions) -> Result<()> {
+    debug!("Command 'attach_container': {:?}", options);
+
+    let mut entities = state::load_entity_state();
+
+    let mountentry = filesystem::find_mountentry(&options.path)
+        .context(format!("Failed to detect mountpoint for {:?}.", options.path))?;
+
+    let path = &options.path;
+    let name = options.name.unwrap_or_else(|| {
+        path.file_name()
+            .expect("Path should end with a directory name.")
+            .to_string_lossy()
+            .to_string()
+    });
+    let dataset = BtrfsContainer::new(name, options.path)?;
+
+    let pool = entities
+        .pool_by_mountpoint_mut(mountentry.file.as_path())
+        .context(format!("No pool found for mountpoint {:?}.", mountentry.file))?;
+
+    pool.attach_container(dataset)?;
     state::store_entity_state(entities);
 
     Ok(())

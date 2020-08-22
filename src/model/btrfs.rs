@@ -80,11 +80,11 @@ impl BtrfsPool {
     }
 
     fn subvolume_by_uuid(&self, uuid: &Uuid) -> Option<&dyn SubvolumeEntity> {
-        self.subvolumes().filter(|d| d.uuid() == uuid).next()
+        self.subvolumes().find(|d| d.uuid() == uuid)
     }
 
     fn subvolume_by_path(&self, path: &Path) -> Option<&dyn SubvolumeEntity> {
-        self.subvolumes().filter(|d| d.path() == path).next()
+        self.subvolumes().find(|d| d.path() == path)
     }
 
     fn subvolumes(&self) -> impl Iterator<Item = &dyn SubvolumeEntity> {

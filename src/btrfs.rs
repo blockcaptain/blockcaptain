@@ -1,4 +1,5 @@
 use crate::parsing::{parse_key_value_pair_lines, StringPair};
+use crate::filesystem;
 use anyhow::{Context, Result};
 use duct;
 use lazy_static::lazy_static;
@@ -9,6 +10,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
+use filesystem::BtrfsMountEntry;
+use std::convert::TryFrom;
 
 macro_rules! btrfs_cmd {
     ( $( $arg:expr ),+ ) => {
@@ -23,15 +26,26 @@ macro_rules! btrfs_cmd {
 pub struct Filesystem {
     pub uuid: Uuid,
     pub devices: Vec<PathBuf>,
+    pub fstree_mountpoint: Option<PathBuf>,
 }
 
 impl Filesystem {
+    pub fn subvolume_by_uuid(&self, uuid: &Uuid) -> Result<Subvolume> {
+        let mountpoint = self.fstree_mountpoint.as_ref().context("Can't open subvolumes on an unmounted filesystem.")?;
+        let output_data = String::from("path: ") + btrfs_cmd!("subvolume", "show", "--raw", "-u", uuid.to_string(), mountpoint)?.as_ref();
+        Subvolume::_parse(output_data)
+    }
+
     pub fn query_device(device: &Path) -> Result<Self> {
         Self::query_raw(device.as_os_str())
     }
 
     pub fn query_uuid(uuid: &Uuid) -> Result<Self> {
         Self::query_raw(uuid.to_string().as_ref())
+    }
+
+    pub fn query_path(path: &Path) -> Result<Self> {
+        Self::query_raw(path.as_os_str())
     }
 
     fn query_raw(identifier: &OsStr) -> Result<Self> {
@@ -44,6 +58,21 @@ impl Filesystem {
         let uuid_match = RE_UUID.captures(&output_data);
         let device_matches = RE_DEVS.captures_iter(&output_data);
 
+        let devices = device_matches
+            .map(|m| {
+                m.get(1)
+                    .unwrap()
+                    .as_str()
+                    .parse()
+                    .expect("Device node path should parse.")
+            })
+            .collect::<Vec<_>>();
+
+        let mountpoint = filesystem::lookup_mountentries_by_devices(&devices).find_map(|m| match BtrfsMountEntry::try_from(m) {
+            Ok(bm) if bm.is_toplevel_subvolume() => Some(bm.mount_entry().file.to_owned()),
+            _ => None
+        });
+
         Ok(Filesystem {
             uuid: uuid_match
                 .expect("Successful btrfs fi show should have UUID output.")
@@ -52,15 +81,8 @@ impl Filesystem {
                 .as_str()
                 .parse()
                 .expect("UUID should parse."),
-            devices: device_matches
-                .map(|m| {
-                    m.get(1)
-                        .unwrap()
-                        .as_str()
-                        .parse()
-                        .expect("Device node path should parse.")
-                })
-                .collect(),
+            devices: devices,
+            fstree_mountpoint: mountpoint
         })
     }
 }
@@ -77,7 +99,11 @@ pub struct Subvolume {
 impl Subvolume {
     pub fn from_path(path: &Path) -> Result<Self> {
         let output_data = String::from("path: ") + btrfs_cmd!("subvolume", "show", "--raw", path)?.as_ref();
-        let kvps = parse_key_value_pair_lines::<_, Vec<StringPair>>(output_data.lines().take(6), ":")
+        Self::_parse(output_data)
+    }
+
+    fn _parse(data: String) -> Result<Self> {
+        let kvps = parse_key_value_pair_lines::<_, Vec<StringPair>>(data.lines().take(6), ":")
             .context("Failed to parse output of btrfs subvolume.")?;
 
         envy::from_iter::<_, Self>(kvps.into_iter().filter_map(|x| {
@@ -115,7 +141,8 @@ mod tests {
             Filesystem::query_device(&PathBuf::from("/dev/sdb")).unwrap(),
             Filesystem {
                 uuid: Uuid::parse_str("338a0b41-e857-4e5b-6544-6fd617277722").unwrap(),
-                devices: vec![PathBuf::from("/dev/sdb"), PathBuf::from("/dev/sdd")]
+                devices: vec![PathBuf::from("/dev/sdb"), PathBuf::from("/dev/sdd")],
+                fstree_mountpoint: None, // todo: make testable
             }
         );
     }

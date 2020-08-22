@@ -5,7 +5,7 @@ use mnt::{MountEntry, MountIter};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::path::Path;
+use std::path::{Path,PathBuf};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -13,11 +13,19 @@ const MOUNT_EXPECTATION: &str = "All entries in mount list must be parsable.";
 
 /// Lookup an exact mount entry at target.
 pub fn lookup_mountentry(target: &Path) -> Option<MountEntry> {
-    let iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
-    iter.filter_map(|m| match m.expect(MOUNT_EXPECTATION) {
+    let mut iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
+    iter.find_map(|m| match m.expect(MOUNT_EXPECTATION) {
         m if m.file == target => Some(m),
         _ => None
-    }).next()
+    })
+}
+
+pub fn lookup_mountentries_by_devices(devices: &Vec<PathBuf>) -> impl Iterator<Item = MountEntry> + '_ {
+    let iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
+    iter.filter_map(move |m| match m.expect(MOUNT_EXPECTATION) {
+        m if devices.contains(&PathBuf::from(&m.spec)) => Some(m),
+        _ => None
+    })
 }
 
 /// Find the mount entry at target or the mount that contains target.
@@ -59,13 +67,12 @@ impl BtrfsMountEntry {
         self.0
             .mntops
             .iter()
-            .filter_map(|x| match x {
+            .find_map(|x| match x {
                 mnt::MntOps::Extra(extra) if extra.starts_with(prefix.as_str()) => {
                     Some(extra.splitn(2, "=").nth(1).unwrap().parse::<T>().unwrap())
                 }
                 _ => None,
             })
-            .next()
     }
 }
 

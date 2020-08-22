@@ -29,35 +29,33 @@ impl Entities {
     }
 
     fn pool_by_uuid(&self, uuid: &Uuid) -> Option<&BtrfsPool> {
-        self.btrfs_pools.iter().filter(|p| p.uuid == *uuid).next()
+        self.btrfs_pools.iter().find(|p| p.uuid == *uuid)
     }
 
     fn pool_by_mountpoint(&self, path: &Path) -> Option<&BtrfsPool> {
-        self.btrfs_pools.iter().filter(|p| p.mountpoint_path == path).next()
+        self.btrfs_pools.iter().find(|p| p.mountpoint_path == path)
     }
 
     fn pool(&self, name: &str) -> Option<&BtrfsPool> {
-        self.btrfs_pools.iter().filter(|p| p.name == name).next()
+        self.btrfs_pools.iter().find(|p| p.name == name)
     }
 
     pub fn dataset_by_id(&self, id: &Uuid) -> Option<(&BtrfsDataset, &BtrfsPool)> {
         self.btrfs_pools
             .iter()
             .flat_map(|p| p.datasets.iter().zip(repeat(p)))
-            .filter(|p| p.0.id() == *id)
-            .next()
+            .find(|p| p.0.id() == *id)
     }
 
     pub fn container_by_id(&self, id: &Uuid) -> Option<(&BtrfsContainer, &BtrfsPool)> {
         self.btrfs_pools
             .iter()
             .flat_map(|p| p.containers.iter().zip(repeat(p)))
-            .filter(|p| p.0.id() == *id)
-            .next()
+            .find(|p| p.0.id() == *id)
     }
 
     pub fn pool_by_mountpoint_mut(&mut self, path: &Path) -> Option<&mut BtrfsPool> {
-        self.btrfs_pools.iter_mut().filter(|p| p.mountpoint_path == path).next()
+        self.btrfs_pools.iter_mut().find(|p| p.mountpoint_path == path)
     }
 
     pub fn snapshot_syncs(&self) -> impl Iterator<Item = &SnapshotSync> {

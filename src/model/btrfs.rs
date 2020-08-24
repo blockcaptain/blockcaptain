@@ -1,11 +1,16 @@
 use super::{Entity, EntityType};
-use crate::btrfs::{Filesystem, Subvolume};
+use crate::btrfs::{Filesystem, QueriedFilesystem, Subvolume};
 use crate::filesystem::{self, BlockDeviceIds, BtrfsMountEntry};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Error, Result};
+use chrono::{DateTime, FixedOffset, NaiveDateTime, Utc};
+use log::*;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
+use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+
+const BLKCAPT_FS_META_DIR: &str = ".blkcapt";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BtrfsPool {
@@ -24,12 +29,16 @@ impl BtrfsPool {
         let mountentry = filesystem::lookup_mountentry(&mountpoint).context("Mountpoint does not exist.")?;
 
         if !BtrfsMountEntry::try_from(mountentry)?.is_toplevel_subvolume() {
-            return Err(anyhow!("Mountpoint must be the fstree (top-level) subvolume."));
+            bail!("Mountpoint must be the fstree (top-level) subvolume.");
         }
 
-        let btrfs_info = Filesystem::query_device(&mountpoint).expect("Valid btrfs mount should have filesystem info.");
+        let btrfs_info = Filesystem::query_device(&mountpoint)
+            .expect("Valid btrfs mount should have filesystem info.")
+            .unwrap_mounted()
+            .context("Validated top-level mount point didn't yield a mounted filesystem.")?;
 
         let device_infos = btrfs_info
+            .filesystem
             .devices
             .iter()
             .map(|d| filesystem::BlockDeviceIds::lookup(d.to_str().expect("Device path should convert to string.")))
@@ -44,11 +53,18 @@ impl BtrfsPool {
             })
             .collect::<Result<Vec<Uuid>>>()?;
 
+        let meta_dir = mountpoint.join(BLKCAPT_FS_META_DIR);
+        if !meta_dir.exists() {
+            info!("Attached to new filesystem. Creating blkcapt dir.");
+            fs::create_dir(&meta_dir)?;
+            btrfs_info.create_subvolume(&meta_dir.join("snapshots"))?;
+        }
+
         Ok(BtrfsPool {
             id: Uuid::new_v4(),
             name: name,
             mountpoint_path: mountpoint,
-            uuid: btrfs_info.uuid,
+            uuid: btrfs_info.filesystem.uuid,
             uuid_subs: device_uuid_subs,
             datasets: Vec::<BtrfsDataset>::default(),
             containers: Vec::<BtrfsContainer>::default(),
@@ -141,15 +157,48 @@ impl Entity for BtrfsDataset {
 }
 
 impl BtrfsDataset {
-    pub fn new(name: String, path: PathBuf) -> Result<Self> {
-        let subvol = Subvolume::from_path(&path).context("Path does not resolve to a subvolume.")?;
+    pub fn new(name: String, path: PathBuf, mount_path: &PathBuf) -> Result<Self> {
+        let subvolume = Subvolume::from_path(&path).context("Path does not resolve to a subvolume.")?;
+        let filesystem = Filesystem::query_path(mount_path)?.unwrap_mounted()?;
 
-        Ok(Self {
+        let dataset = Self {
             id: Uuid::new_v4(),
             name: name,
-            path: subvol.path,
-            uuid: subvol.uuid,
-        })
+            path: subvolume.path,
+            uuid: subvolume.uuid,
+        };
+
+        let snapshot_path = dataset.snapshot_container_path();
+        if !filesystem.fstree_mountpoint.join(&snapshot_path).exists() {
+            info!("Attached to new dataset. Creating local snap container.");
+            filesystem.create_subvolume(&snapshot_path)?;
+        }
+
+        Ok(dataset)
+    }
+
+    pub fn latest_snapshot(&self, subvolume: &Subvolume) -> Result<Option<DateTime<Utc>>> {
+        let mut paths = subvolume.snapshot_paths.iter().collect::<Vec<_>>();
+        paths.sort();
+        match paths.last() {
+            Some(v) => match NaiveDateTime::parse_from_str(
+                &v.file_name()
+                    .expect("Snapshot path should never end in ..")
+                    .to_string_lossy(),
+                "%FT%H-%M-%SZ",
+            ) {
+                Ok(d) => Ok(Some(DateTime::<Utc>::from_utc(d, Utc))),
+                Err(e) => Err(Error::new(e)),
+            },
+            None => Ok(None),
+        }
+    }
+
+    pub fn snapshot_container_path(&self) -> PathBuf {
+        let mut builder = PathBuf::from(BLKCAPT_FS_META_DIR);
+        builder.push("snapshots");
+        builder.push(self.uuid().to_string());
+        builder
     }
 }
 

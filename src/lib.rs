@@ -7,3 +7,5 @@ pub mod contextualize;
 pub mod filesystem;
 pub mod model;
 pub mod state;
+pub mod snapshot;
+pub mod worker;

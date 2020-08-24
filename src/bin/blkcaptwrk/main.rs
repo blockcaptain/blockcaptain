@@ -3,8 +3,8 @@ use clap::{crate_version, Clap};
 use human_panic::setup_panic;
 use log::*;
 use pretty_env_logger;
-mod sync;
-use sync::sync;
+mod commands;
+use commands::service;
 
 fn main() {
     setup_panic!();
@@ -20,11 +20,11 @@ fn main() {
     debug!("Debug verbosity enabled.");
     trace!("Trace verbosity enabled.");
 
-    let result = sync();
+    let result = service();
     if let Err(e) = result {
         error!("{}", e);
         for cause in e.chain().skip(1) {
-            debug!("Caused by: {}", cause);
+            info!("Caused by: {}", cause);
         }
     }
 }

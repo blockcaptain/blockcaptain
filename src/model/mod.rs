@@ -40,6 +40,12 @@ impl Entities {
         self.btrfs_pools.iter().find(|p| p.name == name)
     }
 
+    pub fn datasets(&self) -> impl Iterator<Item = (&BtrfsDataset, &BtrfsPool)> {
+        self.btrfs_pools
+            .iter()
+            .flat_map(|p| p.datasets.iter().zip(repeat(p)))
+    }
+
     pub fn dataset_by_id(&self, id: &Uuid) -> Option<(&BtrfsDataset, &BtrfsPool)> {
         self.btrfs_pools
             .iter()

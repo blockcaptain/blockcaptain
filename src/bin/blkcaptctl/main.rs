@@ -192,7 +192,7 @@ fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
             .to_string_lossy()
             .to_string()
     });
-    let dataset = BtrfsDataset::new(name, options.path)?;
+    let dataset = BtrfsDataset::new(name, options.path, &mountentry.file)?;
 
     let pool = entities
         .pool_by_mountpoint_mut(mountentry.file.as_path())

@@ -1,10 +1,10 @@
-use crate::model::btrfs::{BtrfsDataset, BtrfsPool, full_path, SubvolumeEntity};
-use crate::btrfs::{self, QueriedFilesystem::*};
+use crate::model::entities::{BtrfsDatasetEntity, BtrfsPoolEntity, full_path, SubvolumeEntity};
+use crate::sys::btrfs::{self, QueriedFilesystem::*};
 use anyhow::Result;
 use std::path::{PathBuf, Path};
 use chrono::{DateTime, Utc};
 
-pub fn local_snapshot(pool: &BtrfsPool, dataset: &BtrfsDataset) -> Result<()> {
+pub fn local_snapshot(pool: &BtrfsPoolEntity, dataset: &BtrfsDatasetEntity) -> Result<()> {
 
     let fs = btrfs::Filesystem::query_uuid(&pool.uuid)?.unwrap_mounted()?;
     let subvol = fs.subvolume_by_uuid(dataset.uuid())?;

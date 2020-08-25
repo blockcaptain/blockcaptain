@@ -1,5 +1,5 @@
 [package]
-name = "pnsystem"
+name = "blkcapt"
 version = "0.1.0"
 authors = ["opensource@rebeagle.com"]
 edition = "2018"

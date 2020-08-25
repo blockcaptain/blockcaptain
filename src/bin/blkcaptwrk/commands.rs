@@ -1,15 +1,15 @@
-use pnsystem::model::btrfs::{BtrfsDataset, BtrfsContainer, BtrfsPool, full_path, SubvolumeEntity};
-use pnsystem::state;
-use pnsystem::btrfs::{self, QueriedFilesystem::*};
-use pnsystem::snapshot;
-use pnsystem::worker::{Job, LocalSnapshotJob};
+use blkcapt::model::entities::{BtrfsDatasetEntity, BtrfsContainerEntity, BtrfsPoolEntity, full_path, SubvolumeEntity};
+use blkcapt::model::storage;
+use blkcapt::sys::btrfs::{self, QueriedFilesystem::*};
+use blkcapt::snapshot;
+use blkcapt::worker::{Job, LocalSnapshotJob};
 use anyhow::Result;
 use std::path::{PathBuf, Path};
 use log::*;
 
 
 pub fn service() -> Result<()> {
-    let entities = state::load_entity_state();
+    let entities = storage::load_entity_state();
 
     let mut jobs = Vec::<Box<dyn Job>>::new();
     for (dataset, pool) in entities.datasets() {

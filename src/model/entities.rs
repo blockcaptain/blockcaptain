@@ -1,6 +1,6 @@
 use super::{Entity, EntityType};
-use crate::btrfs::{Filesystem, QueriedFilesystem, Subvolume};
-use crate::filesystem::{self, BlockDeviceIds, BtrfsMountEntry};
+use crate::sys::btrfs::{Filesystem, QueriedFilesystem, Subvolume};
+use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry};
 use anyhow::{anyhow, bail, Context, Error, Result};
 use chrono::{DateTime, FixedOffset, NaiveDateTime, Utc};
 use log::*;
@@ -13,20 +13,20 @@ use uuid::Uuid;
 const BLKCAPT_FS_META_DIR: &str = ".blkcapt";
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BtrfsPool {
+pub struct BtrfsPoolEntity {
     id: Uuid,
     pub name: String,
     pub mountpoint_path: PathBuf,
     pub uuid: Uuid,
     pub uuid_subs: Vec<Uuid>,
 
-    pub datasets: Vec<BtrfsDataset>,
-    pub containers: Vec<BtrfsContainer>,
+    pub datasets: Vec<BtrfsDatasetEntity>,
+    pub containers: Vec<BtrfsContainerEntity>,
 }
 
-impl BtrfsPool {
+impl BtrfsPoolEntity {
     pub fn new(name: String, mountpoint: PathBuf) -> Result<Self> {
-        let mountentry = filesystem::lookup_mountentry(&mountpoint).context("Mountpoint does not exist.")?;
+        let mountentry = lookup_mountentry(&mountpoint).context("Mountpoint does not exist.")?;
 
         if !BtrfsMountEntry::try_from(mountentry)?.is_toplevel_subvolume() {
             bail!("Mountpoint must be the fstree (top-level) subvolume.");
@@ -41,7 +41,7 @@ impl BtrfsPool {
             .filesystem
             .devices
             .iter()
-            .map(|d| filesystem::BlockDeviceIds::lookup(d.to_str().expect("Device path should convert to string.")))
+            .map(|d| BlockDeviceIds::lookup(d.to_str().expect("Device path should convert to string.")))
             .collect::<Result<Vec<BlockDeviceIds>>>()
             .context("All devices for a btrfs filesystem should resolve with blkid.")?;
 
@@ -60,18 +60,18 @@ impl BtrfsPool {
             btrfs_info.create_subvolume(&meta_dir.join("snapshots"))?;
         }
 
-        Ok(BtrfsPool {
+        Ok(BtrfsPoolEntity {
             id: Uuid::new_v4(),
             name: name,
             mountpoint_path: mountpoint,
             uuid: btrfs_info.filesystem.uuid,
             uuid_subs: device_uuid_subs,
-            datasets: Vec::<BtrfsDataset>::default(),
-            containers: Vec::<BtrfsContainer>::default(),
+            datasets: Vec::<BtrfsDatasetEntity>::default(),
+            containers: Vec::<BtrfsContainerEntity>::default(),
         })
     }
 
-    pub fn attach_dataset(&mut self, dataset: BtrfsDataset) -> Result<()> {
+    pub fn attach_dataset(&mut self, dataset: BtrfsDatasetEntity) -> Result<()> {
         self.subvolume_by_uuid(dataset.uuid()).map_or(Ok(()), |d| {
             Err(anyhow!("uuid already used by {} {}.", d.entity_type(), d.name()))
         })?;
@@ -83,7 +83,7 @@ impl BtrfsPool {
         Ok(())
     }
 
-    pub fn attach_container(&mut self, container: BtrfsContainer) -> Result<()> {
+    pub fn attach_container(&mut self, container: BtrfsContainerEntity) -> Result<()> {
         self.subvolume_by_uuid(container.uuid()).map_or(Ok(()), |d| {
             Err(anyhow!("uuid already used by {} {}.", d.entity_type(), d.name()))
         })?;
@@ -110,7 +110,7 @@ impl BtrfsPool {
     }
 }
 
-impl Entity for BtrfsPool {
+impl Entity for BtrfsPoolEntity {
     fn name(&self) -> &str {
         &self.name
     }
@@ -128,14 +128,14 @@ pub trait SubvolumeEntity: Entity {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BtrfsDataset {
+pub struct BtrfsDatasetEntity {
     id: Uuid,
     name: String,
     path: PathBuf,
     uuid: Uuid,
 }
 
-impl SubvolumeEntity for BtrfsDataset {
+impl SubvolumeEntity for BtrfsDatasetEntity {
     fn path(&self) -> &Path {
         &self.path
     }
@@ -144,7 +144,7 @@ impl SubvolumeEntity for BtrfsDataset {
     }
 }
 
-impl Entity for BtrfsDataset {
+impl Entity for BtrfsDatasetEntity {
     fn name(&self) -> &str {
         &self.name
     }
@@ -156,7 +156,7 @@ impl Entity for BtrfsDataset {
     }
 }
 
-impl BtrfsDataset {
+impl BtrfsDatasetEntity {
     pub fn new(name: String, path: PathBuf, mount_path: &PathBuf) -> Result<Self> {
         let subvolume = Subvolume::from_path(&path).context("Path does not resolve to a subvolume.")?;
         let filesystem = Filesystem::query_path(mount_path)?.unwrap_mounted()?;
@@ -203,14 +203,14 @@ impl BtrfsDataset {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BtrfsContainer {
+pub struct BtrfsContainerEntity {
     id: Uuid,
     name: String,
     path: PathBuf,
     uuid: Uuid,
 }
 
-impl BtrfsContainer {
+impl BtrfsContainerEntity {
     pub fn new(name: String, path: PathBuf) -> Result<Self> {
         let subvol = Subvolume::from_path(&path).context("Path does not resolve to a subvolume.")?;
 
@@ -223,7 +223,7 @@ impl BtrfsContainer {
     }
 }
 
-impl SubvolumeEntity for BtrfsContainer {
+impl SubvolumeEntity for BtrfsContainerEntity {
     fn path(&self) -> &Path {
         &self.path
     }
@@ -232,7 +232,7 @@ impl SubvolumeEntity for BtrfsContainer {
     }
 }
 
-impl Entity for BtrfsContainer {
+impl Entity for BtrfsContainerEntity {
     fn name(&self) -> &str {
         &self.name
     }
@@ -244,6 +244,35 @@ impl Entity for BtrfsContainer {
     }
 }
 
-pub fn full_path(pool: &BtrfsPool, dataset: &impl SubvolumeEntity) -> PathBuf {
+pub fn full_path(pool: &BtrfsPoolEntity, dataset: &impl SubvolumeEntity) -> PathBuf {
     pool.mountpoint_path.join(dataset.path())
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SnapshotSyncEntity {
+    id: Uuid,
+    name: String,
+    dataset: Uuid,
+    container: Uuid,
+}
+
+impl SnapshotSyncEntity {
+    pub fn dataset_id(&self) -> Uuid {
+        self.dataset
+    }
+    pub fn container_id(&self) -> Uuid {
+        self.container
+    }
+}
+
+impl Entity for SnapshotSyncEntity {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn id(&self) -> Uuid {
+        self.id
+    }
+    fn entity_type(&self) -> EntityType {
+        EntityType::SnapshotSync
+    }
 }

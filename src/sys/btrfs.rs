@@ -1,9 +1,8 @@
-use crate::filesystem;
+use super::fs::{self, BtrfsMountEntry};
 use crate::parsing::{parse_key_value_pair_lines, StringPair};
 use crate::process::read_with_stderr_context;
 use anyhow::{anyhow, bail, Context, Result};
 use duct;
-use filesystem::BtrfsMountEntry;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::Deserialize;
@@ -81,7 +80,7 @@ impl Filesystem {
             .collect::<Vec<_>>();
 
         let fstree_mountpoint =
-            filesystem::lookup_mountentries_by_devices(&devices).find_map(|m| match BtrfsMountEntry::try_from(m) {
+            fs::lookup_mountentries_by_devices(&devices).find_map(|m| match BtrfsMountEntry::try_from(m) {
                 Ok(bm) if bm.is_toplevel_subvolume() => Some(bm.mount_entry().file.to_owned()),
                 _ => None,
             });

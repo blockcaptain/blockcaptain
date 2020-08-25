@@ -1,7 +1,8 @@
-use crate::model::btrfs::{BtrfsDataset, BtrfsPool, SubvolumeEntity};
+use crate::model::entities::{BtrfsDatasetEntity, BtrfsPoolEntity, SubvolumeEntity};
 use anyhow::Result;
 use chrono::{DateTime, Utc, Duration};
-use crate::{btrfs, snapshot};
+use crate::snapshot;
+use crate::sys::btrfs;
 
 pub trait Job {
     fn run(&self) -> Result<()>;
@@ -9,12 +10,12 @@ pub trait Job {
 }
 
 pub struct LocalSnapshotJob<'a> {
-    pool: &'a BtrfsPool, 
-    dataset: &'a BtrfsDataset,
+    pool: &'a BtrfsPoolEntity, 
+    dataset: &'a BtrfsDatasetEntity,
 }
 
 impl<'a> LocalSnapshotJob<'a> {
-    pub fn new(pool: &'a BtrfsPool, dataset: &'a BtrfsDataset) -> Self {
+    pub fn new(pool: &'a BtrfsPoolEntity, dataset: &'a BtrfsDatasetEntity) -> Self {
         Self {
             pool, dataset
         }

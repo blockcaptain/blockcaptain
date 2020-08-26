@@ -1,41 +1,58 @@
-use crate::model::entities::{BtrfsDatasetEntity, BtrfsPoolEntity, SubvolumeEntity};
+use crate::core::BtrfsDataset;
+use crate::model::Entity;
 use anyhow::Result;
-use chrono::{DateTime, Utc, Duration};
-use crate::snapshot;
-use crate::sys::btrfs;
+use chrono::{Duration, Utc};
+use log::*;
 
 pub trait Job {
     fn run(&self) -> Result<()>;
-    fn is_ready(&self) -> Result<bool>;
+    fn next_check(&self) -> Result<Duration>;
+
+    fn is_ready(&self) -> Result<bool> {
+        self.next_check().map(|d| {
+            trace!(
+                "Job is {}ready based on having {} delay to next check.",
+                if d.is_zero() { "" } else { "not " },
+                if d.is_zero() { "no" } else { "a" }
+            );
+            d.is_zero()
+        })
+    }
 }
 
 pub struct LocalSnapshotJob<'a> {
-    pool: &'a BtrfsPoolEntity, 
-    dataset: &'a BtrfsDatasetEntity,
+    dataset: &'a BtrfsDataset,
 }
 
 impl<'a> LocalSnapshotJob<'a> {
-    pub fn new(pool: &'a BtrfsPoolEntity, dataset: &'a BtrfsDatasetEntity) -> Self {
-        Self {
-            pool, dataset
-        }
+    pub fn new(dataset: &'a BtrfsDataset) -> Self {
+        Self { dataset }
     }
 }
 
-impl<'a>  Job for LocalSnapshotJob<'a>  {
+impl<'a> Job for LocalSnapshotJob<'a> {
     fn run(&self) -> Result<()> {
-        snapshot::local_snapshot(self.pool, self.dataset)
+        self.dataset.create_local_snapshot()
     }
 
-    fn is_ready(&self) -> Result<bool> {
-        let fs = btrfs::Filesystem::query_uuid(&self.pool.uuid)?.unwrap_mounted()?;
-        let subvol = fs.subvolume_by_uuid(self.dataset.uuid())?;
-        let latest = self.dataset.latest_snapshot(&subvol)?;
+    fn next_check(&self) -> Result<Duration> {
+        let latest = self.dataset.latest_snapshot()?;
         Ok(if let Some(latest_datetime) = latest {
+            trace!(
+                "Existing snapshot for {} at {}.",
+                self.dataset.model().id(),
+                latest_datetime
+            );
+            let now = Utc::now();
             let next_datetime = latest_datetime + Duration::hours(1);
-            Utc::now() >= next_datetime
+            if now < next_datetime {
+                next_datetime - now
+            } else {
+                Duration::zero()
+            }
         } else {
-            true
+            trace!("No existing snapshot for {}.", self.dataset.model().id());
+            Duration::zero()
         })
     }
 }

@@ -28,15 +28,19 @@ impl Entities {
         Ok(())
     }
 
-    fn pool_by_uuid(&self, uuid: &Uuid) -> Option<&BtrfsPoolEntity> {
+    pub fn pool_by_uuid(&self, uuid: &Uuid) -> Option<&BtrfsPoolEntity> {
         self.btrfs_pools.iter().find(|p| p.uuid == *uuid)
     }
 
-    fn pool_by_mountpoint(&self, path: &Path) -> Option<&BtrfsPoolEntity> {
+    pub fn pool_by_mountpoint(&self, path: &Path) -> Option<&BtrfsPoolEntity> {
         self.btrfs_pools.iter().find(|p| p.mountpoint_path == path)
     }
 
-    fn pool(&self, name: &str) -> Option<&BtrfsPoolEntity> {
+    pub fn pools(&self) -> impl Iterator<Item=&BtrfsPoolEntity> {
+        self.btrfs_pools.iter()
+    }
+
+    pub fn pool(&self, name: &str) -> Option<&BtrfsPoolEntity> {
         self.btrfs_pools.iter().find(|p| p.name == name)
     }
 

@@ -1,4 +1,4 @@
-use crate::core::BtrfsDataset;
+use crate::core::{BtrfsContainer, BtrfsDataset};
 use crate::model::Entity;
 use anyhow::Result;
 use chrono::{Duration, Utc};
@@ -37,14 +37,14 @@ impl<'a> Job for LocalSnapshotJob<'a> {
 
     fn next_check(&self) -> Result<Duration> {
         let latest = self.dataset.latest_snapshot()?;
-        Ok(if let Some(latest_datetime) = latest {
+        Ok(if let Some(latest_snapshot) = latest {
             trace!(
                 "Existing snapshot for {} at {}.",
                 self.dataset.model().id(),
-                latest_datetime
+                latest_snapshot.datetime()
             );
             let now = Utc::now();
-            let next_datetime = latest_datetime + Duration::hours(1);
+            let next_datetime = latest_snapshot.datetime() + Duration::hours(1);
             if now < next_datetime {
                 next_datetime - now
             } else {
@@ -54,5 +54,26 @@ impl<'a> Job for LocalSnapshotJob<'a> {
             trace!("No existing snapshot for {}.", self.dataset.model().id());
             Duration::zero()
         })
+    }
+}
+
+pub struct LocalSyncJob<'a> {
+    dataset: &'a BtrfsDataset,
+    container: &'a BtrfsContainer,
+}
+
+impl<'a> LocalSyncJob<'a> {
+    pub fn new(dataset: &'a BtrfsDataset, container: &'a BtrfsContainer) -> Self {
+        Self { dataset, container }
+    }
+}
+
+impl<'a> Job for LocalSyncJob<'a> {
+    fn run(&self) -> Result<()> {
+        todo!();
+    }
+
+    fn next_check(&self) -> Result<Duration> {
+        todo!()
     }
 }

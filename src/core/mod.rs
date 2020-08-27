@@ -1,12 +1,13 @@
 use crate::model::entities::{BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, SubvolumeEntity};
+use crate::model::Entity;
 use crate::sys::btrfs::{Filesystem, MountedFilesystem, QueriedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry};
-use chrono::{DateTime, NaiveDateTime, Utc};
 use anyhow::{anyhow, bail, Context, Error, Result};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use log::*;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::{convert::TryFrom, mem, rc::Rc};
+use std::{cell::RefCell, convert::TryFrom, mem, rc::Rc};
 use uuid::Uuid;
 
 const BLKCAPT_FS_META_DIR: &str = ".blkcapt";
@@ -85,6 +86,7 @@ pub struct BtrfsDataset {
     model: BtrfsDatasetEntity,
     subvolume: Subvolume,
     pool: Rc<BtrfsPool>,
+    snapshots: RefCell<Option<Vec<BtrfsDatasetSnapshot>>>,
 }
 
 impl BtrfsDataset {
@@ -94,7 +96,8 @@ impl BtrfsDataset {
         let dataset = Self {
             model: BtrfsDatasetEntity::new(name, subvolume.path.clone(), subvolume.uuid)?,
             subvolume: subvolume,
-            pool: pool
+            pool: pool,
+            snapshots: RefCell::new(Option::None),
         };
 
         let snapshot_path = dataset.snapshot_container_path();
@@ -108,42 +111,69 @@ impl BtrfsDataset {
 
     pub fn create_local_snapshot(&self) -> Result<()> {
         let now = Utc::now();
-        let snapshot_path = self.snapshot_container_path().join(now.format("%FT%H-%M-%SZ").to_string());
-        self.pool.filesystem.snapshot_subvolume(&self.subvolume, &snapshot_path)?;
+        let snapshot_path = self
+            .snapshot_container_path()
+            .join(now.format("%FT%H-%M-%SZ").to_string());
+        self.pool
+            .filesystem
+            .snapshot_subvolume(&self.subvolume, &snapshot_path)?;
+        self.invalidate_snapshots();
         Ok(())
     }
-    
-    pub fn latest_snapshot(&self) -> Result<Option<DateTime<Utc>>> {
-        let subvolume = self.pool.filesystem.subvolume_by_uuid(self.model.uuid()).context("Can't locate subvolume for existing dataset.")?;
-        let mut paths = subvolume.snapshot_paths.iter().collect::<Vec<_>>();
-        paths.sort();
-        match paths.last() {
-            Some(v) => match NaiveDateTime::parse_from_str(
-                &v.file_name()
-                    .expect("Snapshot path should never end in ..")
-                    .to_string_lossy(),
-                "%FT%H-%M-%SZ",
-            ) {
-                Ok(d) => Ok(Some(DateTime::<Utc>::from_utc(d, Utc))),
-                Err(e) => Err(Error::new(e)),
-            },
-            None => Ok(None),
+
+    pub fn snapshots(&self) -> Result<Vec<BtrfsDatasetSnapshot>> {
+        if self.snapshots.borrow().is_none() {
+            *self.snapshots.borrow_mut() = Some(
+                Subvolume::list_subvolumes(&self.pool.filesystem.fstree_mountpoint.join(self.snapshot_container_path()))?
+                    .into_iter()
+                    .filter_map(|s| {
+                        match NaiveDateTime::parse_from_str(
+                            &s.path
+                                .file_name()
+                                .expect("Snapshot path should never end in ..")
+                                .to_string_lossy(),
+                            "%FT%H-%M-%SZ",
+                        ) {
+                            Ok(d) => Some(BtrfsDatasetSnapshot {
+                                subvolume: s,
+                                datetime: DateTime::<Utc>::from_utc(d, Utc),
+                            }),
+                            Err(e) => None,
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            )
         }
+        Ok(self.snapshots.borrow().as_ref().unwrap().clone())
+    }
+
+    fn invalidate_snapshots(&self) {
+        *self.snapshots.borrow_mut() = None;
+    }
+
+    pub fn latest_snapshot(&self) -> Result<Option<BtrfsDatasetSnapshot>> {
+        let mut snapshots = self.snapshots()?;
+        snapshots.sort_unstable_by_key(|s| s.datetime);
+        Ok(snapshots.pop())
     }
 
     pub fn snapshot_container_path(&self) -> PathBuf {
         let mut builder = PathBuf::from(BLKCAPT_FS_META_DIR);
         builder.push("snapshots");
-        builder.push(self.model.uuid().to_string());
+        builder.push(self.model.id().to_string());
         builder
     }
 
     pub fn validate(pool: Rc<BtrfsPool>, model: BtrfsDatasetEntity) -> Result<Self> {
-        let subvolume = pool.filesystem.subvolume_by_uuid(model.uuid()).context("Can't locate subvolume for existing dataset.")?;
+        let subvolume = pool
+            .filesystem
+            .subvolume_by_uuid(model.uuid())
+            .context("Can't locate subvolume for existing dataset.")?;
         Ok(Self {
             model: model,
             subvolume: subvolume,
             pool: pool,
+            snapshots: RefCell::new(Option::None),
         })
     }
 
@@ -156,22 +186,49 @@ impl BtrfsDataset {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BtrfsDatasetSnapshot {
+    subvolume: Subvolume,
+    datetime: DateTime<Utc>,
+}
+
+impl BtrfsDatasetSnapshot {
+    pub fn datetime(&self) -> DateTime<Utc> {
+        self.datetime
+    }
+}
+
 #[derive(Debug)]
 pub struct BtrfsContainer {
     model: BtrfsContainerEntity,
     subvolume: Subvolume,
+    pool: Rc<BtrfsPool>,
 }
 
 impl BtrfsContainer {
-    pub fn new(name: String, path: PathBuf) -> Result<Self> {
+    pub fn new(pool: Rc<BtrfsPool>, name: String, path: PathBuf) -> Result<Self> {
         let subvolume = Subvolume::from_path(&path).context("Path does not resolve to a subvolume.")?;
 
         let dataset = Self {
             model: BtrfsContainerEntity::new(name, subvolume.path.clone(), subvolume.uuid)?,
             subvolume: subvolume,
+            pool: pool,
         };
 
         Ok(dataset)
+    }
+
+
+    pub fn validate(pool: Rc<BtrfsPool>, model: BtrfsContainerEntity) -> Result<Self> {
+        let subvolume = pool
+            .filesystem
+            .subvolume_by_uuid(model.uuid())
+            .context("Can't locate subvolume for existing dataset.")?;
+        Ok(Self {
+            model: model,
+            subvolume: subvolume,
+            pool: pool,
+        })
     }
 
     pub fn model(&self) -> &BtrfsContainerEntity {

@@ -4,7 +4,7 @@ use crate::process::read_with_stderr_context;
 use anyhow::{anyhow, bail, Context, Result};
 use duct;
 use lazy_static::lazy_static;
-use regex::Regex;
+use regex::{Captures, Regex};
 use serde::Deserialize;
 use std::convert::TryFrom;
 use std::string::String;
@@ -152,21 +152,46 @@ impl MountedFilesystem {
     }
 }
 
-#[derive(Deserialize, Debug, PartialEq)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Subvolume {
     pub uuid: Uuid,
-    pub name: String,
     pub path: PathBuf,
     #[serde(rename = "parent uuid")]
     pub parent_uuid: Option<Uuid>,
-    #[serde(skip_deserializing)]
-    pub snapshot_paths: Vec<PathBuf>,
+    #[serde(rename = "received uuid")]
+    pub received_uuid: Option<Uuid>,
 }
 
 impl Subvolume {
     pub fn from_path(path: &Path) -> Result<Self> {
         let output_data = String::from("path: ") + btrfs_cmd!("subvolume", "show", "--raw", path)?.as_ref();
         Self::_parse(output_data)
+    }
+
+    pub fn list_subvolumes(path: &Path) -> Result<Vec<Subvolume>> {
+        lazy_static! {
+            static ref RE_PATHS: Regex =
+                Regex::new(r"(?m)\bparent_uuid\s+(.*?)\s+received_uuid\s+(.*?)\s+uuid\s+(.*?)\s+path\s+(.*?)\s*$")
+                    .unwrap();
+        }
+
+        let output_data = btrfs_cmd!("subvolume", "list", "-uqRo", path)?;
+        let path_matches = RE_PATHS.captures_iter(&output_data);
+        let parse_uuid = |m| Uuid::parse_str(m).expect("Should always have parsable UUID in btrfs list.");
+        Ok(path_matches
+            .map(|m| Self {
+                uuid: parse_uuid(m.get(3).unwrap().as_str()),
+                path: PathBuf::from(m.get(4).unwrap().as_str()),
+                parent_uuid: match m.get(1).unwrap().as_str() {
+                    "-" => None,
+                    s => Some(parse_uuid(s)),
+                },
+                received_uuid: match m.get(2).unwrap().as_str() {
+                    "-" => None,
+                    s => Some(parse_uuid(s)),
+                },
+            })
+            .collect::<Vec<_>>())
     }
 
     fn _parse(data: String) -> Result<Self> {
@@ -181,9 +206,6 @@ impl Subvolume {
             }
         }))
         .context("Failed loading information from btrfs subvolume output.")?;
-
-        let snapshot_lines = data.lines().skip_while(|s| !s.contains("Snapshot(s):")).skip(1);
-        subvolume.snapshot_paths = snapshot_lines.map(|s| PathBuf::from(s.trim())).collect();
         Ok(subvolume)
     }
 }
@@ -249,16 +271,62 @@ mod tests {
         assert_eq!(
             Subvolume::from_path(&PathBuf::from("/mnt/os_pool")).unwrap(),
             Subvolume {
-                name: String::from("@"),
                 path: PathBuf::from("@"),
                 uuid: Uuid::parse_str("0c61d287-c754-2944-a71e-ee6f0cbfb40e").unwrap(),
                 parent_uuid: None,
-                snapshot_paths: vec![
-                    PathBuf::from(".blkcapt/snapshots/8a7ae0b5-b28c-b240-8c07-0015431d58d8/2020-08-23T17-20-10Z"),
-                    PathBuf::from(".blkcapt/snapshots/8a7ae0b5-b28c-b240-8c07-0015431d58d8/2020-08-23T17-24-02Z"),
-                    PathBuf::from(".blkcapt/snapshots/8a7ae0b5-b28c-b240-8c07-0015431d58d8/2020-08-23T20-14-53Z"),
-                ]
+                received_uuid: None,
             }
+        );
+    }
+
+    #[test]
+    #[serial(fakecmd)]
+    fn btrfs_subvolume_list_parses() {
+        const BTRFS_DATA: &str = indoc!(
+            r#"
+            ID 260 gen 48 cgen 8 parent 5 top level 5 parent_uuid -                                    received_uuid -                                    uuid 8a7ae0b5-b28c-b240-8c07-0015431d58d8 path test4
+            ID 261 gen 9 cgen 9 parent 260 top level 260 parent_uuid -                                    received_uuid -                                    uuid ed4c840e-934f-9c49-bcac-fa8a1be864ff path test4/test5
+            ID 273 gen 47 cgen 33 parent 5 top level 5 parent_uuid -                                    received_uuid -                                    uuid 45700e9d-9cba-f840-bf2b-b165b87623b7 path .blkcapt/snapshots
+            ID 284 gen 50 cgen 47 parent 273 top level 273 parent_uuid -                                    received_uuid -                                    uuid 0cdd2cd3-8e63-4749-adb5-e63a1050b3ea path .blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7
+            ID 285 gen 48 cgen 48 parent 284 top level 284 parent_uuid 8a7ae0b5-b28c-b240-8c07-0015431d58d8 received_uuid -                                    uuid 269b40d7-e072-954e-9138-04cbef62a13f path .blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7/2020-08-26T21-25-26Z"#
+        );
+        let ctx = MockFakeCmd::data_context();
+        ctx.expect().returning(|| BTRFS_DATA.to_string());
+
+        assert_eq!(
+            Subvolume::list_subvolumes(&PathBuf::from("/mnt/data_pool")).unwrap(),
+            vec![
+                Subvolume {
+                    path: PathBuf::from("test4"),
+                    uuid: Uuid::parse_str("8a7ae0b5-b28c-b240-8c07-0015431d58d8").unwrap(),
+                    parent_uuid: None,
+                    received_uuid: None,
+                },
+                Subvolume {
+                    path: PathBuf::from("test4/test5"),
+                    uuid: Uuid::parse_str("ed4c840e-934f-9c49-bcac-fa8a1be864ff").unwrap(),
+                    parent_uuid: None,
+                    received_uuid: None,
+                },
+                Subvolume {
+                    path: PathBuf::from(".blkcapt/snapshots"),
+                    uuid: Uuid::parse_str("45700e9d-9cba-f840-bf2b-b165b87623b7").unwrap(),
+                    parent_uuid: None,
+                    received_uuid: None,
+                },
+                Subvolume {
+                    path: PathBuf::from(".blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7"),
+                    uuid: Uuid::parse_str("0cdd2cd3-8e63-4749-adb5-e63a1050b3ea").unwrap(),
+                    parent_uuid: None,
+                    received_uuid: None,
+                },
+                Subvolume {
+                    path: PathBuf::from(".blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7/2020-08-26T21-25-26Z"),
+                    uuid: Uuid::parse_str("269b40d7-e072-954e-9138-04cbef62a13f").unwrap(),
+                    parent_uuid: Some(Uuid::parse_str("8a7ae0b5-b28c-b240-8c07-0015431d58d8").unwrap()),
+                    received_uuid: None,
+                }
+            ]
         );
     }
 }

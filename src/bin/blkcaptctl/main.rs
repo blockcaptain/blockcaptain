@@ -224,6 +224,9 @@ fn attach_container(options: ContainerAttachOptions) -> Result<()> {
 
     let mountentry =
         find_mountentry(&options.path).context(format!("Failed to detect mountpoint for {:?}.", options.path))?;
+    let pool_model = entities
+        .pool_by_mountpoint_mut(mountentry.file.as_path())
+        .context(format!("No pool found for mountpoint {:?}.", mountentry.file))?;
 
     let path = &options.path;
     let name = options.name.unwrap_or_else(|| {
@@ -232,7 +235,9 @@ fn attach_container(options: ContainerAttachOptions) -> Result<()> {
             .to_string_lossy()
             .to_string()
     });
-    let container = BtrfsContainer::new(name, options.path)?;
+
+    let pool = Rc::new(BtrfsPool::validate(pool_model.clone())?);
+    let container = BtrfsContainer::new(pool, name, options.path)?;
 
     let pool = entities
         .pool_by_mountpoint_mut(mountentry.file.as_path())

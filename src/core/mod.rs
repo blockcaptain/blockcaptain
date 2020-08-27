@@ -124,24 +124,30 @@ impl BtrfsDataset {
     pub fn snapshots(&self) -> Result<Vec<BtrfsDatasetSnapshot>> {
         if self.snapshots.borrow().is_none() {
             *self.snapshots.borrow_mut() = Some(
-                Subvolume::list_subvolumes(&self.pool.filesystem.fstree_mountpoint.join(self.snapshot_container_path()))?
-                    .into_iter()
-                    .filter_map(|s| {
-                        match NaiveDateTime::parse_from_str(
-                            &s.path
-                                .file_name()
-                                .expect("Snapshot path should never end in ..")
-                                .to_string_lossy(),
-                            "%FT%H-%M-%SZ",
-                        ) {
-                            Ok(d) => Some(BtrfsDatasetSnapshot {
-                                subvolume: s,
-                                datetime: DateTime::<Utc>::from_utc(d, Utc),
-                            }),
-                            Err(e) => None,
-                        }
-                    })
-                    .collect::<Vec<_>>(),
+                Subvolume::list_subvolumes(
+                    &self
+                        .pool
+                        .filesystem
+                        .fstree_mountpoint
+                        .join(self.snapshot_container_path()),
+                )?
+                .into_iter()
+                .filter_map(|s| {
+                    match NaiveDateTime::parse_from_str(
+                        &s.path
+                            .file_name()
+                            .expect("Snapshot path should never end in ..")
+                            .to_string_lossy(),
+                        "%FT%H-%M-%SZ",
+                    ) {
+                        Ok(d) => Some(BtrfsDatasetSnapshot {
+                            subvolume: s,
+                            datetime: DateTime::<Utc>::from_utc(d, Utc),
+                        }),
+                        Err(_) => None,
+                    }
+                })
+                .collect::<Vec<_>>(),
             )
         }
         Ok(self.snapshots.borrow().as_ref().unwrap().clone())
@@ -164,11 +170,20 @@ impl BtrfsDataset {
         builder
     }
 
+    pub fn uuid(&self) -> Uuid {
+        self.subvolume.uuid
+    }
+
+    pub fn parent_uuid(&self) -> Option<Uuid> {
+        self.subvolume.parent_uuid
+    }
+
     pub fn validate(pool: Rc<BtrfsPool>, model: BtrfsDatasetEntity) -> Result<Self> {
         let subvolume = pool
             .filesystem
             .subvolume_by_uuid(model.uuid())
             .context("Can't locate subvolume for existing dataset.")?;
+
         Ok(Self {
             model: model,
             subvolume: subvolume,
@@ -196,6 +211,18 @@ impl BtrfsDatasetSnapshot {
     pub fn datetime(&self) -> DateTime<Utc> {
         self.datetime
     }
+
+    pub fn uuid(&self) -> Uuid {
+        self.subvolume.uuid
+    }
+
+    pub fn parent_uuid(&self) -> Option<Uuid> {
+        self.subvolume.parent_uuid
+    }
+
+    pub fn received_uuid(&self) -> Option<Uuid> {
+        self.subvolume.received_uuid
+    }
 }
 
 #[derive(Debug)]
@@ -218,12 +245,43 @@ impl BtrfsContainer {
         Ok(dataset)
     }
 
+    pub fn snapshots(&self, dataset: &BtrfsDatasetEntity) -> Result<Vec<BtrfsContainerSnapshot>> {
+        Ok(Subvolume::list_subvolumes(
+            &self
+                .pool
+                .filesystem
+                .fstree_mountpoint
+                .join(self.snapshot_container_path(dataset)),
+        )?
+        .into_iter()
+        .filter_map(|s| {
+            match NaiveDateTime::parse_from_str(
+                &s.path
+                    .file_name()
+                    .expect("Snapshot path should never end in ..")
+                    .to_string_lossy(),
+                "%FT%H-%M-%SZ",
+            ) {
+                Ok(d) => Some(BtrfsContainerSnapshot {
+                    subvolume: s,
+                    datetime: DateTime::<Utc>::from_utc(d, Utc),
+                }),
+                Err(_) => None,
+            }
+        })
+        .collect::<Vec<_>>())
+    }
+
+    pub fn snapshot_container_path(&self, dataset: &BtrfsDatasetEntity) -> PathBuf {
+        self.subvolume.path.join(dataset.id().to_string())
+    }
 
     pub fn validate(pool: Rc<BtrfsPool>, model: BtrfsContainerEntity) -> Result<Self> {
         let subvolume = pool
             .filesystem
             .subvolume_by_uuid(model.uuid())
             .context("Can't locate subvolume for existing dataset.")?;
+
         Ok(Self {
             model: model,
             subvolume: subvolume,
@@ -238,4 +296,58 @@ impl BtrfsContainer {
     pub fn take_model(self) -> BtrfsContainerEntity {
         self.model
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct BtrfsContainerSnapshot {
+    subvolume: Subvolume,
+    datetime: DateTime<Utc>,
+}
+
+impl BtrfsContainerSnapshot {
+    pub fn datetime(&self) -> DateTime<Utc> {
+        self.datetime
+    }
+
+    pub fn uuid(&self) -> Uuid {
+        self.subvolume.uuid
+    }
+
+    pub fn parent_uuid(&self) -> Option<Uuid> {
+        self.subvolume.parent_uuid
+    }
+
+    pub fn received_uuid(&self) -> Uuid {
+        self.subvolume.received_uuid.expect("container snapshots are always received")
+    }
+}
+
+pub fn transfer_full_snapshot(dataset: &BtrfsDataset, snapshot: &BtrfsDatasetSnapshot, container: &BtrfsContainer) -> Result<BtrfsContainerSnapshot> {
+    _transfer_delta_snapshot(dataset, None, snapshot, container)
+}
+
+pub fn transfer_delta_snapshot(dataset: &BtrfsDataset, parent: &BtrfsDatasetSnapshot, snapshot: &BtrfsDatasetSnapshot, container: &BtrfsContainer) -> Result<BtrfsContainerSnapshot> {
+    _transfer_delta_snapshot(dataset, Some(parent), snapshot, container)
+}
+
+fn _transfer_delta_snapshot(dataset: &BtrfsDataset, parent: Option<&BtrfsDatasetSnapshot>, snapshot: &BtrfsDatasetSnapshot, container: &BtrfsContainer) -> Result<BtrfsContainerSnapshot> {
+    let source_snap_path = dataset.pool.filesystem.fstree_mountpoint.join(&snapshot.subvolume.path);
+    let container_path = container.pool.filesystem.fstree_mountpoint.join(container.snapshot_container_path(dataset.model()));
+
+    let send_expr = match parent {
+        Some(parent_snapshot) => {
+            let parent_snap_path = dataset.pool.filesystem.fstree_mountpoint.join(&parent_snapshot.subvolume.path);
+            duct_cmd!("btrfs", "send", "-p", parent_snap_path, source_snap_path)
+        }
+        None => {
+            duct_cmd!("btrfs", "send", source_snap_path)
+        }
+    };
+    let receive_expr = duct_cmd!("btrfs", "receive", "-v", container_path);
+
+    let pipe_expr = send_expr.pipe(receive_expr);
+    pipe_expr.run()?;
+
+    let snapshots = container.snapshots(dataset.model())?;
+    snapshots.into_iter().find(|s| s.received_uuid() == snapshot.uuid()).ok_or(anyhow!("Failed to locate new snapshot."))
 }

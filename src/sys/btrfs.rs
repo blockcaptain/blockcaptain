@@ -198,7 +198,7 @@ impl Subvolume {
         let kvps = parse_key_value_pair_lines::<_, Vec<StringPair>>(data.lines().take(6), ":")
             .context("Failed to parse output of btrfs subvolume.")?;
 
-        let mut subvolume = envy::from_iter::<_, Self>(kvps.into_iter().filter_map(|x| {
+        let subvolume = envy::from_iter::<_, Self>(kvps.into_iter().filter_map(|x| {
             if x.1 != "-" {
                 Some((x.0.to_uppercase(), x.1))
             } else {

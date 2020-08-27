@@ -9,6 +9,11 @@ use std::path::{Path,PathBuf};
 use std::str::FromStr;
 use uuid::Uuid;
 
+// File-system relative path. PathBufs are considered root relative.
+#[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub struct FsPathBuf(PathBuf); // Todo see https://github.com/iqlusioninc/crates/blob/develop/canonical-path/src/lib.rs
+
+
 const MOUNT_EXPECTATION: &str = "All entries in mount list must be parsable.";
 
 /// Lookup an exact mount entry at target.

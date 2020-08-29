@@ -3,6 +3,7 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+use crate::sys::fs::FsPathBuf;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsPoolEntity {
@@ -57,7 +58,7 @@ impl BtrfsPoolEntity {
         self.subvolumes().find(|d| d.uuid() == uuid)
     }
 
-    fn subvolume_by_path(&self, path: &Path) -> Option<&dyn SubvolumeEntity> {
+    fn subvolume_by_path(&self, path: &FsPathBuf) -> Option<&dyn SubvolumeEntity> {
         self.subvolumes().find(|d| d.path() == path)
     }
 
@@ -81,7 +82,7 @@ impl Entity for BtrfsPoolEntity {
 }
 
 pub trait SubvolumeEntity: Entity {
-    fn path(&self) -> &Path;
+    fn path(&self) -> &FsPathBuf;
     fn uuid(&self) -> &Uuid;
 }
 
@@ -89,12 +90,12 @@ pub trait SubvolumeEntity: Entity {
 pub struct BtrfsDatasetEntity {
     id: Uuid,
     name: String,
-    path: PathBuf,
+    path: FsPathBuf,
     uuid: Uuid,
 }
 
 impl SubvolumeEntity for BtrfsDatasetEntity {
-    fn path(&self) -> &Path {
+    fn path(&self) -> &FsPathBuf {
         &self.path
     }
     fn uuid(&self) -> &Uuid {
@@ -115,7 +116,7 @@ impl Entity for BtrfsDatasetEntity {
 }
 
 impl BtrfsDatasetEntity {
-    pub fn new(name: String, subvolume_path: PathBuf, subvolume_uuid: Uuid) -> Result<Self> {
+    pub fn new(name: String, subvolume_path: FsPathBuf, subvolume_uuid: Uuid) -> Result<Self> {
         Ok(Self {
             id: Uuid::new_v4(),
             name: name,
@@ -129,12 +130,12 @@ impl BtrfsDatasetEntity {
 pub struct BtrfsContainerEntity {
     id: Uuid,
     name: String,
-    path: PathBuf,
+    path: FsPathBuf,
     uuid: Uuid,
 }
 
 impl BtrfsContainerEntity {
-    pub fn new(name: String, subvolume_path: PathBuf, subvolume_uuid: Uuid) -> Result<Self> {
+    pub fn new(name: String, subvolume_path: FsPathBuf, subvolume_uuid: Uuid) -> Result<Self> {
         Ok(Self {
             id: Uuid::new_v4(),
             name: name,
@@ -145,7 +146,7 @@ impl BtrfsContainerEntity {
 }
 
 impl SubvolumeEntity for BtrfsContainerEntity {
-    fn path(&self) -> &Path {
+    fn path(&self) -> &FsPathBuf {
         &self.path
     }
     fn uuid(&self) -> &Uuid {
@@ -163,10 +164,6 @@ impl Entity for BtrfsContainerEntity {
     fn entity_type(&self) -> EntityType {
         EntityType::Container
     }
-}
-
-pub fn full_path(pool: &BtrfsPoolEntity, dataset: &impl SubvolumeEntity) -> PathBuf {
-    pool.mountpoint_path.join(dataset.path())
 }
 
 #[derive(Serialize, Deserialize, Debug)]

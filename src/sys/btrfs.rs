@@ -13,6 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
+use fs::FsPathBuf;
 
 macro_rules! btrfs_cmd {
     ( $( $arg:expr ),+ ) => {
@@ -134,7 +135,7 @@ impl MountedFilesystem {
             "subvolume",
             "snapshot",
             "-r",
-            self.fstree_mountpoint.join(&subvolume.path),
+            subvolume.path.as_pathbuf(&self.fstree_mountpoint),
             target_path
         )
         .context(format!("Failed to create btrfs snapshot at {:?}.", path))?;
@@ -155,7 +156,7 @@ impl MountedFilesystem {
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Subvolume {
     pub uuid: Uuid,
-    pub path: PathBuf,
+    pub path: FsPathBuf,
     #[serde(rename = "parent uuid")]
     pub parent_uuid: Option<Uuid>,
     #[serde(rename = "received uuid")]
@@ -181,7 +182,7 @@ impl Subvolume {
         Ok(path_matches
             .map(|m| Self {
                 uuid: parse_uuid(m.get(3).unwrap().as_str()),
-                path: PathBuf::from(m.get(4).unwrap().as_str()),
+                path: FsPathBuf::from(m.get(4).unwrap().as_str()),
                 parent_uuid: match m.get(1).unwrap().as_str() {
                     "-" => None,
                     s => Some(parse_uuid(s)),
@@ -271,7 +272,7 @@ mod tests {
         assert_eq!(
             Subvolume::from_path(&PathBuf::from("/mnt/os_pool")).unwrap(),
             Subvolume {
-                path: PathBuf::from("@"),
+                path: FsPathBuf::from("@"),
                 uuid: Uuid::parse_str("0c61d287-c754-2944-a71e-ee6f0cbfb40e").unwrap(),
                 parent_uuid: None,
                 received_uuid: None,
@@ -297,31 +298,31 @@ mod tests {
             Subvolume::list_subvolumes(&PathBuf::from("/mnt/data_pool")).unwrap(),
             vec![
                 Subvolume {
-                    path: PathBuf::from("test4"),
+                    path: FsPathBuf::from("test4"),
                     uuid: Uuid::parse_str("8a7ae0b5-b28c-b240-8c07-0015431d58d8").unwrap(),
                     parent_uuid: None,
                     received_uuid: None,
                 },
                 Subvolume {
-                    path: PathBuf::from("test4/test5"),
+                    path: FsPathBuf::from("test4/test5"),
                     uuid: Uuid::parse_str("ed4c840e-934f-9c49-bcac-fa8a1be864ff").unwrap(),
                     parent_uuid: None,
                     received_uuid: None,
                 },
                 Subvolume {
-                    path: PathBuf::from(".blkcapt/snapshots"),
+                    path: FsPathBuf::from(".blkcapt/snapshots"),
                     uuid: Uuid::parse_str("45700e9d-9cba-f840-bf2b-b165b87623b7").unwrap(),
                     parent_uuid: None,
                     received_uuid: None,
                 },
                 Subvolume {
-                    path: PathBuf::from(".blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7"),
+                    path: FsPathBuf::from(".blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7"),
                     uuid: Uuid::parse_str("0cdd2cd3-8e63-4749-adb5-e63a1050b3ea").unwrap(),
                     parent_uuid: None,
                     received_uuid: None,
                 },
                 Subvolume {
-                    path: PathBuf::from(".blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7/2020-08-26T21-25-26Z"),
+                    path: FsPathBuf::from(".blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7/2020-08-26T21-25-26Z"),
                     uuid: Uuid::parse_str("269b40d7-e072-954e-9138-04cbef62a13f").unwrap(),
                     parent_uuid: Some(Uuid::parse_str("8a7ae0b5-b28c-b240-8c07-0015431d58d8").unwrap()),
                     received_uuid: None,

@@ -2,17 +2,45 @@ use crate::parsing::{parse_key_value_data, StringPair};
 use anyhow::{anyhow, Context, Result};
 use mnt;
 use mnt::{MountEntry, MountIter};
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::path::{Path,PathBuf};
 use std::str::FromStr;
+use std::ffi::OsStr;
 use uuid::Uuid;
 
 // File-system relative path. PathBufs are considered root relative.
-#[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub struct FsPathBuf(PathBuf); // Todo see https://github.com/iqlusioninc/crates/blob/develop/canonical-path/src/lib.rs
 
+impl FsPathBuf {
+    pub fn as_pathbuf(&self, mount_path: &Path) -> PathBuf {
+        mount_path.join(&self.0)
+    }
+
+    pub fn file_name(&self) -> Option<&OsStr> {
+        self.0.file_name()
+    }
+
+    pub fn join<P: AsRef<Path>>(&self, path: P) -> Self {
+        Self(self.0.join(path))
+    }
+}
+
+impl<T: ?Sized + AsRef<OsStr>> From<&T> for FsPathBuf {
+    fn from(s: &T) -> FsPathBuf {
+        FsPathBuf(PathBuf::from(s))
+    }
+}
+
+impl FromStr for FsPathBuf {
+    type Err = <PathBuf as FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(FsPathBuf::from(s))
+    }
+}
 
 const MOUNT_EXPECTATION: &str = "All entries in mount list must be parsable.";
 

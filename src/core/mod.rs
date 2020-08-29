@@ -1,7 +1,7 @@
 use crate::model::entities::{BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, SubvolumeEntity};
 use crate::model::Entity;
 use crate::sys::btrfs::{Filesystem, MountedFilesystem, QueriedFilesystem, Subvolume};
-use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry};
+use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
 use anyhow::{anyhow, bail, Context, Error, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use log::*;
@@ -248,10 +248,8 @@ impl BtrfsContainer {
     pub fn snapshots(&self, dataset: &BtrfsDatasetEntity) -> Result<Vec<BtrfsContainerSnapshot>> {
         Ok(Subvolume::list_subvolumes(
             &self
-                .pool
-                .filesystem
-                .fstree_mountpoint
-                .join(self.snapshot_container_path(dataset)),
+                .snapshot_container_path(dataset)
+                .as_pathbuf(&self.pool.filesystem.fstree_mountpoint),
         )?
         .into_iter()
         .filter_map(|s| {
@@ -272,7 +270,7 @@ impl BtrfsContainer {
         .collect::<Vec<_>>())
     }
 
-    pub fn snapshot_container_path(&self, dataset: &BtrfsDatasetEntity) -> PathBuf {
+    pub fn snapshot_container_path(&self, dataset: &BtrfsDatasetEntity) -> FsPathBuf {
         self.subvolume.path.join(dataset.id().to_string())
     }
 
@@ -318,30 +316,50 @@ impl BtrfsContainerSnapshot {
     }
 
     pub fn received_uuid(&self) -> Uuid {
-        self.subvolume.received_uuid.expect("container snapshots are always received")
+        self.subvolume
+            .received_uuid
+            .expect("container snapshots are always received")
     }
 }
 
-pub fn transfer_full_snapshot(dataset: &BtrfsDataset, snapshot: &BtrfsDatasetSnapshot, container: &BtrfsContainer) -> Result<BtrfsContainerSnapshot> {
+pub fn transfer_full_snapshot(
+    dataset: &BtrfsDataset,
+    snapshot: &BtrfsDatasetSnapshot,
+    container: &BtrfsContainer,
+) -> Result<BtrfsContainerSnapshot> {
     _transfer_delta_snapshot(dataset, None, snapshot, container)
 }
 
-pub fn transfer_delta_snapshot(dataset: &BtrfsDataset, parent: &BtrfsDatasetSnapshot, snapshot: &BtrfsDatasetSnapshot, container: &BtrfsContainer) -> Result<BtrfsContainerSnapshot> {
+pub fn transfer_delta_snapshot(
+    dataset: &BtrfsDataset,
+    parent: &BtrfsDatasetSnapshot,
+    snapshot: &BtrfsDatasetSnapshot,
+    container: &BtrfsContainer,
+) -> Result<BtrfsContainerSnapshot> {
     _transfer_delta_snapshot(dataset, Some(parent), snapshot, container)
 }
 
-fn _transfer_delta_snapshot(dataset: &BtrfsDataset, parent: Option<&BtrfsDatasetSnapshot>, snapshot: &BtrfsDatasetSnapshot, container: &BtrfsContainer) -> Result<BtrfsContainerSnapshot> {
-    let source_snap_path = dataset.pool.filesystem.fstree_mountpoint.join(&snapshot.subvolume.path);
-    let container_path = container.pool.filesystem.fstree_mountpoint.join(container.snapshot_container_path(dataset.model()));
+fn _transfer_delta_snapshot(
+    dataset: &BtrfsDataset,
+    parent: Option<&BtrfsDatasetSnapshot>,
+    snapshot: &BtrfsDatasetSnapshot,
+    container: &BtrfsContainer,
+) -> Result<BtrfsContainerSnapshot> {
+    let source_snap_path = snapshot.subvolume.path.as_pathbuf(&dataset.pool.filesystem.fstree_mountpoint);
+    let container_path = container.snapshot_container_path(dataset.model()).as_pathbuf(&container
+        .pool
+        .filesystem
+        .fstree_mountpoint);
 
     let send_expr = match parent {
         Some(parent_snapshot) => {
-            let parent_snap_path = dataset.pool.filesystem.fstree_mountpoint.join(&parent_snapshot.subvolume.path);
+            let parent_snap_path = parent_snapshot.subvolume.path.as_pathbuf(&dataset
+                .pool
+                .filesystem
+                .fstree_mountpoint);
             duct_cmd!("btrfs", "send", "-p", parent_snap_path, source_snap_path)
         }
-        None => {
-            duct_cmd!("btrfs", "send", source_snap_path)
-        }
+        None => duct_cmd!("btrfs", "send", source_snap_path),
     };
     let receive_expr = duct_cmd!("btrfs", "receive", "-v", container_path);
 
@@ -349,5 +367,8 @@ fn _transfer_delta_snapshot(dataset: &BtrfsDataset, parent: Option<&BtrfsDataset
     pipe_expr.run()?;
 
     let snapshots = container.snapshots(dataset.model())?;
-    snapshots.into_iter().find(|s| s.received_uuid() == snapshot.uuid()).ok_or(anyhow!("Failed to locate new snapshot."))
+    snapshots
+        .into_iter()
+        .find(|s| s.received_uuid() == snapshot.uuid())
+        .ok_or(anyhow!("Failed to locate new snapshot."))
 }

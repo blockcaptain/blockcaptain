@@ -5,7 +5,7 @@ use human_panic::setup_panic;
 use log::*;
 //use blkcapt::contextualize::Validation;
 use blkcapt::model::entities::{BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity};
-use blkcapt::sys::fs::{find_mountentry, BlockDeviceIds, BtrfsMountEntry};
+use blkcapt::sys::fs::{find_mountentry, BlockDeviceIds, BtrfsMountEntry, DevicePathBuf};
 use blkcapt::{
     core::{BtrfsContainer, BtrfsDataset, BtrfsPool},
     model::storage,
@@ -41,19 +41,14 @@ fn main() {
 fn command_dispath(options: CliOptions) -> Result<()> {
     match options.subcmd {
         TopCommands::Pool(top_options) => match top_options.subcmd {
-            PoolSubCommands::Attach(options) => {
-                attach_pool(options)?;
-            }
+            PoolSubCommands::Attach(options) => attach_pool(options)?,
+            PoolSubCommands::Create(options) => create_pool(options)?,
         },
         TopCommands::Dataset(top_options) => match top_options.subcmd {
-            DatasetSubCommands::Attach(options) => {
-                attach_dataset(options)?;
-            }
+            DatasetSubCommands::Attach(options) => attach_dataset(options)?,
         },
         TopCommands::Container(top_options) => match top_options.subcmd {
-            ContainerSubCommands::Attach(options) => {
-                attach_container(options)?;
-            }
+            ContainerSubCommands::Attach(options) => attach_container(options)?,
         },
     }
 
@@ -85,6 +80,7 @@ struct PoolCommands {
 
 #[derive(Clap)]
 enum PoolSubCommands {
+    Create(PoolCreateOptions),
     Attach(PoolAttachOptions),
 }
 
@@ -148,6 +144,31 @@ enum ContainerSubCommands {
 // Pool Attach
 
 const DEFAULT_POOL_NAME: &str = "default";
+
+#[derive(Clap, Debug)]
+struct PoolCreateOptions {
+    /// Name of the pool.
+    #[clap(short, long, default_value=DEFAULT_POOL_NAME)]
+    name: String,
+
+    /// Devices to format for the filesystem.
+    #[clap(required(true))]
+    devices: Vec<DevicePathBuf>,
+}
+
+fn create_pool(options: PoolCreateOptions) -> Result<()> {
+    debug!("Command 'create_pool': {:?}", options);
+    //let mut entities = storage::load_entity_state();
+
+    todo!();
+    // create filesystem (via fs?)
+    // mount (via fs)
+    // let new_pool = BtrfsPool::new(options.name, options.mountpoint)?;
+    // entities.attach_pool(new_pool.take_model())?;
+
+    //storage::store_entity_state(entities);
+    Ok(())
+}
 
 #[derive(Clap, Debug)]
 struct PoolAttachOptions {

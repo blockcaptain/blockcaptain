@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
-use fs::FsPathBuf;
+use fs::{DevicePathBuf, FsPathBuf};
 
 macro_rules! btrfs_cmd {
     ( $( $arg:expr ),+ ) => {
@@ -24,7 +24,7 @@ macro_rules! btrfs_cmd {
 #[derive(Debug, PartialEq)]
 pub struct Filesystem {
     pub uuid: Uuid,
-    pub devices: Vec<PathBuf>,
+    pub devices: Vec<DevicePathBuf>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -48,8 +48,8 @@ impl QueriedFilesystem {
 }
 
 impl Filesystem {
-    pub fn query_device(device: &Path) -> Result<QueriedFilesystem> {
-        Self::query_raw(device.as_os_str())
+    pub fn query_device(device: &DevicePathBuf) -> Result<QueriedFilesystem> {
+        Self::query_raw(device.as_pathbuf().as_os_str())
     }
 
     pub fn query_uuid(uuid: &Uuid) -> Result<QueriedFilesystem> {
@@ -231,12 +231,12 @@ mod tests {
         let ctx = MockFakeCmd::data_context();
         ctx.expect().returning(|| BTRFS_DATA.to_string());
 
-        if let QueriedFilesystem::Unmounted(fs) = Filesystem::query_device(&PathBuf::from("/dev/sdb")).unwrap() {
+        if let QueriedFilesystem::Unmounted(fs) = Filesystem::query_device(&DevicePathBuf::try_from("/dev/sdb").unwrap()).unwrap() {
             assert_eq!(
                 fs,
                 Filesystem {
                     uuid: Uuid::parse_str("338a0b41-e857-4e5b-6544-6fd617277722").unwrap(),
-                    devices: vec![PathBuf::from("/dev/sdb"), PathBuf::from("/dev/sdd")]
+                    devices: vec![DevicePathBuf::try_from("/dev/sdb").unwrap(), DevicePathBuf::try_from("/dev/sdd").unwrap()]
                 }
             );
         } else {

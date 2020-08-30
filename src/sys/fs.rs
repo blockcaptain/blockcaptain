@@ -1,18 +1,20 @@
 use crate::parsing::{parse_key_value_data, StringPair};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context, Result, Error};
 use mnt;
 use mnt::{MountEntry, MountIter};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::path::{Path,PathBuf};
+use std::path::{Path,PathBuf, Component};
 use std::str::FromStr;
 use std::ffi::OsStr;
 use uuid::Uuid;
 
+// ## Filesystem Relative PathBuf ####################################################################################
+
 // File-system relative path. PathBufs are considered root relative.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash)]
-pub struct FsPathBuf(PathBuf); // Todo see https://github.com/iqlusioninc/crates/blob/develop/canonical-path/src/lib.rs
+pub struct FsPathBuf(PathBuf);
 
 impl FsPathBuf {
     pub fn as_pathbuf(&self, mount_path: &Path) -> PathBuf {
@@ -29,8 +31,8 @@ impl FsPathBuf {
 }
 
 impl<T: ?Sized + AsRef<OsStr>> From<&T> for FsPathBuf {
-    fn from(s: &T) -> FsPathBuf {
-        FsPathBuf(PathBuf::from(s))
+    fn from(s: &T) -> Self {
+        Self(PathBuf::from(s))
     }
 }
 
@@ -41,6 +43,47 @@ impl FromStr for FsPathBuf {
         Ok(FsPathBuf::from(s))
     }
 }
+
+// ## Device PathBuf #################################################################################################
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub struct DevicePathBuf(PathBuf);
+
+impl DevicePathBuf {
+    pub fn as_pathbuf(&self) -> PathBuf {
+        self.0.clone()
+    }
+
+    // Not using trait due to https://github.com/rust-lang/rust/issues/50133
+    // Conflict with the blanket impl of into for tryfrom
+    pub fn try_from<T: ?Sized + AsRef<Path>>(s: &T) -> Result<Self> {
+        let mut iter = s.as_ref().components();
+        if let Some(c) = iter.next() {
+            if let Component::RootDir = c {
+                if let Some(c) = iter.next() {
+                    if let Component::Normal(d) = c {
+                        if d == "dev" {
+                            if let Some(_) = iter.next() {
+                                return Ok(Self(s.as_ref().to_owned()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(anyhow!("Device path must be within /dev/."))
+    }
+}
+
+impl FromStr for DevicePathBuf {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(s)
+    }
+}
+
+// ## Filesystem Mounting ############################################################################################
 
 const MOUNT_EXPECTATION: &str = "All entries in mount list must be parsable.";
 
@@ -53,10 +96,10 @@ pub fn lookup_mountentry(target: &Path) -> Option<MountEntry> {
     })
 }
 
-pub fn lookup_mountentries_by_devices(devices: &Vec<PathBuf>) -> impl Iterator<Item = MountEntry> + '_ {
+pub fn lookup_mountentries_by_devices(devices: &Vec<DevicePathBuf>) -> impl Iterator<Item = MountEntry> + '_ {
     let iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
     iter.filter_map(move |m| match m.expect(MOUNT_EXPECTATION) {
-        m if devices.contains(&PathBuf::from(&m.spec)) => Some(m),
+        m if devices.contains(&DevicePathBuf::try_from(&m.spec).expect("FIXME: Shoudl be a device")) => Some(m),
         _ => None
     })
 }
@@ -184,9 +227,9 @@ pub struct BlockDeviceIds {
 }
 
 impl BlockDeviceIds {
-    pub fn lookup(device_name: &str) -> Result<Self> {
+    pub fn lookup(device_name: &DevicePathBuf) -> Result<Self> {
         const PROCESS_NAME: &str = "blkid";
-        let output_data = duct_cmd!(PROCESS_NAME, "-o", "export", device_name)
+        let output_data = duct_cmd!(PROCESS_NAME, "-o", "export", device_name.as_pathbuf())
             .read()
             .context(format!("Failed to run {} to get device information.", PROCESS_NAME))?;
 
@@ -394,7 +437,7 @@ mod tests {
         let ctx = MockFakeCmd::data_context();
         ctx.expect().returning(|| BLKID_DATA.to_string());
         assert_eq!(
-            BlockDeviceIds::lookup("/dev/nvme0n1p2").unwrap(),
+            BlockDeviceIds::lookup(&DevicePathBuf::try_from("/dev/nvme0n1p2").unwrap()).unwrap(),
             BlockDeviceIds {
                 name: String::from("/dev/nvme0n1p2"),
                 label: Some(String::from("default"),),

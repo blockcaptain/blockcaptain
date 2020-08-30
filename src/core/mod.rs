@@ -26,7 +26,7 @@ impl BtrfsPool {
             bail!("Mountpoint must be the fstree (top-level) subvolume.");
         }
 
-        let btrfs_info = Filesystem::query_device(&mountpoint)
+        let btrfs_info = Filesystem::query_path(&mountpoint)
             .expect("Valid btrfs mount should have filesystem info.")
             .unwrap_mounted()
             .context("Validated top-level mount point didn't yield a mounted filesystem.")?;
@@ -35,7 +35,7 @@ impl BtrfsPool {
             .filesystem
             .devices
             .iter()
-            .map(|d| BlockDeviceIds::lookup(d.to_str().expect("Device path should convert to string.")))
+            .map(|d| BlockDeviceIds::lookup(d))
             .collect::<Result<Vec<BlockDeviceIds>>>()
             .context("All devices for a btrfs filesystem should resolve with blkid.")?;
 
@@ -366,6 +366,7 @@ fn _transfer_delta_snapshot(
     let pipe_expr = send_expr.pipe(receive_expr);
     pipe_expr.run()?;
 
+    // todo get the single subvol instead by path
     let snapshots = container.snapshots(dataset.model())?;
     snapshots
         .into_iter()

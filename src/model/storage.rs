@@ -18,6 +18,8 @@ pub fn load_entity_state() -> model::Entities {
 
 pub fn store_entity_state(entities: model::Entities) -> () {
     // need the libc renameat2 PR merged to make this safe.
+    // need to use humantime serde, but the dependency versions were too specific which would cause downgrades.
+    // store any state seperate from entities.
 
     let path = Path::new("/etc/blkcapt");
     if !path.exists() {

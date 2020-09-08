@@ -13,7 +13,6 @@ envy = "0.4"
 anyhow = "1.0.31"
 thiserror = "1.0.20"
 mnt = "0.3.1"
-btrfsutil = "0.1.0"
 log = "0.4"
 pretty_env_logger = "0.4"
 regex = "1.3"
@@ -22,7 +21,9 @@ lazy_static = "1.4"
 human-panic = "1.0"
 strum = "0.19"
 strum_macros = "0.19"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+humantime = "2.0"
+comfy-table = "1.1"
 
 [dev-dependencies]
 mockall = "0.7"

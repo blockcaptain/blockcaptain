@@ -1,9 +1,10 @@
 use super::{Entity, EntityType};
+use crate::sys::fs::FsPathBuf;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::{default::Default, time::Duration, num::NonZeroU32};
 use uuid::Uuid;
-use crate::sys::fs::FsPathBuf;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsPoolEntity {
@@ -81,6 +82,14 @@ impl Entity for BtrfsPoolEntity {
     }
 }
 
+// Why can't i make this generic over T?? I don't understand relationship
+// of sized and generic trait bounds on references.
+impl<'a> AsRef<dyn Entity + 'a> for BtrfsPoolEntity {
+    fn as_ref(&self) -> &(dyn Entity + 'a) {
+        self
+    }
+}
+
 pub trait SubvolumeEntity: Entity {
     fn path(&self) -> &FsPathBuf;
     fn uuid(&self) -> &Uuid;
@@ -89,9 +98,13 @@ pub trait SubvolumeEntity: Entity {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsDatasetEntity {
     id: Uuid,
-    name: String,
-    path: FsPathBuf,
-    uuid: Uuid,
+    pub name: String,
+    pub path: FsPathBuf,
+    pub uuid: Uuid,
+    pub snapshot_frequency: Option<Duration>,
+    pub pause_snapshotting: bool,
+    pub snapshot_retention: Option<RetentionRuleset>,
+    pub pause_pruning: bool,
 }
 
 impl SubvolumeEntity for BtrfsDatasetEntity {
@@ -122,6 +135,10 @@ impl BtrfsDatasetEntity {
             name: name,
             path: subvolume_path,
             uuid: subvolume_uuid,
+            snapshot_frequency: None,
+            snapshot_retention: None,
+            pause_pruning: false,
+            pause_snapshotting: false,
         })
     }
 }
@@ -193,4 +210,32 @@ impl Entity for SnapshotSyncEntity {
     fn entity_type(&self) -> EntityType {
         EntityType::SnapshotSync
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RetentionRuleset {
+    pub interval: Vec<IntervalSpec>,
+    pub newest_count: NonZeroU32,
+}
+
+impl Default for RetentionRuleset {
+    fn default() -> Self {
+        Self {
+            interval: Default::default(),
+            newest_count: NonZeroU32::new(1).unwrap(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct IntervalSpec {
+    pub repeat: u32,
+    pub duration: Duration,
+    pub keep: KeepSpec,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum KeepSpec {
+    Newest(u32),
+    All,
 }

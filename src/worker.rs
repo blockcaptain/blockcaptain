@@ -1,8 +1,13 @@
-use crate::core::{self, BtrfsContainer, BtrfsContainerSnapshot, BtrfsDataset, BtrfsDatasetSnapshot};
-use crate::model::Entity;
+use crate::model::{entities::KeepSpec, Entity};
+use crate::{
+    core::{self, BtrfsContainer, BtrfsContainerSnapshot, BtrfsDataset, BtrfsDatasetSnapshot},
+    model::entities::RetentionRuleset,
+};
 use anyhow::Result;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use log::*;
+use std::{convert::TryFrom, num::NonZeroUsize};
+use std::{iter::repeat, num::NonZeroU32};
 
 pub trait Job {
     fn run(&self) -> Result<()>;
@@ -180,5 +185,124 @@ impl<'a> Job for LocalSyncJob<'a> {
 
     fn next_check(&self) -> Result<Duration> {
         Ok(Duration::minutes(10))
+    }
+}
+
+pub struct LocalPruneJob<'a> {
+    dataset: &'a BtrfsDataset,
+}
+
+impl<'a> LocalPruneJob<'a> {
+    pub fn new(dataset: &'a BtrfsDataset) -> Self {
+        Self { dataset }
+    }
+}
+
+impl<'a> Job for LocalPruneJob<'a> {
+    fn run(&self) -> Result<()> {
+        let rules = self.dataset.model().snapshot_retention.as_ref().expect("Validated by is_ready.");
+        let evaluation = evaluate_retention(self.dataset.snapshots()?, rules)?;
+
+        if log_enabled!(Level::Trace) {
+            for snapshot in evaluation.keep_interval_buckets.iter().flat_map(|b| b.snapshots.iter()) {
+                trace!("Keeping snapshot {:?} reason: in retention interval.", snapshot.path());
+            }
+
+            for snapshot in evaluation.keep_minimum_snapshots.iter() {
+                trace!("Keeping snapshot {:?} reason: keep minimum newest.", snapshot.path());
+            }
+        }
+        
+        for snapshot in evaluation.drop_snapshots {
+            info!("Snapshot {:?} is being pruned because it did not meet any retention criteria.", snapshot.path());
+            //TODO delete the snapshot.
+        }
+
+        Ok(())
+    }
+
+    fn next_check(&self) -> Result<Duration> {
+        Ok(Duration::hours(1))
+    }
+
+    fn is_ready(&self) -> Result<bool> {
+        Ok(self.dataset.model().snapshot_retention.is_some() && !self.dataset.model().pause_pruning)
+    }
+}
+
+pub fn evaluate_retention(
+    mut snapshots: Vec<BtrfsDatasetSnapshot>,
+    rules: &RetentionRuleset,
+) -> Result<RetentionEvaluation> {
+    snapshots.sort_unstable_by(|a, b| b.datetime().cmp(&a.datetime()));
+    let snapshots = snapshots;
+
+    let begin_time = snapshots[0].datetime();
+    let mut keep_interval_buckets = rules
+        .interval
+        .iter()
+        .flat_map(|m| repeat(m).take(usize::try_from(m.repeat.get()).unwrap()))
+        .scan(begin_time, |end_time_state, sm| {
+            *end_time_state = *end_time_state - chrono::Duration::from_std(sm.duration).unwrap();
+            Some(RetainBucket::new(sm.keep, *end_time_state))
+        })
+        .collect::<Vec<_>>();
+
+    let mut keep_minimum_snapshots = vec![];
+    let mut drop_snapshots = vec![];
+    let mut bucket_iter = keep_interval_buckets.iter_mut();
+    let mut current_bucket = bucket_iter.next().unwrap();
+    for (index, snapshot) in snapshots.into_iter().enumerate() {
+        let out_of_interval_range = loop {
+            if snapshot.datetime() < current_bucket.end_time {
+                if let Some(bucket) = bucket_iter.next() {
+                    current_bucket = bucket;
+                } else {
+                    break true;
+                }
+            } else {
+                break false;
+            }
+        };
+
+        if !out_of_interval_range && current_bucket.snapshots.len() < current_bucket.max_fill.get() {
+            current_bucket.snapshots.push(snapshot);
+        } else if index < usize::try_from(rules.newest_count.get()).unwrap() {
+            keep_minimum_snapshots.push(snapshot);
+        } else {
+            drop_snapshots.push(snapshot);
+        }
+    }
+
+    Ok(RetentionEvaluation {
+        drop_snapshots,
+        keep_minimum_snapshots,
+        keep_interval_buckets,
+    })
+}
+
+pub struct RetentionEvaluation {
+    pub drop_snapshots: Vec<BtrfsDatasetSnapshot>,
+    pub keep_minimum_snapshots: Vec<BtrfsDatasetSnapshot>,
+    pub keep_interval_buckets: Vec<RetainBucket>,
+}
+
+#[derive(Debug)]
+pub struct RetainBucket {
+    pub snapshots: Vec<BtrfsDatasetSnapshot>,
+    pub max_fill: NonZeroUsize,
+    pub end_time: chrono::DateTime<Utc>,
+}
+
+impl RetainBucket {
+    fn new(keep: KeepSpec, end_time: DateTime<Utc>) -> Self {
+        Self {
+            snapshots: Default::default(),
+            max_fill: match keep {
+                KeepSpec::Newest(n) => NonZeroUsize::new(usize::try_from(n.get()).unwrap()).unwrap(),
+                KeepSpec::All => NonZeroUsize::new(usize::MAX).unwrap(),
+            },
+            end_time: end_time,
+        }
     }
 }

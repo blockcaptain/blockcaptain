@@ -229,13 +229,13 @@ impl Default for RetentionRuleset {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct IntervalSpec {
-    pub repeat: u32,
+    pub repeat: NonZeroU32,
     pub duration: Duration,
     pub keep: KeepSpec,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum KeepSpec {
-    Newest(u32),
+    Newest(NonZeroU32),
     All,
 }

@@ -324,15 +324,14 @@ impl FromStr for IntervalSpecArg {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // UPDATE ME to make REPEAT OPTIONAL
         let outter = s.split(":").collect::<Vec<_>>();
         let inner = outter[0].split("x").collect::<Vec<_>>();
         if inner.len() > 2 || outter.len() > 2 {
             bail!("Interval format is [<Repeat>x]<Duration>[:<Count>].");
         };
         let (repeat, duration) = match inner.len() {
-            2 => (u32::from_str(inner[0])?, inner[1]),
-            1 => (1, inner[0]),
+            2 => (NonZeroU32::from_str(inner[0])?, inner[1]),
+            1 => (NonZeroU32::new(1).unwrap(), inner[0]),
             _ => unreachable!()
         };
         Ok(Self(IntervalSpec {
@@ -341,9 +340,9 @@ impl FromStr for IntervalSpecArg {
             keep: match outter.len() {
                 2 => match outter[1] {
                     "all" => KeepSpec::All,
-                    s => KeepSpec::Newest(u32::from_str(s)?)
+                    s => KeepSpec::Newest(NonZeroU32::from_str(s)?)
                 },
-                1 => KeepSpec::Newest(1),
+                1 => KeepSpec::Newest(NonZeroU32::new(1).unwrap()),
                 _ => unreachable!()
             },
         }))

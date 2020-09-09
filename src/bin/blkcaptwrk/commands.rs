@@ -2,13 +2,14 @@ use anyhow::Result;
 use blkcapt::core::{BtrfsDataset, BtrfsPool, BtrfsContainer};
 use blkcapt::model::storage;
 use blkcapt::model::Entity;
-use blkcapt::worker::{Job, LocalSnapshotJob, LocalSyncJob};
+use blkcapt::worker::{Job, LocalSnapshotJob, LocalSyncJob, LocalPruneJob};
 use log::*;
 use std::rc::Rc;
 
 pub fn service() -> Result<()> {
     let entities = storage::load_entity_state();
 
+    // should these have into iters and consume the models?
     let pools = entities
         .pools()
         .map(|p| BtrfsPool::validate(p.clone()).map(Rc::new))
@@ -35,6 +36,7 @@ pub fn service() -> Result<()> {
     let mut jobs = Vec::<Box<dyn Job>>::new();
     for dataset in datasets.iter() {
         jobs.push(Box::new(LocalSnapshotJob::new(dataset)));
+        jobs.push(Box::new(LocalPruneJob::new(dataset)));
     }
     for sync in entities.snapshot_syncs() {
         let sync_dataset = datasets.iter().find(|d| d.model().id() == sync.dataset_id()).expect("FIXME");

@@ -99,7 +99,7 @@ pub fn lookup_mountentry(target: &Path) -> Option<MountEntry> {
 pub fn lookup_mountentries_by_devices(devices: &Vec<DevicePathBuf>) -> impl Iterator<Item = MountEntry> + '_ {
     let iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
     iter.filter_map(move |m| match m.expect(MOUNT_EXPECTATION) {
-        m if devices.contains(&DevicePathBuf::try_from(&m.spec).expect("FIXME: Shoudl be a device")) => Some(m),
+        m if DevicePathBuf::try_from(&m.spec).and_then(|dp| Ok(devices.contains(&dp))).unwrap_or_default()  => Some(m),
         _ => None
     })
 }

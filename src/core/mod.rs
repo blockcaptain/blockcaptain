@@ -216,6 +216,10 @@ impl BtrfsDatasetSnapshot {
         self.subvolume.uuid
     }
 
+    pub fn path(&self) -> &FsPathBuf {
+        &self.subvolume.path
+    }
+
     pub fn parent_uuid(&self) -> Option<Uuid> {
         self.subvolume.parent_uuid
     }

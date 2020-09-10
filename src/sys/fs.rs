@@ -28,6 +28,10 @@ impl FsPathBuf {
     pub fn join<P: AsRef<Path>>(&self, path: P) -> Self {
         Self(self.0.join(path))
     }
+
+    pub fn push<P: AsRef<Path>>(&mut self, path: P) {
+        self.0.push(path);
+    }
 }
 
 impl<T: ?Sized + AsRef<OsStr>> From<&T> for FsPathBuf {

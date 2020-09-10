@@ -8,6 +8,7 @@ use log::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::{cell::RefCell, convert::TryFrom, mem, rc::Rc};
+use thiserror::Error;
 use uuid::Uuid;
 
 const BLKCAPT_FS_META_DIR: &str = ".blkcapt";
@@ -47,10 +48,11 @@ impl BtrfsPool {
             })
             .collect::<Result<Vec<Uuid>>>()?;
 
-        let meta_dir = mountpoint.join(BLKCAPT_FS_META_DIR);
-        if !meta_dir.exists() {
+        let meta_dir = FsPathBuf::from(BLKCAPT_FS_META_DIR);
+        let mounted_meta_dir = meta_dir.as_pathbuf(&mountpoint);
+        if !mounted_meta_dir.exists() {
             info!("Attached to new filesystem. Creating blkcapt dir.");
-            fs::create_dir(&meta_dir)?;
+            fs::create_dir(&mounted_meta_dir)?;
             btrfs_info.create_subvolume(&meta_dir.join("snapshots"))?;
         }
 
@@ -90,18 +92,21 @@ pub struct BtrfsDataset {
 }
 
 impl BtrfsDataset {
-    pub fn new(pool: Rc<BtrfsPool>, name: String, path: PathBuf) -> Result<Self> {
+    pub fn new(pool: &Rc<BtrfsPool>, name: String, path: PathBuf) -> Result<Self> {
         let subvolume = Subvolume::from_path(&path).context("Path does not resolve to a subvolume.")?;
 
         let dataset = Self {
             model: BtrfsDatasetEntity::new(name, subvolume.path.clone(), subvolume.uuid)?,
             subvolume: subvolume,
-            pool: pool,
+            pool: Rc::clone(pool),
             snapshots: RefCell::new(Option::None),
         };
 
         let snapshot_path = dataset.snapshot_container_path();
-        if !dataset.pool.filesystem.fstree_mountpoint.join(&snapshot_path).exists() {
+        if !snapshot_path
+            .as_pathbuf(&dataset.pool.filesystem.fstree_mountpoint)
+            .exists()
+        {
             info!("Attached to new dataset. Creating local snap container.");
             dataset.pool.filesystem.create_subvolume(&snapshot_path)?;
         }
@@ -114,22 +119,19 @@ impl BtrfsDataset {
         let snapshot_path = self
             .snapshot_container_path()
             .join(now.format("%FT%H-%M-%SZ").to_string());
-        self.pool
-            .filesystem
-            .snapshot_subvolume(&self.subvolume, &snapshot_path)?;
+        self.pool.filesystem.create_snapshot(&self.subvolume, &snapshot_path)?;
         self.invalidate_snapshots();
+        // TODO: return the new snapshot.
         Ok(())
     }
 
-    pub fn snapshots(&self) -> Result<Vec<BtrfsDatasetSnapshot>> {
+    pub fn snapshots(self: &Rc<Self>) -> Result<Vec<BtrfsDatasetSnapshot>> {
         if self.snapshots.borrow().is_none() {
             *self.snapshots.borrow_mut() = Some(
                 Subvolume::list_subvolumes(
                     &self
-                        .pool
-                        .filesystem
-                        .fstree_mountpoint
-                        .join(self.snapshot_container_path()),
+                        .snapshot_container_path()
+                        .as_pathbuf(&self.pool.filesystem.fstree_mountpoint),
                 )?
                 .into_iter()
                 .filter_map(|s| {
@@ -143,6 +145,7 @@ impl BtrfsDataset {
                         Ok(d) => Some(BtrfsDatasetSnapshot {
                             subvolume: s,
                             datetime: DateTime::<Utc>::from_utc(d, Utc),
+                            dataset: Rc::clone(self),
                         }),
                         Err(_) => None,
                     }
@@ -157,14 +160,14 @@ impl BtrfsDataset {
         *self.snapshots.borrow_mut() = None;
     }
 
-    pub fn latest_snapshot(&self) -> Result<Option<BtrfsDatasetSnapshot>> {
+    pub fn latest_snapshot(self: &Rc<Self>) -> Result<Option<BtrfsDatasetSnapshot>> {
         let mut snapshots = self.snapshots()?;
         snapshots.sort_unstable_by_key(|s| s.datetime);
         Ok(snapshots.pop())
     }
 
-    pub fn snapshot_container_path(&self) -> PathBuf {
-        let mut builder = PathBuf::from(BLKCAPT_FS_META_DIR);
+    pub fn snapshot_container_path(&self) -> FsPathBuf {
+        let mut builder = FsPathBuf::from(BLKCAPT_FS_META_DIR);
         builder.push("snapshots");
         builder.push(self.model.id().to_string());
         builder
@@ -178,7 +181,7 @@ impl BtrfsDataset {
         self.subvolume.parent_uuid
     }
 
-    pub fn validate(pool: Rc<BtrfsPool>, model: BtrfsDatasetEntity) -> Result<Self> {
+    pub fn validate(pool: &Rc<BtrfsPool>, model: BtrfsDatasetEntity) -> Result<Self> {
         let subvolume = pool
             .filesystem
             .subvolume_by_uuid(model.uuid())
@@ -187,7 +190,7 @@ impl BtrfsDataset {
         Ok(Self {
             model: model,
             subvolume: subvolume,
-            pool: pool,
+            pool: Rc::clone(pool),
             snapshots: RefCell::new(Option::None),
         })
     }
@@ -205,6 +208,7 @@ impl BtrfsDataset {
 pub struct BtrfsDatasetSnapshot {
     subvolume: Subvolume,
     datetime: DateTime<Utc>,
+    dataset: Rc<BtrfsDataset>,
 }
 
 impl BtrfsDatasetSnapshot {
@@ -227,6 +231,21 @@ impl BtrfsDatasetSnapshot {
     pub fn received_uuid(&self) -> Option<Uuid> {
         self.subvolume.received_uuid
     }
+
+    pub fn delete(self) -> Result<(), SnapshotDeleteError> {
+        self.dataset.pool.filesystem.delete(self.path()).map_err(|e| SnapshotDeleteError {
+            source: e,
+            snapshot: self,
+        })
+    }
+}
+
+#[derive(Error, Debug)]
+#[error("{source}")]
+pub struct SnapshotDeleteError {
+    #[source]
+    source: anyhow::Error,
+    snapshot: BtrfsDatasetSnapshot,
 }
 
 #[derive(Debug)]
@@ -237,13 +256,13 @@ pub struct BtrfsContainer {
 }
 
 impl BtrfsContainer {
-    pub fn new(pool: Rc<BtrfsPool>, name: String, path: PathBuf) -> Result<Self> {
+    pub fn new(pool: &Rc<BtrfsPool>, name: String, path: PathBuf) -> Result<Self> {
         let subvolume = Subvolume::from_path(&path).context("Path does not resolve to a subvolume.")?;
 
         let dataset = Self {
             model: BtrfsContainerEntity::new(name, subvolume.path.clone(), subvolume.uuid)?,
             subvolume: subvolume,
-            pool: pool,
+            pool: Rc::clone(pool),
         };
 
         Ok(dataset)
@@ -278,7 +297,7 @@ impl BtrfsContainer {
         self.subvolume.path.join(dataset.id().to_string())
     }
 
-    pub fn validate(pool: Rc<BtrfsPool>, model: BtrfsContainerEntity) -> Result<Self> {
+    pub fn validate(pool: &Rc<BtrfsPool>, model: BtrfsContainerEntity) -> Result<Self> {
         let subvolume = pool
             .filesystem
             .subvolume_by_uuid(model.uuid())
@@ -287,7 +306,7 @@ impl BtrfsContainer {
         Ok(Self {
             model: model,
             subvolume: subvolume,
-            pool: pool,
+            pool: Rc::clone(pool),
         })
     }
 
@@ -349,18 +368,20 @@ fn _transfer_delta_snapshot(
     snapshot: &BtrfsDatasetSnapshot,
     container: &BtrfsContainer,
 ) -> Result<BtrfsContainerSnapshot> {
-    let source_snap_path = snapshot.subvolume.path.as_pathbuf(&dataset.pool.filesystem.fstree_mountpoint);
-    let container_path = container.snapshot_container_path(dataset.model()).as_pathbuf(&container
-        .pool
-        .filesystem
-        .fstree_mountpoint);
+    let source_snap_path = snapshot
+        .subvolume
+        .path
+        .as_pathbuf(&dataset.pool.filesystem.fstree_mountpoint);
+    let container_path = container
+        .snapshot_container_path(dataset.model())
+        .as_pathbuf(&container.pool.filesystem.fstree_mountpoint);
 
     let send_expr = match parent {
         Some(parent_snapshot) => {
-            let parent_snap_path = parent_snapshot.subvolume.path.as_pathbuf(&dataset
-                .pool
-                .filesystem
-                .fstree_mountpoint);
+            let parent_snap_path = parent_snapshot
+                .subvolume
+                .path
+                .as_pathbuf(&dataset.pool.filesystem.fstree_mountpoint);
             duct_cmd!("btrfs", "send", "-p", parent_snap_path, source_snap_path)
         }
         None => duct_cmd!("btrfs", "send", source_snap_path),

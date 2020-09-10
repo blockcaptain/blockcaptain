@@ -2,7 +2,7 @@ pub mod entities;
 pub mod storage;
 
 use anyhow::{anyhow, Result};
-use entities::{BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, SnapshotSyncEntity};
+use entities::{BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, SnapshotSyncEntity, HealthchecksObserverEntity};
 use serde::{Deserialize, Serialize};
 use std::iter::repeat;
 use std::{borrow::Borrow, path::Path};
@@ -13,16 +13,17 @@ use uuid::Uuid;
 pub struct Entities {
     pub btrfs_pools: Vec<BtrfsPoolEntity>,
     pub snapshot_syncs: Vec<SnapshotSyncEntity>,
+    pub observers: Vec<HealthchecksObserverEntity>,
 }
 
 impl Entities {
     pub fn attach_pool(&mut self, pool: BtrfsPoolEntity) -> Result<()> {
-        self.pool(&pool.name)
-            .map_or(Ok(()), |p| Err(anyhow!("Pool name '{}' already exists.", p.name)))?;
+        self.pool(&pool.name())
+            .map_or(Ok(()), |p| Err(anyhow!("Pool name '{}' already exists.", p.name())))?;
         self.pool_by_uuid(&pool.uuid)
-            .map_or(Ok(()), |p| Err(anyhow!("uuid already used by pool {}.", p.name)))?;
+            .map_or(Ok(()), |p| Err(anyhow!("uuid already used by pool {}.", p.name())))?;
         self.pool_by_mountpoint(&pool.mountpoint_path)
-            .map_or(Ok(()), |p| Err(anyhow!("mountpoint already used by pool {}.", p.name)))?;
+            .map_or(Ok(()), |p| Err(anyhow!("mountpoint already used by pool {}.", p.name())))?;
 
         self.btrfs_pools.push(pool);
         Ok(())
@@ -41,7 +42,7 @@ impl Entities {
     }
 
     pub fn pool(&self, name: &str) -> Option<&BtrfsPoolEntity> {
-        self.btrfs_pools.iter().find(|p| p.name == name)
+        self.btrfs_pools.iter().find(|p| p.name() == name)
     }
 
     pub fn datasets(&self) -> impl Iterator<Item = EntityPath<BtrfsDatasetEntity, BtrfsPoolEntity>> {
@@ -121,6 +122,7 @@ pub enum EntityType {
     Dataset,
     Container,
     SnapshotSync,
+    Observer,
 }
 
 pub trait Entity {

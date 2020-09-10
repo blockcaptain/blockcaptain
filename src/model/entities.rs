@@ -8,8 +8,8 @@ use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsPoolEntity {
-    pub id: Uuid,
-    pub name: String,
+    id: Uuid,
+    name: String,
     pub mountpoint_path: PathBuf,
     pub uuid: Uuid,
     pub uuid_subs: Vec<Uuid>,
@@ -98,9 +98,10 @@ pub trait SubvolumeEntity: Entity {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsDatasetEntity {
     id: Uuid,
-    pub name: String,
+    name: String,
     pub path: FsPathBuf,
     pub uuid: Uuid,
+    #[serde(with = "humantime_serde")]
     pub snapshot_frequency: Option<Duration>,
     pub pause_snapshotting: bool,
     pub snapshot_retention: Option<RetentionRuleset>,
@@ -230,12 +231,60 @@ impl Default for RetentionRuleset {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct IntervalSpec {
     pub repeat: NonZeroU32,
+    #[serde(with = "humantime_serde")]
     pub duration: Duration,
     pub keep: KeepSpec,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum KeepSpec {
     Newest(NonZeroU32),
     All,
+}
+
+// ## Observer #######################################################################################################
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HealthchecksObserverEntity {
+    id: Uuid,
+    name: String,
+    pub custom_url: Option<String>,
+    pub observations: Vec<HealthchecksObservation>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HealthchecksObservation {
+    #[serde(flatten)]
+    pub observation: Observation,
+    pub healthcheck_id: Uuid,
+}
+
+impl Entity for HealthchecksObserverEntity {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn id(&self) -> Uuid {
+        self.id
+    }
+    fn entity_type(&self) -> EntityType {
+        EntityType::Observer
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Observation {
+    pub entity_id: Uuid,
+    pub event: ObservableEvent,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservableEvent {
+    WorkerHeartbeat,
+    DatasetSnapshot,
+    DatasetPrune,
+    ContainerPrune,
+    SnapshotSync,
+    PoolScrub,
 }

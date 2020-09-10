@@ -23,6 +23,7 @@ strum = "0.19"
 strum_macros = "0.19"
 chrono = { version = "0.4", features = ["serde"] }
 humantime = "2.0"
+humantime-serde = "1.0"
 comfy-table = "1.1"
 
 [dev-dependencies]

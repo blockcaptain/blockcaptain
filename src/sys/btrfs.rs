@@ -3,6 +3,7 @@ use crate::parsing::{parse_key_value_pair_lines, StringPair};
 use crate::process::read_with_stderr_context;
 use anyhow::{anyhow, bail, Context, Result};
 use duct;
+use fs::{DevicePathBuf, FsPathBuf};
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
 use serde::Deserialize;
@@ -13,7 +14,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
-use fs::{DevicePathBuf, FsPathBuf};
 
 macro_rules! btrfs_cmd {
     ( $( $arg:expr ),+ ) => {
@@ -122,34 +122,44 @@ impl MountedFilesystem {
         Subvolume::_parse(output_data)
     }
 
-    pub fn subvolume_by_path(&self, path: &Path) -> Result<Subvolume> {
-        Subvolume::from_path(&self.fstree_mountpoint.join(path))
+    pub fn subvolume_by_path(&self, path: &FsPathBuf) -> Result<Subvolume> {
+        Subvolume::from_path(&path.as_pathbuf(&self.fstree_mountpoint))
     }
 
-    pub fn snapshot_subvolume(&self, subvolume: &Subvolume, path: &Path) -> Result<()> {
-        let target_path = self.fstree_mountpoint.join(path);
+    pub fn create_snapshot(&self, subvolume: &Subvolume, path: &FsPathBuf) -> Result<()> {
+        let target_path = path.as_pathbuf(&self.fstree_mountpoint);
         if target_path.exists() {
             bail!("Path to new snapshot, {:?}, already exists!", &target_path)
         }
-        let _ = btrfs_cmd!(
+        btrfs_cmd!(
             "subvolume",
             "snapshot",
             "-r",
             subvolume.path.as_pathbuf(&self.fstree_mountpoint),
             target_path
         )
-        .context(format!("Failed to create btrfs snapshot at {:?}.", path))?;
-        Ok(())
+        .context(format!("Failed to create btrfs snapshot at {:?}.", path))
+        .map(|_| ())
     }
 
-    pub fn create_subvolume(&self, path: &Path) -> Result<()> {
-        let target_path = self.fstree_mountpoint.join(path);
+    pub fn create_subvolume(&self, path: &FsPathBuf) -> Result<()> {
+        let target_path = path.as_pathbuf(&self.fstree_mountpoint);
         if target_path.exists() {
             bail!("Path to new subvolume, {:?}, already exists!", &target_path)
         }
-        let _ = btrfs_cmd!("subvolume", "create", target_path)
-            .context(format!("Failed to create btrfs subvolume at {:?}.", path))?;
-        Ok(())
+        btrfs_cmd!("subvolume", "create", target_path)
+            .context(format!("Failed to create btrfs subvolume at {:?}.", path))
+            .map(|_| ())
+    }
+
+    pub fn delete(&self, path: &FsPathBuf) -> Result<()> {
+        let target_path = path.as_pathbuf(&self.fstree_mountpoint);
+        if !target_path.exists() {
+            bail!("Path to subvolume, {:?}, is non-existant!", &target_path)
+        }
+        btrfs_cmd!("subvolume", "delete", target_path)
+            .context(format!("Failed to delete btrfs subvolume at {:?}.", path))
+            .map(|_| ())
     }
 }
 
@@ -231,12 +241,17 @@ mod tests {
         let ctx = MockFakeCmd::data_context();
         ctx.expect().returning(|| BTRFS_DATA.to_string());
 
-        if let QueriedFilesystem::Unmounted(fs) = Filesystem::query_device(&DevicePathBuf::try_from("/dev/sdb").unwrap()).unwrap() {
+        if let QueriedFilesystem::Unmounted(fs) =
+            Filesystem::query_device(&DevicePathBuf::try_from("/dev/sdb").unwrap()).unwrap()
+        {
             assert_eq!(
                 fs,
                 Filesystem {
                     uuid: Uuid::parse_str("338a0b41-e857-4e5b-6544-6fd617277722").unwrap(),
-                    devices: vec![DevicePathBuf::try_from("/dev/sdb").unwrap(), DevicePathBuf::try_from("/dev/sdd").unwrap()]
+                    devices: vec![
+                        DevicePathBuf::try_from("/dev/sdb").unwrap(),
+                        DevicePathBuf::try_from("/dev/sdd").unwrap()
+                    ]
                 }
             );
         } else {
@@ -322,7 +337,9 @@ mod tests {
                     received_uuid: None,
                 },
                 Subvolume {
-                    path: FsPathBuf::from(".blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7/2020-08-26T21-25-26Z"),
+                    path: FsPathBuf::from(
+                        ".blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7/2020-08-26T21-25-26Z"
+                    ),
                     uuid: Uuid::parse_str("269b40d7-e072-954e-9138-04cbef62a13f").unwrap(),
                     parent_uuid: Some(Uuid::parse_str("8a7ae0b5-b28c-b240-8c07-0015431d58d8").unwrap()),
                     received_uuid: None,

@@ -229,7 +229,7 @@ fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
     });
 
     let pool = Rc::new(BtrfsPool::validate(pool_model.clone())?);
-    let dataset = BtrfsDataset::new(pool, name, options.path)?;
+    let dataset = BtrfsDataset::new(&pool, name, options.path)?;
 
     pool_model.attach_dataset(dataset.take_model())?;
     storage::store_entity_state(entities);
@@ -421,7 +421,7 @@ fn attach_container(options: ContainerAttachOptions) -> Result<()> {
     });
 
     let pool = Rc::new(BtrfsPool::validate(pool_model.clone())?);
-    let container = BtrfsContainer::new(pool, name, options.path)?;
+    let container = BtrfsContainer::new(&pool, name, options.path)?;
 
     let pool = entities
         .pool_by_mountpoint_mut(mountentry.file.as_path())

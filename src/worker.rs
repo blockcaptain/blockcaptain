@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use log::*;
-use std::{convert::TryFrom, num::NonZeroUsize};
+use std::{convert::TryFrom, num::NonZeroUsize, rc::Rc};
 use std::{iter::repeat, num::NonZeroU32};
 
 pub trait Job {
@@ -25,17 +25,17 @@ pub trait Job {
     }
 }
 
-pub struct LocalSnapshotJob<'a> {
-    dataset: &'a BtrfsDataset,
+pub struct LocalSnapshotJob {
+    dataset: Rc<BtrfsDataset>,
 }
 
-impl<'a> LocalSnapshotJob<'a> {
-    pub fn new(dataset: &'a BtrfsDataset) -> Self {
-        Self { dataset }
+impl LocalSnapshotJob {
+    pub fn new(dataset: &Rc<BtrfsDataset>) -> Self {
+        Self { dataset: Rc::clone(dataset) }
     }
 }
 
-impl<'a> Job for LocalSnapshotJob<'a> {
+impl Job for LocalSnapshotJob {
     fn run(&self) -> Result<()> {
         self.dataset.create_local_snapshot()
     }
@@ -62,14 +62,14 @@ impl<'a> Job for LocalSnapshotJob<'a> {
     }
 }
 
-pub struct LocalSyncJob<'a> {
-    dataset: &'a BtrfsDataset,
-    container: &'a BtrfsContainer,
+pub struct LocalSyncJob {
+    dataset: Rc<BtrfsDataset>,
+    container: Rc<BtrfsContainer>,
 }
 
-impl<'a> LocalSyncJob<'a> {
-    pub fn new(dataset: &'a BtrfsDataset, container: &'a BtrfsContainer) -> Self {
-        Self { dataset, container }
+impl LocalSyncJob {
+    pub fn new(dataset: &Rc<BtrfsDataset>, container: &Rc<BtrfsContainer>) -> Self {
+        Self { dataset: Rc::clone(dataset), container: Rc::clone(container) }
     }
 
     fn ready_snapshots(&self) -> Result<(Vec<BtrfsDatasetSnapshot>, Vec<BtrfsContainerSnapshot>, Vec<usize>)> {
@@ -103,7 +103,7 @@ impl<'a> LocalSyncJob<'a> {
     }
 }
 
-impl<'a> Job for LocalSyncJob<'a> {
+impl Job for LocalSyncJob {
     fn run(&self) -> Result<()> {
         let (dataset_snapshots, mut container_snapshots, send_snapshots) = self.ready_snapshots()?;
 
@@ -167,11 +167,11 @@ impl<'a> Job for LocalSyncJob<'a> {
             let new_snapshot = match maybe_parent_snapshot {
                 Some(parent_snapshot) => {
                     info!("Sending delta snapshot.");
-                    core::transfer_delta_snapshot(self.dataset, parent_snapshot, source_snapshot, self.container)
+                    core::transfer_delta_snapshot(&*self.dataset, parent_snapshot, source_snapshot, &*self.container)
                 }
                 None => {
                     info!("Sending full snapshot.");
-                    core::transfer_full_snapshot(self.dataset, source_snapshot, self.container)
+                    core::transfer_full_snapshot(&*self.dataset, source_snapshot, &*self.container)
                 }
             }?;
             container_snapshots.push(new_snapshot);
@@ -188,17 +188,17 @@ impl<'a> Job for LocalSyncJob<'a> {
     }
 }
 
-pub struct LocalPruneJob<'a> {
-    dataset: &'a BtrfsDataset,
+pub struct LocalPruneJob {
+    dataset: Rc<BtrfsDataset>,
 }
 
-impl<'a> LocalPruneJob<'a> {
-    pub fn new(dataset: &'a BtrfsDataset) -> Self {
-        Self { dataset }
+impl LocalPruneJob {
+    pub fn new(dataset: &Rc<BtrfsDataset>) -> Self {
+        Self { dataset: Rc::clone(dataset) }
     }
 }
 
-impl<'a> Job for LocalPruneJob<'a> {
+impl Job for LocalPruneJob {
     fn run(&self) -> Result<()> {
         let rules = self.dataset.model().snapshot_retention.as_ref().expect("Validated by is_ready.");
         let evaluation = evaluate_retention(self.dataset.snapshots()?, rules)?;

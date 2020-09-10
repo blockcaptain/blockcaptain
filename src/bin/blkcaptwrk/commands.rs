@@ -20,7 +20,7 @@ pub fn service() -> Result<()> {
             p.model()
                 .datasets
                 .iter()
-                .map(move |d| BtrfsDataset::validate(Rc::clone(p), d.clone()))
+                .map(move |d| BtrfsDataset::validate(p, d.clone()).map(Rc::new))
         })
         .collect::<Result<Vec<_>>>()?;
     let containers = pools
@@ -29,7 +29,7 @@ pub fn service() -> Result<()> {
             p.model()
                 .containers
                 .iter()
-                .map(move |d| BtrfsContainer::validate(Rc::clone(p), d.clone()))
+                .map(move |d| BtrfsContainer::validate(p, d.clone()).map(Rc::new))
         })
         .collect::<Result<Vec<_>>>()?;
 

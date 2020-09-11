@@ -1,8 +1,8 @@
 use anyhow::Result;
-use blkcapt::core::{BtrfsDataset, BtrfsPool, BtrfsContainer};
+use blkcapt::core::{BtrfsContainer, BtrfsDataset, BtrfsPool};
 use blkcapt::model::storage;
 use blkcapt::model::Entity;
-use blkcapt::worker::{Job, LocalSnapshotJob, LocalSyncJob, LocalPruneJob};
+use blkcapt::worker::{Job, LocalPruneJob, LocalSnapshotJob, LocalSyncJob};
 use log::*;
 use std::rc::Rc;
 
@@ -11,7 +11,8 @@ pub fn service() -> Result<()> {
 
     // should these have into iters and consume the models?
     let pools = entities
-        .pools()
+        .btrfs_pools
+        .iter()
         .map(|p| BtrfsPool::validate(p.clone()).map(Rc::new))
         .collect::<Result<Vec<_>>>()?;
     let datasets = pools
@@ -39,8 +40,14 @@ pub fn service() -> Result<()> {
         jobs.push(Box::new(LocalPruneJob::new(dataset)));
     }
     for sync in entities.snapshot_syncs() {
-        let sync_dataset = datasets.iter().find(|d| d.model().id() == sync.dataset_id()).expect("FIXME");
-        let sync_container = containers.iter().find(|d| d.model().id() == sync.container_id()).expect("FIXME");
+        let sync_dataset = datasets
+            .iter()
+            .find(|d| d.model().id() == sync.dataset_id())
+            .expect("FIXME");
+        let sync_container = containers
+            .iter()
+            .find(|d| d.model().id() == sync.container_id())
+            .expect("FIXME");
         jobs.push(Box::new(LocalSyncJob::new(sync_dataset, sync_container)));
     }
     let jobs = jobs;
@@ -58,7 +65,13 @@ pub fn service() -> Result<()> {
         }
         ready_jobs = jobs
             .iter()
-            .filter_map(|j| if j.next_check().expect("FIXME2").is_zero() && j.is_ready().expect("FIXME") { Some(j) } else { None })
+            .filter_map(|j| {
+                if j.next_check().expect("FIXME2").is_zero() && j.is_ready().expect("FIXME") {
+                    Some(j)
+                } else {
+                    None
+                }
+            })
             .collect::<Vec<_>>();
     }
 

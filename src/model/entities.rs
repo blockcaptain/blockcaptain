@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::{default::Default, time::Duration, num::NonZeroU32};
 use uuid::Uuid;
+use strum_macros::Display;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsPoolEntity {
@@ -95,6 +96,13 @@ pub trait SubvolumeEntity: Entity {
     fn uuid(&self) -> &Uuid;
 }
 
+#[derive(Display, Copy, Clone)]
+pub enum FeatureState {
+    Unconfigured,
+    Paused,
+    Enabled,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsDatasetEntity {
     id: Uuid,
@@ -141,6 +149,30 @@ impl BtrfsDatasetEntity {
             pause_pruning: false,
             pause_snapshotting: false,
         })
+    }
+
+    pub fn snapshotting_state(&self) -> FeatureState {
+        if self.snapshot_frequency.is_some() {
+            if self.pause_snapshotting {
+                FeatureState::Paused
+            } else {
+                FeatureState::Enabled
+            }
+        } else {
+            FeatureState::Unconfigured
+        }
+    }
+
+    pub fn pruning_state(&self) -> FeatureState {
+        if self.snapshot_retention.is_some() {
+            if self.pause_pruning {
+                FeatureState::Paused
+            } else {
+                FeatureState::Enabled
+            }
+        } else {
+            FeatureState::Unconfigured
+        }
     }
 }
 

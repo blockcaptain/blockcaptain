@@ -31,7 +31,9 @@ pub struct LocalSnapshotJob {
 
 impl LocalSnapshotJob {
     pub fn new(dataset: &Rc<BtrfsDataset>) -> Self {
-        Self { dataset: Rc::clone(dataset) }
+        Self {
+            dataset: Rc::clone(dataset),
+        }
     }
 }
 
@@ -69,7 +71,10 @@ pub struct LocalSyncJob {
 
 impl LocalSyncJob {
     pub fn new(dataset: &Rc<BtrfsDataset>, container: &Rc<BtrfsContainer>) -> Self {
-        Self { dataset: Rc::clone(dataset), container: Rc::clone(container) }
+        Self {
+            dataset: Rc::clone(dataset),
+            container: Rc::clone(container),
+        }
     }
 
     fn ready_snapshots(&self) -> Result<(Vec<BtrfsDatasetSnapshot>, Vec<BtrfsContainerSnapshot>, Vec<usize>)> {
@@ -167,11 +172,11 @@ impl Job for LocalSyncJob {
             let new_snapshot = match maybe_parent_snapshot {
                 Some(parent_snapshot) => {
                     info!("Sending delta snapshot.");
-                    core::transfer_delta_snapshot(&*self.dataset, parent_snapshot, source_snapshot, &*self.container)
+                    core::transfer_delta_snapshot(parent_snapshot, source_snapshot, &self.container)
                 }
                 None => {
                     info!("Sending full snapshot.");
-                    core::transfer_full_snapshot(&*self.dataset, source_snapshot, &*self.container)
+                    core::transfer_full_snapshot(source_snapshot, &self.container)
                 }
             }?;
             container_snapshots.push(new_snapshot);
@@ -194,28 +199,38 @@ pub struct LocalPruneJob {
 
 impl LocalPruneJob {
     pub fn new(dataset: &Rc<BtrfsDataset>) -> Self {
-        Self { dataset: Rc::clone(dataset) }
+        Self {
+            dataset: Rc::clone(dataset),
+        }
     }
 }
 
 impl Job for LocalPruneJob {
     fn run(&self) -> Result<()> {
-        let rules = self.dataset.model().snapshot_retention.as_ref().expect("Validated by is_ready.");
+        let rules = self
+            .dataset
+            .model()
+            .snapshot_retention
+            .as_ref()
+            .expect("Validated by is_ready.");
         let evaluation = evaluate_retention(self.dataset.snapshots()?, rules)?;
 
         if log_enabled!(Level::Trace) {
             for snapshot in evaluation.keep_interval_buckets.iter().flat_map(|b| b.snapshots.iter()) {
-                trace!("Keeping snapshot {:?} reason: in retention interval.", snapshot.path());
+                trace!("Keeping snapshot {} reason: in retention interval.", snapshot);
             }
 
             for snapshot in evaluation.keep_minimum_snapshots.iter() {
-                trace!("Keeping snapshot {:?} reason: keep minimum newest.", snapshot.path());
+                trace!("Keeping snapshot {} reason: keep minimum newest.", snapshot);
             }
         }
-        
+
         for snapshot in evaluation.drop_snapshots {
-            info!("Snapshot {:?} is being pruned because it did not meet any retention criteria.", snapshot.path());
-            //TODO delete the snapshot.
+            info!(
+                "Snapshot {} is being pruned because it did not meet any retention criteria.",
+                snapshot
+            );
+            snapshot.delete().map_err(|e| e.source)?;
         }
 
         Ok(())

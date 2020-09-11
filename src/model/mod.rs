@@ -18,9 +18,9 @@ pub struct Entities {
 
 impl Entities {
     pub fn attach_pool(&mut self, pool: BtrfsPoolEntity) -> Result<()> {
-        self.pool(&pool.name())
+        self.pool_by_name(pool.name())
             .map_or(Ok(()), |p| Err(anyhow!("Pool name '{}' already exists.", p.name())))?;
-        self.pool_by_uuid(&pool.uuid)
+        self.pool_by_uuid(pool.uuid)
             .map_or(Ok(()), |p| Err(anyhow!("uuid already used by pool {}.", p.name())))?;
         self.pool_by_mountpoint(&pool.mountpoint_path)
             .map_or(Ok(()), |p| Err(anyhow!("mountpoint already used by pool {}.", p.name())))?;
@@ -29,20 +29,20 @@ impl Entities {
         Ok(())
     }
 
-    pub fn pool_by_uuid(&self, uuid: &Uuid) -> Option<&BtrfsPoolEntity> {
-        self.btrfs_pools.iter().find(|p| p.uuid == *uuid)
+    pub fn pool_by_uuid(&self, uuid: Uuid) -> Option<&BtrfsPoolEntity> {
+        self.btrfs_pools.iter().find(|p| p.uuid == uuid)
     }
 
     pub fn pool_by_mountpoint(&self, path: &Path) -> Option<&BtrfsPoolEntity> {
         self.btrfs_pools.iter().find(|p| p.mountpoint_path == path)
     }
 
-    pub fn pools(&self) -> impl Iterator<Item = &BtrfsPoolEntity> {
-        self.btrfs_pools.iter()
+    pub fn pool_by_name(&self, name: &str) -> Option<&BtrfsPoolEntity> {
+        entity_by_name(&self.btrfs_pools, name)
     }
 
-    pub fn pool(&self, name: &str) -> Option<&BtrfsPoolEntity> {
-        self.btrfs_pools.iter().find(|p| p.name() == name)
+    pub fn pool(&self, id: Uuid) -> Option<&BtrfsPoolEntity> {
+        entity_by_id(self.btrfs_pools.iter(), id)
     }
 
     pub fn datasets(&self) -> impl Iterator<Item = EntityPath<BtrfsDatasetEntity, BtrfsPoolEntity>> {
@@ -55,18 +55,22 @@ impl Entities {
             })
     }
 
-    pub fn dataset_by_id(&self, id: &Uuid) -> Option<(&BtrfsDatasetEntity, &BtrfsPoolEntity)> {
-        self.btrfs_pools
-            .iter()
-            .flat_map(|p| p.datasets.iter().zip(repeat(p)))
-            .find(|p| p.0.id() == *id)
+    pub fn dataset(&self, id: Uuid) -> Option<EntityPath<BtrfsDatasetEntity, BtrfsPoolEntity>> {
+        entity_by_id(self.datasets(), id)
     }
 
-    pub fn container_by_id(&self, id: &Uuid) -> Option<(&BtrfsContainerEntity, &BtrfsPoolEntity)> {
+    pub fn containers(&self) -> impl Iterator<Item = EntityPath<BtrfsContainerEntity, BtrfsPoolEntity>> {
         self.btrfs_pools
             .iter()
             .flat_map(|p| p.containers.iter().zip(repeat(p)))
-            .find(|p| p.0.id() == *id)
+            .map(|t| EntityPath {
+                entity: t.0,
+                parent: t.1,
+            })
+    }
+
+    pub fn container(&self, id: Uuid) -> Option<EntityPath<BtrfsContainerEntity, BtrfsPoolEntity>> {
+        entity_by_id(self.containers(), id)
     }
 
     pub fn pool_by_mountpoint_mut(&mut self, path: &Path) -> Option<&mut BtrfsPoolEntity> {
@@ -131,10 +135,6 @@ pub trait Entity {
     fn entity_type(&self) -> EntityType;
 }
 
-pub fn entity_by_id<T: Entity>(vec: &Vec<T>, id: Uuid) -> Option<&T> {
-    vec.iter().find(|e| e.id() == id)
-}
-
 pub fn entity_by_name<'a, T: Entity>(vec: &'a Vec<T>, name: &str) -> Option<&'a T> {
     vec.iter().find(|e| e.name() == name)
 }
@@ -145,6 +145,13 @@ pub fn entity_by_id_mut<T: Entity>(vec: &mut Vec<T>, id: Uuid) -> Option<&mut T>
 
 pub fn entity_by_name_mut<'a, T: Entity>(vec: &'a mut Vec<T>, name: &str) -> Option<&'a mut T> {
     vec.iter_mut().find(|e| e.name() == name)
+}
+
+pub fn entity_by_id<'a, T: AsRef<dyn Entity + 'a>>(
+    mut iter: impl Iterator<Item = T>,
+    id: Uuid,
+) -> Option<T> {
+    iter.find(|e| e.as_ref().id() == id)
 }
 
 pub fn entity_by_name_or_id<'a, T: AsRef<dyn Entity + 'a>>(

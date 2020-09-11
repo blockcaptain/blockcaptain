@@ -4,10 +4,11 @@ use crate::sys::btrfs::{Filesystem, MountedFilesystem, QueriedFilesystem, Subvol
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
 use anyhow::{anyhow, bail, Context, Error, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
+use derivative::Derivative;
 use log::*;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::{cell::RefCell, convert::TryFrom, mem, rc::Rc};
+use std::{fmt::Debug, fmt::Display, fs};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -83,11 +84,20 @@ impl BtrfsPool {
     }
 }
 
-#[derive(Debug)]
+impl Display for BtrfsPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.model.name())
+    }
+}
+
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct BtrfsDataset {
     model: BtrfsDatasetEntity,
     subvolume: Subvolume,
+    #[derivative(Debug = "ignore")]
     pool: Rc<BtrfsPool>,
+    #[derivative(Debug = "ignore")]
     snapshots: RefCell<Option<Vec<BtrfsDatasetSnapshot>>>,
 }
 
@@ -204,10 +214,22 @@ impl BtrfsDataset {
     }
 }
 
-#[derive(Debug, Clone)]
+impl Display for BtrfsDataset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "{}/{}",
+            self.pool,
+            self.model().name(),
+        ))
+    }
+}
+
+#[derive(Clone, Derivative)]
+#[derivative(Debug)]
 pub struct BtrfsDatasetSnapshot {
     subvolume: Subvolume,
     datetime: DateTime<Utc>,
+    #[derivative(Debug = "ignore")]
     dataset: Rc<BtrfsDataset>,
 }
 
@@ -233,10 +255,24 @@ impl BtrfsDatasetSnapshot {
     }
 
     pub fn delete(self) -> Result<(), SnapshotDeleteError> {
-        self.dataset.pool.filesystem.delete(self.path()).map_err(|e| SnapshotDeleteError {
-            source: e,
-            snapshot: self,
-        })
+        self.dataset
+            .pool
+            .filesystem
+            .delete(self.path())
+            .map_err(|e| SnapshotDeleteError {
+                source: e,
+                snapshot: self,
+            })
+    }
+}
+
+impl Display for BtrfsDatasetSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "{}/{}",
+            self.dataset,
+            self.datetime.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        ))
     }
 }
 
@@ -244,14 +280,16 @@ impl BtrfsDatasetSnapshot {
 #[error("{source}")]
 pub struct SnapshotDeleteError {
     #[source]
-    source: anyhow::Error,
-    snapshot: BtrfsDatasetSnapshot,
+    pub source: anyhow::Error,
+    pub snapshot: BtrfsDatasetSnapshot,
 }
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct BtrfsContainer {
     model: BtrfsContainerEntity,
     subvolume: Subvolume,
+    #[derivative(Debug = "ignore")]
     pool: Rc<BtrfsPool>,
 }
 
@@ -268,7 +306,7 @@ impl BtrfsContainer {
         Ok(dataset)
     }
 
-    pub fn snapshots(&self, dataset: &BtrfsDatasetEntity) -> Result<Vec<BtrfsContainerSnapshot>> {
+    pub fn snapshots(self: &Rc<Self>, dataset: &BtrfsDatasetEntity) -> Result<Vec<BtrfsContainerSnapshot>> {
         Ok(Subvolume::list_subvolumes(
             &self
                 .snapshot_container_path(dataset)
@@ -286,6 +324,7 @@ impl BtrfsContainer {
                 Ok(d) => Some(BtrfsContainerSnapshot {
                     subvolume: s,
                     datetime: DateTime::<Utc>::from_utc(d, Utc),
+                    container: Rc::clone(self),
                 }),
                 Err(_) => None,
             }
@@ -319,10 +358,23 @@ impl BtrfsContainer {
     }
 }
 
-#[derive(Debug, Clone)]
+impl Display for BtrfsContainer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "{}/{}",
+            self.pool,
+            self.model().name(),
+        ))
+    }
+}
+
+#[derive(Clone, Derivative)]
+#[derivative(Debug)]
 pub struct BtrfsContainerSnapshot {
     subvolume: Subvolume,
     datetime: DateTime<Utc>,
+    #[derivative(Debug = "ignore")]
+    container: Rc<BtrfsContainer>,
 }
 
 impl BtrfsContainerSnapshot {
@@ -345,29 +397,38 @@ impl BtrfsContainerSnapshot {
     }
 }
 
+impl Display for BtrfsContainerSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "{}/{}",
+            self.container,
+            self.datetime.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        ))
+    }
+}
+
 pub fn transfer_full_snapshot(
-    dataset: &BtrfsDataset,
     snapshot: &BtrfsDatasetSnapshot,
-    container: &BtrfsContainer,
+    container: &Rc<BtrfsContainer>,
 ) -> Result<BtrfsContainerSnapshot> {
-    _transfer_delta_snapshot(dataset, None, snapshot, container)
+    _transfer_delta_snapshot(None, snapshot, container)
 }
 
 pub fn transfer_delta_snapshot(
-    dataset: &BtrfsDataset,
     parent: &BtrfsDatasetSnapshot,
     snapshot: &BtrfsDatasetSnapshot,
-    container: &BtrfsContainer,
+    container: &Rc<BtrfsContainer>,
 ) -> Result<BtrfsContainerSnapshot> {
-    _transfer_delta_snapshot(dataset, Some(parent), snapshot, container)
+    _transfer_delta_snapshot(Some(parent), snapshot, container)
 }
 
+// need to push logic down to sys::btrfs
 fn _transfer_delta_snapshot(
-    dataset: &BtrfsDataset,
     parent: Option<&BtrfsDatasetSnapshot>,
     snapshot: &BtrfsDatasetSnapshot,
-    container: &BtrfsContainer,
+    container:  &Rc<BtrfsContainer>,
 ) -> Result<BtrfsContainerSnapshot> {
+    let dataset = snapshot.dataset.as_ref();
     let source_snap_path = snapshot
         .subvolume
         .path

@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use blkcapt::sys::btrfs;
+use blkcapt::{sys::btrfs, model::entities::FeatureState};
 use clap::{crate_version, Clap};
 use human_panic::setup_panic;
 use log::*;
@@ -55,6 +55,9 @@ fn command_dispath(options: CliOptions) -> Result<()> {
         TopCommands::Container(top_options) => match top_options.subcmd {
             ContainerSubCommands::Attach(options) => attach_container(options)?,
         },
+        TopCommands::Observer(top_options) => match top_options.subcmd {
+            ObserverSubCommands::Create(options) => create_observer(options)?,
+        }
     }
 
     Ok(())
@@ -75,6 +78,7 @@ enum TopCommands {
     Pool(PoolCommands),
     Dataset(DatasetCommands),
     Container(ContainerCommands),
+    Observer(ObserverCommands),
 }
 
 #[derive(Clap)]
@@ -112,6 +116,17 @@ struct ContainerCommands {
 #[derive(Clap)]
 enum ContainerSubCommands {
     Attach(ContainerAttachOptions),
+}
+
+#[derive(Clap)]
+struct ObserverCommands {
+    #[clap(subcommand)]
+    subcmd: ObserverSubCommands,
+}
+
+#[derive(Clap)]
+enum ObserverSubCommands {
+    Create(ObserverCreateOptions),
 }
 
 // #[derive(Clap, Debug)]
@@ -247,10 +262,6 @@ fn list_dataset(options: DatasetListOptions) -> Result<()> {
 
     let entities = storage::load_entity_state();
 
-    // for dataset in entities.datasets() {
-    //     println!("{:#?}", dataset.entity);
-    // }
-
     let mut table = Table::new();
     table.load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
@@ -267,14 +278,22 @@ fn list_dataset(options: DatasetListOptions) -> Result<()> {
             Cell::new(&dataset.entity.id().to_string()[0..8]).fg(Color::Blue).add_attribute(Attribute::Bold),
             Cell::new(dataset.parent.name()).fg(Color::Blue),
             Cell::new(dataset.entity.name()).fg(Color::Blue),
-            Cell::new("Enabled"),
-            Cell::new("Paused"),
+            feature_state_cell(dataset.entity.snapshotting_state()),
+            feature_state_cell(dataset.entity.pruning_state()),
         ]);
     }
 
     println!("{}", table);
 
     Ok(())
+}
+
+fn feature_state_cell(state: FeatureState) -> comfy_table::Cell {
+    comfy_table::Cell::new(state).fg(match state {
+        FeatureState::Enabled => comfy_table::Color::Green,
+        FeatureState::Paused => comfy_table::Color::Yellow,
+        FeatureState::Unconfigured => comfy_table::Color::Red,
+    })
 }
 
 const AFTER_HELP: &str = r"RETENTION:
@@ -428,6 +447,29 @@ fn attach_container(options: ContainerAttachOptions) -> Result<()> {
         .context(format!("No pool found for mountpoint {:?}.", mountentry.file))?;
 
     pool.attach_container(container.take_model())?;
+    storage::store_entity_state(entities);
+
+    Ok(())
+}
+
+#[derive(Clap, Debug)]
+struct ObserverCreateOptions {
+    /// Name of the observer.
+    #[clap(short, long, default_value="default")]
+    name: String,
+
+    /// Type of observer (must be "healthchecks").
+    #[clap(required(true))]
+    observer_type: String,
+}
+
+fn create_observer(options: ObserverCreateOptions) -> Result<()> {
+    debug!("Command 'create_observer': {:?}", options);
+
+    let mut entities = storage::load_entity_state();
+
+    todo!();
+
     storage::store_entity_state(entities);
 
     Ok(())

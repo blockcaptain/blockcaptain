@@ -1,21 +1,15 @@
 use anyhow::{bail, Context, Result};
-use blkcapt::{model::entities::FeatureState, sys::btrfs};
-use clap::{crate_version, Clap};
-use human_panic::setup_panic;
-use log::*;
-//use blkcapt::contextualize::Validation;
-use blkcapt::model::entities::{
-    BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, IntervalSpec, KeepSpec, RetentionRuleset,
-};
-use blkcapt::sys::fs::{find_mountentry, BlockDeviceIds, BtrfsMountEntry, DevicePathBuf};
+use blkcapt::model::entities::FeatureState;
+use blkcapt::model::entities::{IntervalSpec, KeepSpec};
+use blkcapt::sys::fs::{find_mountentry, DevicePathBuf};
 use blkcapt::{
     core::{BtrfsContainer, BtrfsDataset, BtrfsPool},
-    model::{entity_by_id_mut, entity_by_name, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
+    model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
 };
-use pretty_env_logger;
-use std::convert::TryFrom;
+use clap::Clap;
+use log::*;
+
 use std::{num::NonZeroU32, path::PathBuf, rc::Rc, str::FromStr};
-use uuid::Uuid;
 
 // #[derive(Clap, Debug)]
 // struct PoolAttachOptions {
@@ -78,7 +72,7 @@ pub fn create_pool(options: PoolCreateOptions) -> Result<()> {
     // entities.attach_pool(new_pool.take_model())?;
 
     //storage::store_entity_state(entities);
-    Ok(())
+    //Ok(())
 }
 
 #[derive(Clap, Debug)]
@@ -359,11 +353,11 @@ pub struct ObserverCreateOptions {
 pub fn create_observer(options: ObserverCreateOptions) -> Result<()> {
     debug!("Command 'create_observer': {:?}", options);
 
-    let mut entities = storage::load_entity_state();
+    //let mut entities = storage::load_entity_state();
 
     todo!();
 
-    storage::store_entity_state(entities);
+    //storage::store_entity_state(entities);
 
-    Ok(())
+    //Ok(())
 }

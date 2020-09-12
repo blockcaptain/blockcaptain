@@ -1,21 +1,12 @@
-use anyhow::{bail, Context, Result};
-use blkcapt::{model::entities::FeatureState, sys::btrfs};
+use anyhow::Result;
+
 use clap::{crate_version, Clap};
 use human_panic::setup_panic;
 use log::*;
 //use blkcapt::contextualize::Validation;
-use blkcapt::model::entities::{
-    BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, IntervalSpec, KeepSpec, RetentionRuleset,
-};
-use blkcapt::sys::fs::{find_mountentry, BlockDeviceIds, BtrfsMountEntry, DevicePathBuf};
-use blkcapt::{
-    core::{BtrfsContainer, BtrfsDataset, BtrfsPool},
-    model::{entity_by_id_mut, entity_by_name, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
-};
+
 use pretty_env_logger;
-use std::convert::TryFrom;
-use std::{num::NonZeroU32, path::PathBuf, rc::Rc, str::FromStr};
-use uuid::Uuid;
+
 mod commands;
 mod ui;
 use commands::*;

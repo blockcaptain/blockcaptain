@@ -6,8 +6,8 @@ use crate::{
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use log::*;
+use std::iter::repeat;
 use std::{convert::TryFrom, num::NonZeroUsize, rc::Rc};
-use std::{iter::repeat, num::NonZeroU32};
 
 pub trait Job {
     fn run(&self) -> Result<()>;

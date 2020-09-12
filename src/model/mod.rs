@@ -7,7 +7,7 @@ use entities::{
 };
 use serde::{Deserialize, Serialize};
 use std::iter::repeat;
-use std::{borrow::Borrow, path::Path};
+use std::path::Path;
 use strum_macros::Display;
 use uuid::Uuid;
 

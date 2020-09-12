@@ -1,13 +1,13 @@
 use crate::model::entities::{BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, SubvolumeEntity};
 use crate::model::Entity;
-use crate::sys::btrfs::{Filesystem, MountedFilesystem, QueriedFilesystem, Subvolume};
+use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
-use anyhow::{anyhow, bail, Context, Error, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use derivative::Derivative;
 use log::*;
-use std::path::{Path, PathBuf};
-use std::{cell::RefCell, convert::TryFrom, mem, rc::Rc};
+use std::path::PathBuf;
+use std::{cell::RefCell, convert::TryFrom, rc::Rc};
 use std::{fmt::Debug, fmt::Display, fs};
 use thiserror::Error;
 use uuid::Uuid;

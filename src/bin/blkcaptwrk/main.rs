@@ -1,4 +1,3 @@
-use anyhow::{Context, Result};
 use clap::{crate_version, Clap};
 use human_panic::setup_panic;
 use log::*;

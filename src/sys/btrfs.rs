@@ -5,7 +5,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use duct;
 use fs::{DevicePathBuf, FsPathBuf};
 use lazy_static::lazy_static;
-use regex::{Captures, Regex};
+use regex::Regex;
 use serde::Deserialize;
 use std::convert::TryFrom;
 use std::string::String;

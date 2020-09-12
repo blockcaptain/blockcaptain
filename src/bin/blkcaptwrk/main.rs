@@ -34,5 +34,5 @@ fn main() {
 struct CliOptions {
     /// Enable debug logs. Use twice to enable trace logs.
     #[clap(short, long, parse(from_occurrences))]
-    verbose: i32
+    verbose: i32,
 }

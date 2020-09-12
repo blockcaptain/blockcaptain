@@ -1,13 +1,13 @@
 use crate::parsing::{parse_key_value_data, StringPair};
-use anyhow::{anyhow, Context, Result, Error};
+use anyhow::{anyhow, Context, Error, Result};
 use mnt;
 use mnt::{MountEntry, MountIter};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::path::{Path,PathBuf, Component};
-use std::str::FromStr;
 use std::ffi::OsStr;
+use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
 use uuid::Uuid;
 
 // ## Filesystem Relative PathBuf ####################################################################################
@@ -96,15 +96,20 @@ pub fn lookup_mountentry(target: &Path) -> Option<MountEntry> {
     let mut iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
     iter.find_map(|m| match m.expect(MOUNT_EXPECTATION) {
         m if m.file == target => Some(m),
-        _ => None
+        _ => None,
     })
 }
 
 pub fn lookup_mountentries_by_devices(devices: &Vec<DevicePathBuf>) -> impl Iterator<Item = MountEntry> + '_ {
     let iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
     iter.filter_map(move |m| match m.expect(MOUNT_EXPECTATION) {
-        m if DevicePathBuf::try_from(&m.spec).and_then(|dp| Ok(devices.contains(&dp))).unwrap_or_default()  => Some(m),
-        _ => None
+        m if DevicePathBuf::try_from(&m.spec)
+            .and_then(|dp| Ok(devices.contains(&dp)))
+            .unwrap_or_default() =>
+        {
+            Some(m)
+        }
+        _ => None,
     })
 }
 
@@ -144,15 +149,12 @@ impl BtrfsMountEntry {
         T::Err: std::fmt::Debug,
     {
         let prefix = format!("{}=", key);
-        self.0
-            .mntops
-            .iter()
-            .find_map(|x| match x {
-                mnt::MntOps::Extra(extra) if extra.starts_with(prefix.as_str()) => {
-                    Some(extra.splitn(2, "=").nth(1).unwrap().parse::<T>().unwrap())
-                }
-                _ => None,
-            })
+        self.0.mntops.iter().find_map(|x| match x {
+            mnt::MntOps::Extra(extra) if extra.starts_with(prefix.as_str()) => {
+                Some(extra.splitn(2, "=").nth(1).unwrap().parse::<T>().unwrap())
+            }
+            _ => None,
+        })
     }
 }
 

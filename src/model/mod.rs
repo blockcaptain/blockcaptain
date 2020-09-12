@@ -2,7 +2,9 @@ pub mod entities;
 pub mod storage;
 
 use anyhow::{anyhow, Result};
-use entities::{BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, SnapshotSyncEntity, HealthchecksObserverEntity};
+use entities::{
+    BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObserverEntity, SnapshotSyncEntity,
+};
 use serde::{Deserialize, Serialize};
 use std::iter::repeat;
 use std::{borrow::Borrow, path::Path};
@@ -22,8 +24,9 @@ impl Entities {
             .map_or(Ok(()), |p| Err(anyhow!("Pool name '{}' already exists.", p.name())))?;
         self.pool_by_uuid(pool.uuid)
             .map_or(Ok(()), |p| Err(anyhow!("uuid already used by pool {}.", p.name())))?;
-        self.pool_by_mountpoint(&pool.mountpoint_path)
-            .map_or(Ok(()), |p| Err(anyhow!("mountpoint already used by pool {}.", p.name())))?;
+        self.pool_by_mountpoint(&pool.mountpoint_path).map_or(Ok(()), |p| {
+            Err(anyhow!("mountpoint already used by pool {}.", p.name()))
+        })?;
 
         self.btrfs_pools.push(pool);
         Ok(())
@@ -147,10 +150,7 @@ pub fn entity_by_name_mut<'a, T: Entity>(vec: &'a mut Vec<T>, name: &str) -> Opt
     vec.iter_mut().find(|e| e.name() == name)
 }
 
-pub fn entity_by_id<'a, T: AsRef<dyn Entity + 'a>>(
-    mut iter: impl Iterator<Item = T>,
-    id: Uuid,
-) -> Option<T> {
+pub fn entity_by_id<'a, T: AsRef<dyn Entity + 'a>>(mut iter: impl Iterator<Item = T>, id: Uuid) -> Option<T> {
     iter.find(|e| e.as_ref().id() == id)
 }
 
@@ -167,4 +167,3 @@ pub fn entity_by_name_or_id<'a, T: AsRef<dyn Entity + 'a>>(
         _ => Err(anyhow!("multiple matches")),
     }
 }
-

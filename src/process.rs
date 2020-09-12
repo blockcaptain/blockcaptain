@@ -38,9 +38,9 @@ pub fn read_with_stderr_context(expression: Expression) -> Result<String> {
         .context("External command failed to launch.")?;
     if !output.status.success() {
         let stderr_string = String::from_utf8_lossy(output.stderr.as_slice());
-        let output_error =  Err(match stderr_string.is_empty() {
+        let output_error = Err(match stderr_string.is_empty() {
             true => anyhow!("Unknown error in command. Command produced no stderr output."),
-            false => anyhow!("{}", stderr_string)
+            false => anyhow!("{}", stderr_string),
         });
         return output_error.context(match output.status.code() {
             Some(c) => anyhow!("{:?} exited with code {}.", expression, c),

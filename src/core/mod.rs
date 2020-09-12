@@ -216,11 +216,7 @@ impl BtrfsDataset {
 
 impl Display for BtrfsDataset {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "{}/{}",
-            self.pool,
-            self.model().name(),
-        ))
+        f.write_fmt(format_args!("{}/{}", self.pool, self.model().name(),))
     }
 }
 
@@ -360,11 +356,7 @@ impl BtrfsContainer {
 
 impl Display for BtrfsContainer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "{}/{}",
-            self.pool,
-            self.model().name(),
-        ))
+        f.write_fmt(format_args!("{}/{}", self.pool, self.model().name(),))
     }
 }
 
@@ -426,7 +418,7 @@ pub fn transfer_delta_snapshot(
 fn _transfer_delta_snapshot(
     parent: Option<&BtrfsDatasetSnapshot>,
     snapshot: &BtrfsDatasetSnapshot,
-    container:  &Rc<BtrfsContainer>,
+    container: &Rc<BtrfsContainer>,
 ) -> Result<BtrfsContainerSnapshot> {
     let dataset = snapshot.dataset.as_ref();
     let source_snap_path = snapshot

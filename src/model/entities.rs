@@ -3,9 +3,9 @@ use crate::sys::fs::FsPathBuf;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::{default::Default, time::Duration, num::NonZeroU32};
-use uuid::Uuid;
+use std::{default::Default, num::NonZeroU32, time::Duration};
 use strum_macros::Display;
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsPoolEntity {

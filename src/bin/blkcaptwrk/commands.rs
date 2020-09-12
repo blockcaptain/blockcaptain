@@ -54,24 +54,15 @@ pub fn service() -> Result<()> {
 
     info!("Worker initialized with {} jobs.", jobs.len());
 
-    let mut ready_jobs = jobs
-        .iter()
-        .filter_map(|j| if j.is_ready().expect("FIXME") { Some(j) } else { None })
-        .collect::<Vec<_>>();
-    while ready_jobs.len() > 0 {
+    let mut ready_jobs = jobs.iter().filter(|j| j.is_ready().expect("FIXME")).collect::<Vec<_>>();
+    while !ready_jobs.is_empty() {
         debug!("Iterating Work with {} ready jobs.", ready_jobs.len());
         for job in ready_jobs {
             job.run()?;
         }
         ready_jobs = jobs
             .iter()
-            .filter_map(|j| {
-                if j.next_check().expect("FIXME2").is_zero() && j.is_ready().expect("FIXME") {
-                    Some(j)
-                } else {
-                    None
-                }
-            })
+            .filter(|j| j.next_check().expect("FIXME2").is_zero() && j.is_ready().expect("FIXME"))
             .collect::<Vec<_>>();
     }
 

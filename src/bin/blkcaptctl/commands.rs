@@ -228,8 +228,8 @@ impl FromStr for IntervalSpecArg {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let outter = s.split(":").collect::<Vec<_>>();
-        let inner = outter[0].split("x").collect::<Vec<_>>();
+        let outter = s.split(':').collect::<Vec<_>>();
+        let inner = outter[0].split('x').collect::<Vec<_>>();
         if inner.len() > 2 || outter.len() > 2 {
             bail!("Interval format is [<Repeat>x]<Duration>[:<Count>].");
         };
@@ -258,13 +258,13 @@ pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
 
     let mut entities = storage::load_entity_state();
 
-    let parts = options.dataset.splitn(2, "/").collect::<Vec<_>>();
+    let parts = options.dataset.splitn(2, '/').collect::<Vec<_>>();
     let dataset = if parts.len() == 2 {
         let filesystem = entity_by_name_mut(&mut entities.btrfs_pools, parts[0]).context("Filesystem not found.")?;
         entity_by_name_mut(&mut filesystem.datasets, parts[1]).context("Dataset not found in filesystem.")?
     } else {
         let dataset_path = entity_by_name_or_id(entities.datasets(), parts[0])?
-            .map(|e| e.to_id_path())
+            .map(|e| e.into_id_path())
             .context("Dataset not found.")?;
         let filesystem = entity_by_id_mut(&mut entities.btrfs_pools, dataset_path.parent).unwrap();
         entity_by_id_mut(&mut filesystem.datasets, dataset_path.entity).unwrap()
@@ -283,7 +283,7 @@ pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
     }
 
     if options.retain_minimum.is_some() || options.retention_intervals.is_some() {
-        let retention = dataset.snapshot_retention.get_or_insert_with(|| Default::default());
+        let retention = dataset.snapshot_retention.get_or_insert_with(Default::default);
         if let Some(intervals) = options.retention_intervals {
             retention.interval = intervals.into_iter().map(|i| i.0).collect();
         }

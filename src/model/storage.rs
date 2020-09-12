@@ -1,5 +1,4 @@
 use crate::model;
-use serde_json;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
@@ -16,7 +15,7 @@ pub fn load_entity_state() -> model::Entities {
     serde_json::from_reader(reader).unwrap()
 }
 
-pub fn store_entity_state(entities: model::Entities) -> () {
+pub fn store_entity_state(entities: model::Entities) {
     // need the libc renameat2 PR merged to make this safe.
     // need to use humantime serde, but the dependency versions were too specific which would cause downgrades.
     // store any state seperate from entities.

@@ -70,7 +70,7 @@ impl BtrfsPool {
             .context("No active top-level mount point found for existing pool.")?;
 
         Ok(Self {
-            model: model,
+            model,
             filesystem: btrfs_info,
         })
     }
@@ -107,7 +107,7 @@ impl BtrfsDataset {
 
         let dataset = Self {
             model: BtrfsDatasetEntity::new(name, subvolume.path.clone(), subvolume.uuid)?,
-            subvolume: subvolume,
+            subvolume,
             pool: Rc::clone(pool),
             snapshots: RefCell::new(Option::None),
         };
@@ -198,8 +198,8 @@ impl BtrfsDataset {
             .context("Can't locate subvolume for existing dataset.")?;
 
         Ok(Self {
-            model: model,
-            subvolume: subvolume,
+            model,
+            subvolume,
             pool: Rc::clone(pool),
             snapshots: RefCell::new(Option::None),
         })
@@ -295,7 +295,7 @@ impl BtrfsContainer {
 
         let dataset = Self {
             model: BtrfsContainerEntity::new(name, subvolume.path.clone(), subvolume.uuid)?,
-            subvolume: subvolume,
+            subvolume,
             pool: Rc::clone(pool),
         };
 
@@ -339,8 +339,8 @@ impl BtrfsContainer {
             .context("Can't locate subvolume for existing dataset.")?;
 
         Ok(Self {
-            model: model,
-            subvolume: subvolume,
+            model,
+            subvolume,
             pool: Rc::clone(pool),
         })
     }
@@ -449,5 +449,5 @@ fn _transfer_delta_snapshot(
     snapshots
         .into_iter()
         .find(|s| s.received_uuid() == snapshot.uuid())
-        .ok_or(anyhow!("Failed to locate new snapshot."))
+        .ok_or_else(|| anyhow!("Failed to locate new snapshot."))
 }

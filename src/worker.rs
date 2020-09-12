@@ -317,7 +317,7 @@ impl RetainBucket {
                 KeepSpec::Newest(n) => NonZeroUsize::new(usize::try_from(n.get()).unwrap()).unwrap(),
                 KeepSpec::All => NonZeroUsize::new(usize::MAX).unwrap(),
             },
-            end_time: end_time,
+            end_time,
         }
     }
 }

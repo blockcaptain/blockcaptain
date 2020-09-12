@@ -1,7 +1,6 @@
 use clap::{crate_version, Clap};
 use human_panic::setup_panic;
 use log::*;
-use pretty_env_logger;
 mod commands;
 use commands::service;
 

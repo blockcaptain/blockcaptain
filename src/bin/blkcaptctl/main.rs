@@ -1,12 +1,7 @@
 use anyhow::Result;
-
 use clap::{crate_version, Clap};
 use human_panic::setup_panic;
 use log::*;
-//use blkcapt::contextualize::Validation;
-
-use pretty_env_logger;
-
 mod commands;
 mod ui;
 use commands::*;

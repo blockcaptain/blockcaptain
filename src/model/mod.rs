@@ -90,7 +90,7 @@ pub struct EntityPath<'a, T: Entity, U: Entity> {
 }
 
 impl<'a, T: Entity, U: Entity> EntityPath<'a, T, U> {
-    pub fn to_id_path(self) -> EntityIdPath {
+    pub fn into_id_path(self) -> EntityIdPath {
         EntityIdPath {
             entity: self.entity.id(),
             parent: self.parent.id(),
@@ -138,11 +138,11 @@ pub trait Entity {
     fn entity_type(&self) -> EntityType;
 }
 
-pub fn entity_by_name<'a, T: Entity>(vec: &'a Vec<T>, name: &str) -> Option<&'a T> {
+pub fn entity_by_name<'a, T: Entity>(vec: &'a [T], name: &str) -> Option<&'a T> {
     vec.iter().find(|e| e.name() == name)
 }
 
-pub fn entity_by_id_mut<T: Entity>(vec: &mut Vec<T>, id: Uuid) -> Option<&mut T> {
+pub fn entity_by_id_mut<T: Entity>(vec: &mut [T], id: Uuid) -> Option<&mut T> {
     vec.iter_mut().find(|e| e.id() == id)
 }
 

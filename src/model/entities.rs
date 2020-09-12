@@ -23,10 +23,10 @@ impl BtrfsPoolEntity {
     pub fn new(name: String, mountpoint: PathBuf, uuid: Uuid, uuid_subs: Vec<Uuid>) -> Result<Self> {
         Ok(Self {
             id: Uuid::new_v4(),
-            name: name,
+            name,
             mountpoint_path: mountpoint,
-            uuid: uuid,
-            uuid_subs: uuid_subs,
+            uuid,
+            uuid_subs,
             datasets: Vec::<BtrfsDatasetEntity>::default(),
             containers: Vec::<BtrfsContainerEntity>::default(),
         })
@@ -141,7 +141,7 @@ impl BtrfsDatasetEntity {
     pub fn new(name: String, subvolume_path: FsPathBuf, subvolume_uuid: Uuid) -> Result<Self> {
         Ok(Self {
             id: Uuid::new_v4(),
-            name: name,
+            name,
             path: subvolume_path,
             uuid: subvolume_uuid,
             snapshot_frequency: None,
@@ -188,7 +188,7 @@ impl BtrfsContainerEntity {
     pub fn new(name: String, subvolume_path: FsPathBuf, subvolume_uuid: Uuid) -> Result<Self> {
         Ok(Self {
             id: Uuid::new_v4(),
-            name: name,
+            name,
             path: subvolume_path,
             uuid: subvolume_uuid,
         })

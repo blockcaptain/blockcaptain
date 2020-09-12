@@ -1,6 +1,5 @@
 use crate::parsing::{parse_key_value_data, StringPair};
 use anyhow::{anyhow, Context, Error, Result};
-use mnt;
 use mnt::{MountEntry, MountIter};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -66,10 +65,8 @@ impl DevicePathBuf {
             if let Component::RootDir = c {
                 if let Some(c) = iter.next() {
                     if let Component::Normal(d) = c {
-                        if d == "dev" {
-                            if let Some(_) = iter.next() {
-                                return Ok(Self(s.as_ref().to_owned()));
-                            }
+                        if d == "dev" && iter.next().is_some() {
+                            return Ok(Self(s.as_ref().to_owned()));
                         }
                     }
                 }
@@ -100,11 +97,11 @@ pub fn lookup_mountentry(target: &Path) -> Option<MountEntry> {
     })
 }
 
-pub fn lookup_mountentries_by_devices(devices: &Vec<DevicePathBuf>) -> impl Iterator<Item = MountEntry> + '_ {
+pub fn lookup_mountentries_by_devices(devices: &[DevicePathBuf]) -> impl Iterator<Item = MountEntry> + '_ {
     let iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
     iter.filter_map(move |m| match m.expect(MOUNT_EXPECTATION) {
         m if DevicePathBuf::try_from(&m.spec)
-            .and_then(|dp| Ok(devices.contains(&dp)))
+            .map(|dp| devices.contains(&dp))
             .unwrap_or_default() =>
         {
             Some(m)
@@ -151,7 +148,7 @@ impl BtrfsMountEntry {
         let prefix = format!("{}=", key);
         self.0.mntops.iter().find_map(|x| match x {
             mnt::MntOps::Extra(extra) if extra.starts_with(prefix.as_str()) => {
-                Some(extra.splitn(2, "=").nth(1).unwrap().parse::<T>().unwrap())
+                Some(extra.splitn(2, '=').nth(1).unwrap().parse::<T>().unwrap())
             }
             _ => None,
         })
@@ -203,19 +200,17 @@ impl BlockDeviceInfo {
 
         kvps.get("SUBSYSTEM")
             .filter(|&s| s == "block")
-            .ok_or(anyhow!("Not a block device."))?;
+            .ok_or_else(|| anyhow!("Not a block device."))?;
 
         let mut device_info = envy::from_iter::<_, Self>(kvps.clone()).context(format!(
             "Failed loading the device information from {} output.",
             PROCESS_NAME
         ))?;
 
-        if device_info.model.is_none() {
-            if kvps.get("DEVPATH").cloned().unwrap_or_default().contains("/virtio") {
-                device_info.model = Some("VirtIO".to_string());
-                if device_info.serial.is_none() && device_info.serial_short.is_none() {
-                    device_info.serial = Some("None".to_string())
-                }
+        if device_info.model.is_none() && kvps.get("DEVPATH").cloned().unwrap_or_default().contains("/virtio") {
+            device_info.model = Some("VirtIO".to_string());
+            if device_info.serial.is_none() && device_info.serial_short.is_none() {
+                device_info.serial = Some("None".to_string())
             }
         }
 

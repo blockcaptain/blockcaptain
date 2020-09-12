@@ -2,7 +2,6 @@ use super::fs::{self, BtrfsMountEntry};
 use crate::parsing::{parse_key_value_pair_lines, StringPair};
 use crate::process::read_with_stderr_context;
 use anyhow::{anyhow, bail, Context, Result};
-use duct;
 use fs::{DevicePathBuf, FsPathBuf};
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -94,7 +93,7 @@ impl Filesystem {
                 .as_str()
                 .parse()
                 .expect("UUID should parse."),
-            devices: devices,
+            devices,
         };
 
         Ok(match fstree_mountpoint {

@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use log::*;
-use std::iter::repeat;
+use std::{cmp::Reverse, iter::repeat};
 use std::{convert::TryFrom, num::NonZeroUsize, rc::Rc};
 
 pub trait Job {
@@ -249,7 +249,7 @@ pub fn evaluate_retention(
     mut snapshots: Vec<BtrfsDatasetSnapshot>,
     rules: &RetentionRuleset,
 ) -> Result<RetentionEvaluation> {
-    snapshots.sort_unstable_by(|a, b| b.datetime().cmp(&a.datetime()));
+    snapshots.sort_unstable_by_key(|b| Reverse(b.datetime()));
     let snapshots = snapshots;
 
     let begin_time = snapshots[0].datetime();

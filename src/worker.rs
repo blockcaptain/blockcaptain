@@ -184,12 +184,28 @@ impl Job for LocalSyncJob {
         Ok(())
     }
 
-    fn is_ready(&self) -> Result<bool> {
-        Ok(!self.ready_snapshots()?.2.is_empty())
-    }
-
     fn next_check(&self) -> Result<Duration> {
-        Ok(Duration::minutes(10))
+        if !self.ready_snapshots()?.2.is_empty() {
+            return Ok(Duration::zero());
+        }
+        let latest = self.dataset.latest_snapshot()?;
+        Ok(if let Some(latest_snapshot) = latest {
+            trace!(
+                "Existing snapshot for {} at {}.",
+                self.dataset.model().id(),
+                latest_snapshot.datetime()
+            );
+            let now = Utc::now();
+            let next_datetime = latest_snapshot.datetime() + Duration::hours(1);
+            if now < next_datetime {
+                next_datetime - now
+            } else {
+                Duration::minutes(5)
+            }
+        } else {
+            trace!("No existing snapshot for {}.", self.dataset.model().id());
+            Duration::minutes(5)
+        })
     }
 }
 

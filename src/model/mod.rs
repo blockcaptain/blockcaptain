@@ -6,8 +6,8 @@ use entities::{
     BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObserverEntity, SnapshotSyncEntity,
 };
 use serde::{Deserialize, Serialize};
-use std::iter::repeat;
 use std::path::Path;
+use std::{fmt::Debug, iter::repeat};
 use strum_macros::Display;
 use uuid::Uuid;
 
@@ -84,6 +84,8 @@ impl Entities {
         self.snapshot_syncs.iter()
     }
 }
+
+#[derive(Debug)]
 pub struct EntityPath<'a, T: Entity, U: Entity> {
     pub entity: &'a T,
     pub parent: &'a U,
@@ -132,7 +134,7 @@ pub enum EntityType {
     Observer,
 }
 
-pub trait Entity {
+pub trait Entity: Debug {
     fn name(&self) -> &str;
     fn id(&self) -> Uuid;
     fn entity_type(&self) -> EntityType;

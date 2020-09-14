@@ -1,6 +1,10 @@
 use anyhow::{bail, Context, Result};
-use blkcapt::model::entities::FeatureState;
 use blkcapt::model::entities::{IntervalSpec, KeepSpec};
+use blkcapt::model::{
+    entities::HealthchecksObserverEntity,
+    entities::{FeatureState, HealthchecksObservation, ObservableEvent, Observation},
+    Entities,
+};
 use blkcapt::sys::fs::{find_mountentry, DevicePathBuf};
 use blkcapt::{
     core::{BtrfsContainer, BtrfsDataset, BtrfsPool},
@@ -8,6 +12,7 @@ use blkcapt::{
 };
 use clap::Clap;
 use log::*;
+use uuid::Uuid;
 
 use std::{num::NonZeroU32, path::PathBuf, rc::Rc, str::FromStr};
 
@@ -346,18 +351,81 @@ pub struct ObserverCreateOptions {
     name: String,
 
     /// Type of observer (must be "healthchecks").
-    #[clap(required(true))]
+    #[clap(short("t"), long("type"), required(true))]
     observer_type: String,
+
+    /// Observations specifications.
+    #[clap()]
+    observations: Vec<ObservationArg>,
+}
+
+#[derive(Debug)]
+pub struct ObservationArg {
+    healthcheck_id: Uuid,
+    entity_id: Uuid,
+    event: ObservableEvent,
+}
+
+impl FromStr for ObservationArg {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let outter = s.split('=').collect::<Vec<_>>();
+        let inner = outter[0].split(':').collect::<Vec<_>>();
+        if inner.len() != 2 || outter.len() != 2 {
+            bail!("Interval format is <EntityID>:<Event>=<HealthcheckID>.");
+        };
+        Ok(Self {
+            entity_id: Uuid::parse_str(inner[0])?,
+            healthcheck_id: Uuid::parse_str(outter[1])?,
+            event: ObservableEvent::from_str(inner[1])?,
+        })
+    }
 }
 
 pub fn create_observer(options: ObserverCreateOptions) -> Result<()> {
     debug!("Command 'create_observer': {:?}", options);
 
-    //let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_state();
 
-    todo!();
+    if options.observer_type != "healthchecks" {
+        bail!("Only healthchecks is supported.");
+    }
 
-    //storage::store_entity_state(entities);
+    let observations = options
+        .observations
+        .iter()
+        .map(|o| HealthchecksObservation {
+            healthcheck_id: o.healthcheck_id,
+            observation: Observation {
+                entity_id: o.entity_id,
+                event: o.event,
+            },
+        })
+        .collect::<Vec<_>>();
 
-    //Ok(())
+    for observation in observations.iter() {
+        let entity = find_entity(&entities, observation.observation.entity_id).context("Id not found.")?;
+        info!("Found {:?}.", entity);
+    }
+
+    let observer = HealthchecksObserverEntity::new(options.name, observations);
+
+    entities.observers.push(observer);
+
+    storage::store_entity_state(entities);
+
+    Ok(())
+}
+
+fn any_entity<T: Entity>(entity: &T) -> &dyn Entity {
+    entity as &dyn Entity
+}
+
+fn find_entity(entities: &Entities, id: Uuid) -> Option<&dyn Entity> {
+    entities
+        .pool(id)
+        .map(any_entity)
+        .or_else(|| entities.dataset(id).map(|e| any_entity(e.entity)))
+        .or_else(|| entities.container(id).map(|e| any_entity(e.entity)))
 }

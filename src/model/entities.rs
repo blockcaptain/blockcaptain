@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{default::Default, num::NonZeroU32, time::Duration};
 use strum_macros::Display;
+use strum_macros::EnumString;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -285,6 +286,17 @@ pub struct HealthchecksObserverEntity {
     pub observations: Vec<HealthchecksObservation>,
 }
 
+impl HealthchecksObserverEntity {
+    pub fn new(name: String, observations: Vec<HealthchecksObservation>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name,
+            custom_url: None,
+            observations,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HealthchecksObservation {
     #[serde(flatten)]
@@ -310,8 +322,9 @@ pub struct Observation {
     pub event: ObservableEvent,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ObservableEvent {
     WorkerHeartbeat,
     DatasetSnapshot,

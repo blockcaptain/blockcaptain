@@ -1,16 +1,16 @@
 use anyhow::{bail, Context, Result};
-use blkcapt::model::entities::{IntervalSpec, KeepSpec};
-use blkcapt::model::{
+use clap::Clap;
+use libblkcapt::model::entities::{IntervalSpec, KeepSpec};
+use libblkcapt::model::{
     entities::HealthchecksObserverEntity,
     entities::{FeatureState, HealthchecksObservation, ObservableEvent, Observation},
     Entities,
 };
-use blkcapt::sys::fs::{find_mountentry, DevicePathBuf};
-use blkcapt::{
+use libblkcapt::sys::fs::{find_mountentry, DevicePathBuf};
+use libblkcapt::{
     core::{BtrfsContainer, BtrfsDataset, BtrfsPool},
     model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
 };
-use clap::Clap;
 use log::*;
 use uuid::Uuid;
 

@@ -1,8 +1,8 @@
 use anyhow::Result;
-use blkcapt::core::{BtrfsContainer, BtrfsDataset, BtrfsPool, ObservationManager};
-use blkcapt::model::storage;
-use blkcapt::model::Entity;
-use blkcapt::worker::{Job, LocalPruneJob, LocalSnapshotJob, LocalSyncJob};
+use libblkcapt::core::{BtrfsContainer, BtrfsDataset, BtrfsPool, ObservationManager};
+use libblkcapt::model::storage;
+use libblkcapt::model::Entity;
+use libblkcapt::worker::{Job, LocalPruneJob, LocalSnapshotJob, LocalSyncJob};
 use log::*;
 use std::{mem, rc::Rc};
 

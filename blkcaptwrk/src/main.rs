@@ -1,4 +1,3 @@
-use clap::{crate_version, Clap};
 use human_panic::setup_panic;
 use log::*;
 mod commands;
@@ -7,8 +6,15 @@ use commands::service;
 fn main() {
     setup_panic!();
 
-    let options: CliOptions = CliOptions::parse();
-    let level = match options.verbose {
+    let vcount = std::env::args().fold(0, |a, e| {
+        a + match e.as_str() {
+            "-v" => 1,
+            "-vv" => 2,
+            _ => 0,
+        }
+    });
+
+    let level = match vcount {
         0 => LevelFilter::Info,
         1 => LevelFilter::Debug,
         _ => LevelFilter::Trace,
@@ -25,12 +31,4 @@ fn main() {
             info!("Caused by: {}", cause);
         }
     }
-}
-
-#[derive(Clap)]
-#[clap(version = crate_version!(), author = "rebeagle")]
-struct CliOptions {
-    /// Enable debug logs. Use twice to enable trace logs.
-    #[clap(short, long, parse(from_occurrences))]
-    verbose: i32,
 }

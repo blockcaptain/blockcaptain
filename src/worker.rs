@@ -1,6 +1,6 @@
-use crate::model::{entities::KeepSpec, Entity};
+use crate::model::{entities::KeepSpec, entities::ObservableEvent, Entity};
 use crate::{
-    core::{self, BtrfsContainer, BtrfsContainerSnapshot, BtrfsDataset, BtrfsDatasetSnapshot},
+    core::{self, BtrfsContainer, BtrfsContainerSnapshot, BtrfsDataset, BtrfsDatasetSnapshot, ObservationManager},
     model::entities::RetentionRuleset,
 };
 use anyhow::Result;
@@ -39,7 +39,9 @@ impl LocalSnapshotJob {
 
 impl Job for LocalSnapshotJob {
     fn run(&self) -> Result<()> {
-        self.dataset.create_local_snapshot()
+        self.dataset.create_local_snapshot()?;
+        ObservationManager::emit_event(self.dataset.uuid(), ObservableEvent::DatasetSnapshot);
+        Ok(())
     }
 
     fn next_check(&self) -> Result<Duration> {
@@ -181,6 +183,7 @@ impl Job for LocalSyncJob {
             }?;
             container_snapshots.push(new_snapshot);
         }
+        ObservationManager::emit_event(self.dataset.uuid(), ObservableEvent::SnapshotSync);
         Ok(())
     }
 
@@ -249,6 +252,7 @@ impl Job for LocalPruneJob {
             snapshot.delete().map_err(|e| e.source)?;
         }
 
+        ObservationManager::emit_event(self.dataset.uuid(), ObservableEvent::DatasetPrune);
         Ok(())
     }
 

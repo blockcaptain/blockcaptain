@@ -1,13 +1,16 @@
 use anyhow::Result;
-use blkcapt::core::{BtrfsContainer, BtrfsDataset, BtrfsPool};
+use blkcapt::core::{BtrfsContainer, BtrfsDataset, BtrfsPool, ObservationManager};
 use blkcapt::model::storage;
 use blkcapt::model::Entity;
 use blkcapt::worker::{Job, LocalPruneJob, LocalSnapshotJob, LocalSyncJob};
 use log::*;
-use std::rc::Rc;
+use std::{mem, rc::Rc};
 
 pub fn service() -> Result<()> {
-    let entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_state();
+
+    ObservationManager::attach_observers(mem::take(entities.observers.as_mut()));
+    let entities = entities;
 
     // should these have into iters and consume the models?
     let pools = entities

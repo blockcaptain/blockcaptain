@@ -1,14 +1,18 @@
-use crate::model::entities::{BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, SubvolumeEntity};
+use crate::model::entities::{
+    BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObserverEntity, ObservableEvent,
+    SubvolumeEntity,
+};
 use crate::model::Entity;
 use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use derivative::Derivative;
+use lazy_static::lazy_static;
 use log::*;
-use std::path::PathBuf;
 use std::{cell::RefCell, convert::TryFrom, rc::Rc};
 use std::{fmt::Debug, fmt::Display, fs};
+use std::{path::PathBuf, sync::Mutex};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -450,4 +454,25 @@ fn _transfer_delta_snapshot(
         .into_iter()
         .find(|s| s.received_uuid() == snapshot.uuid())
         .ok_or_else(|| anyhow!("Failed to locate new snapshot."))
+}
+
+// ## Observer #######################################################################################################
+
+lazy_static! {
+    static ref OBS_MANAGER: Mutex<ObservationManager> = Mutex::new(ObservationManager { observers: vec![] });
+}
+
+pub struct ObservationManager {
+    observers: Vec<HealthchecksObserverEntity>,
+}
+
+impl ObservationManager {
+    pub fn attach_observers(observers: Vec<HealthchecksObserverEntity>) {
+        let manager = OBS_MANAGER.lock();
+        manager.unwrap().observers = observers;
+    }
+
+    pub fn emit_event(source: Uuid, event: ObservableEvent) {
+        trace!("Emit event {:?} from entity {:?}.", event, source);
+    }
 }

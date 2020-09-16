@@ -6,7 +6,8 @@ mod commands;
 mod ui;
 use commands::*;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     setup_panic!();
 
     let options: CliOptions = CliOptions::parse();
@@ -21,7 +22,7 @@ fn main() {
     trace!("Trace verbosity enabled.");
 
     let result = command_dispath(options);
-    if let Err(e) = result {
+    if let Err(e) = result.await {
         error!("{}", e);
         for cause in e.chain().skip(1) {
             debug!("Caused by: {}", cause);
@@ -29,7 +30,7 @@ fn main() {
     }
 }
 
-fn command_dispath(options: CliOptions) -> Result<()> {
+async fn command_dispath(options: CliOptions) -> Result<()> {
     match options.subcmd {
         TopCommands::Pool(top_options) => match top_options.subcmd {
             PoolSubCommands::Attach(options) => attach_pool(options)?,
@@ -45,6 +46,7 @@ fn command_dispath(options: CliOptions) -> Result<()> {
         },
         TopCommands::Observer(top_options) => match top_options.subcmd {
             ObserverSubCommands::Create(options) => create_observer(options)?,
+            ObserverSubCommands::Test(options) => test_observer(options).await?,
         },
     }
 
@@ -115,4 +117,5 @@ struct ObserverCommands {
 #[derive(Clap)]
 enum ObserverSubCommands {
     Create(ObserverCreateOptions),
+    Test(ObserverTestOptions),
 }

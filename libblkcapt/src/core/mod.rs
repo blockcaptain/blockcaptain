@@ -1,6 +1,6 @@
 use crate::model::entities::{
-    BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObserverEntity, ObservableEvent,
-    SubvolumeEntity,
+    BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObservation, HealthchecksObserverEntity,
+    ObservableEvent, SubvolumeEntity,
 };
 use crate::model::Entity;
 use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
@@ -474,5 +474,23 @@ impl ObservationManager {
 
     pub fn emit_event(source: Uuid, event: ObservableEvent) {
         trace!("Emit event {:?} from entity {:?}.", event, source);
+    }
+}
+
+pub struct ObservationRouter {
+    observers: Vec<HealthchecksObserverEntity>,
+}
+
+impl ObservationRouter {
+    pub fn new(model: Vec<HealthchecksObserverEntity>) -> Self {
+        Self { observers: model }
+    }
+
+    pub fn route(&self, source: Uuid, event: ObservableEvent) -> Vec<&HealthchecksObservation> {
+        self.observers
+            .iter()
+            .flat_map(|o| o.observations.iter())
+            .filter(|obs| obs.observation.entity_id == source && obs.observation.event == event)
+            .collect()
     }
 }

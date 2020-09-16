@@ -1,6 +1,7 @@
 use human_panic::setup_panic;
 use log::*;
 mod commands;
+mod worker;
 use commands::service;
 
 fn main() {

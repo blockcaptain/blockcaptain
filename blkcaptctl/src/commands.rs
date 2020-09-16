@@ -1,12 +1,16 @@
 use anyhow::{bail, Context, Result};
 use clap::Clap;
-use libblkcapt::model::entities::{IntervalSpec, KeepSpec};
+use hyper::Uri;
 use libblkcapt::model::{
     entities::HealthchecksObserverEntity,
     entities::{FeatureState, HealthchecksObservation, ObservableEvent, Observation},
     Entities,
 };
 use libblkcapt::sys::fs::{find_mountentry, DevicePathBuf};
+use libblkcapt::{
+    core::ObservationRouter,
+    model::entities::{IntervalSpec, KeepSpec},
+};
 use libblkcapt::{
     core::{BtrfsContainer, BtrfsDataset, BtrfsPool},
     model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
@@ -428,4 +432,44 @@ fn find_entity(entities: &Entities, id: Uuid) -> Option<&dyn Entity> {
         .map(any_entity)
         .or_else(|| entities.dataset(id).map(|e| any_entity(e.entity)))
         .or_else(|| entities.container(id).map(|e| any_entity(e.entity)))
+}
+
+#[derive(Clap, Debug)]
+pub struct ObserverTestOptions {
+    /// Id of the source entity.
+    #[clap()]
+    entity: Uuid,
+
+    /// Event to emit.
+    #[clap()]
+    event: ObservableEvent,
+}
+
+pub async fn test_observer(options: ObserverTestOptions) -> Result<()> {
+    debug!("Command 'create_observer': {:?}", options);
+
+    let entities = storage::load_entity_state();
+    let router = ObservationRouter::new(entities.observers);
+    let matches = router.route(options.entity, options.event);
+    if matches.is_empty() {
+        bail!("No matching observations found.");
+    }
+
+    // add option to pass or fail it.
+    // add validation of entity id.
+
+    for observation_match in matches {
+        let uri = Uri::from_str(
+            format!(
+                "https://hc-ping.com/{}",
+                observation_match.healthcheck_id.to_hyphenated()
+            )
+            .as_str(),
+        )
+        .unwrap();
+        let result = libblkcapt::sys::net::https_request(uri).await?;
+        info!("Ping {} Result: {:#?}", observation_match.healthcheck_id, result);
+    }
+
+    Ok(())
 }

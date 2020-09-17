@@ -16,9 +16,8 @@ use libblkcapt::{
     model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
 };
 use log::*;
+use std::{num::NonZeroU32, path::PathBuf, rc::Rc, str::FromStr, time::Duration};
 use uuid::Uuid;
-
-use std::{num::NonZeroU32, path::PathBuf, rc::Rc, str::FromStr};
 
 // #[derive(Clap, Debug)]
 // struct PoolAttachOptions {
@@ -440,6 +439,10 @@ pub struct ObserverTestOptions {
     #[clap()]
     entity: Uuid,
 
+    /// Fail instead of pass.
+    #[clap(short, long)]
+    fail: bool,
+
     /// Event to emit.
     #[clap()]
     event: ObservableEvent,
@@ -449,26 +452,34 @@ pub async fn test_observer(options: ObserverTestOptions) -> Result<()> {
     debug!("Command 'create_observer': {:?}", options);
 
     let entities = storage::load_entity_state();
+    let entity = find_entity(&entities, options.entity).context("Id not found.")?;
+    info!("Found {:?}.", entity);
+
     let router = ObservationRouter::new(entities.observers);
     let matches = router.route(options.entity, options.event);
     if matches.is_empty() {
         bail!("No matching observations found.");
     }
 
-    // add option to pass or fail it.
-    // add validation of entity id.
-
     for observation_match in matches {
-        let uri = Uri::from_str(
-            format!(
-                "https://hc-ping.com/{}",
-                observation_match.healthcheck_id.to_hyphenated()
-            )
-            .as_str(),
-        )
-        .unwrap();
+        let uri_string = format!(
+            "https://hc-ping.com/{}",
+            observation_match.healthcheck_id.to_hyphenated()
+        );
+        let uri = Uri::from_str((uri_string.clone() + "/start").as_str()).unwrap();
         let result = libblkcapt::sys::net::https_request(uri).await?;
-        info!("Ping {} Result: {:#?}", observation_match.healthcheck_id, result);
+        info!("Start {} Result: {:#?}", observation_match.healthcheck_id, result);
+        tokio::time::delay_for(Duration::from_millis(100)).await;
+
+        if options.fail {
+            let uri = Uri::from_str((uri_string.clone() + "/fail").as_str()).unwrap();
+            let result = libblkcapt::sys::net::https_request(uri).await?;
+            info!("Fail {} Result: {:#?}", observation_match.healthcheck_id, result);
+        } else {
+            let uri = Uri::from_str(uri_string.as_str()).unwrap();
+            let result = libblkcapt::sys::net::https_request(uri).await?;
+            info!("Finish {} Result: {:#?}", observation_match.healthcheck_id, result);
+        }
     }
 
     Ok(())

@@ -39,9 +39,9 @@ impl LocalSnapshotJob {
 
 impl Job for LocalSnapshotJob {
     fn run(&self) -> Result<()> {
-        self.dataset.create_local_snapshot()?;
-        ObservationManager::emit_event(self.dataset.uuid(), ObservableEvent::DatasetSnapshot);
-        Ok(())
+        ObservationManager::run_event(self.dataset.uuid(), ObservableEvent::DatasetSnapshot, || {
+            self.dataset.create_local_snapshot()
+        })
     }
 
     fn next_check(&self) -> Result<Duration> {
@@ -108,10 +108,8 @@ impl LocalSyncJob {
 
         Ok((dataset_snapshots, container_snapshots, ready_index))
     }
-}
 
-impl Job for LocalSyncJob {
-    fn run(&self) -> Result<()> {
+    fn work(&self) -> Result<()> {
         let (dataset_snapshots, mut container_snapshots, send_snapshots) = self.ready_snapshots()?;
 
         trace!("Identified {} snapshots to send.", send_snapshots.len());
@@ -183,8 +181,13 @@ impl Job for LocalSyncJob {
             }?;
             container_snapshots.push(new_snapshot);
         }
-        ObservationManager::emit_event(self.dataset.uuid(), ObservableEvent::SnapshotSync);
         Ok(())
+    }
+}
+
+impl Job for LocalSyncJob {
+    fn run(&self) -> Result<()> {
+        ObservationManager::run_event(self.dataset.uuid(), ObservableEvent::SnapshotSync, || self.work())
     }
 
     fn next_check(&self) -> Result<Duration> {
@@ -222,10 +225,8 @@ impl LocalPruneJob {
             dataset: Rc::clone(dataset),
         }
     }
-}
 
-impl Job for LocalPruneJob {
-    fn run(&self) -> Result<()> {
+    fn work(&self) -> Result<()> {
         let rules = self
             .dataset
             .model()
@@ -252,8 +253,13 @@ impl Job for LocalPruneJob {
             snapshot.delete().map_err(|e| e.source)?;
         }
 
-        ObservationManager::emit_event(self.dataset.uuid(), ObservableEvent::DatasetPrune);
         Ok(())
+    }
+}
+
+impl Job for LocalPruneJob {
+    fn run(&self) -> Result<()> {
+        ObservationManager::run_event(self.dataset.uuid(), ObservableEvent::DatasetPrune, || self.work())
     }
 
     fn next_check(&self) -> Result<Duration> {

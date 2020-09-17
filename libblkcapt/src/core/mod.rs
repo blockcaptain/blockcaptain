@@ -472,8 +472,20 @@ impl ObservationManager {
         manager.unwrap().observers = observers;
     }
 
-    pub fn emit_event(source: Uuid, event: ObservableEvent) {
-        trace!("Emit event {:?} from entity {:?}.", event, source);
+    pub fn run_event<F, T, E>(source: Uuid, event: ObservableEvent, work: F) -> core::result::Result<T, E>
+    where
+        F: FnOnce() -> core::result::Result<T, E>,
+        E: Debug,
+    {
+        trace!("Emit start event {:?} from entity {:?}.", event, source);
+        let result = work();
+        if let core::result::Result::Err(ref e) = result {
+            trace!("Emit failure event {:?} from entity {:?}: {:?}.", event, source, e);
+        } else {
+            trace!("Emit finish event {:?} from entity {:?}.", event, source);
+        }
+
+        result
     }
 }
 

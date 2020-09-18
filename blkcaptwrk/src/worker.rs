@@ -1,16 +1,17 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
+use futures_util::future::ready;
 use libblkcapt::model::{entities::KeepSpec, entities::ObservableEvent, Entity};
 use libblkcapt::{
-    core::{self, BtrfsContainer, BtrfsContainerSnapshot, BtrfsDataset, BtrfsDatasetSnapshot, ObservationManager},
+    core::{self, observation_manager, BtrfsContainer, BtrfsContainerSnapshot, BtrfsDataset, BtrfsDatasetSnapshot},
     model::entities::RetentionRuleset,
 };
 use log::*;
-use std::{cmp::Reverse, iter::repeat};
+use std::{cmp::Reverse, future::Future, iter::repeat, pin::Pin};
 use std::{convert::TryFrom, num::NonZeroUsize, rc::Rc};
 
 pub trait Job {
-    fn run(&self) -> Result<()>;
+    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + '_>>;
     fn next_check(&self) -> Result<Duration>;
 
     fn is_ready(&self) -> Result<bool> {
@@ -38,10 +39,12 @@ impl LocalSnapshotJob {
 }
 
 impl Job for LocalSnapshotJob {
-    fn run(&self) -> Result<()> {
-        ObservationManager::run_event(self.dataset.uuid(), ObservableEvent::DatasetSnapshot, || {
-            self.dataset.create_local_snapshot()
-        })
+    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
+        Box::pin(
+            observation_manager().run_event(self.dataset.uuid(), ObservableEvent::DatasetSnapshot, move || {
+                ready(self.dataset.create_local_snapshot())
+            }),
+        )
     }
 
     fn next_check(&self) -> Result<Duration> {
@@ -186,8 +189,12 @@ impl LocalSyncJob {
 }
 
 impl Job for LocalSyncJob {
-    fn run(&self) -> Result<()> {
-        ObservationManager::run_event(self.dataset.uuid(), ObservableEvent::SnapshotSync, || self.work())
+    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
+        Box::pin(
+            observation_manager().run_event(self.dataset.uuid(), ObservableEvent::SnapshotSync, move || {
+                ready(self.work())
+            }),
+        )
     }
 
     fn next_check(&self) -> Result<Duration> {
@@ -258,8 +265,12 @@ impl LocalPruneJob {
 }
 
 impl Job for LocalPruneJob {
-    fn run(&self) -> Result<()> {
-        ObservationManager::run_event(self.dataset.uuid(), ObservableEvent::DatasetPrune, || self.work())
+    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
+        Box::pin(
+            observation_manager().run_event(self.dataset.uuid(), ObservableEvent::DatasetPrune, move || {
+                ready(self.work())
+            }),
+        )
     }
 
     fn next_check(&self) -> Result<Duration> {

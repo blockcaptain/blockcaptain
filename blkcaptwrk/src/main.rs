@@ -4,7 +4,8 @@ mod commands;
 mod worker;
 use commands::service;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     setup_panic!();
 
     let vcount = std::env::args().fold(0, |a, e| {
@@ -25,7 +26,7 @@ fn main() {
     debug!("Debug verbosity enabled.");
     trace!("Trace verbosity enabled.");
 
-    let result = service();
+    let result = service().await;
     if let Err(e) = result {
         error!("{}", e);
         for cause in e.chain().skip(1) {

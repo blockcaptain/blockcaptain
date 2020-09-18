@@ -1,18 +1,21 @@
-use crate::model::entities::{
-    BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObservation, HealthchecksObserverEntity,
-    ObservableEvent, SubvolumeEntity,
-};
 use crate::model::Entity;
 use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
+use crate::{
+    model::entities::{
+        BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObservation, HealthchecksObserverEntity,
+        ObservableEvent, SubvolumeEntity,
+    },
+    sys::net::HttpsClient,
+};
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use derivative::Derivative;
-use lazy_static::lazy_static;
+use hyper::Uri;
 use log::*;
-use std::{cell::RefCell, convert::TryFrom, rc::Rc};
+use std::path::PathBuf;
+use std::{cell::RefCell, convert::TryFrom, future::Future, rc::Rc, str::FromStr};
 use std::{fmt::Debug, fmt::Display, fs};
-use std::{path::PathBuf, sync::Mutex};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -458,34 +461,45 @@ fn _transfer_delta_snapshot(
 
 // ## Observer #######################################################################################################
 
-lazy_static! {
-    static ref OBS_MANAGER: Mutex<ObservationManager> = Mutex::new(ObservationManager { observers: vec![] });
+static mut OBS_MANAGER: Option<ObservationManager> = None;
+
+pub fn observation_manager() -> &'static ObservationManager {
+    unsafe { OBS_MANAGER.as_ref().unwrap() }
+}
+
+pub fn observation_manager_init(observers: Vec<HealthchecksObserverEntity>) {
+    let manager = ObservationManager {
+        router: ObservationRouter::new(observers),
+        emitter: ObservationEmitter::default(),
+    };
+    unsafe {
+        OBS_MANAGER = Some(manager);
+    }
 }
 
 pub struct ObservationManager {
-    observers: Vec<HealthchecksObserverEntity>,
+    router: ObservationRouter,
+    emitter: ObservationEmitter,
 }
 
 impl ObservationManager {
-    pub fn attach_observers(observers: Vec<HealthchecksObserverEntity>) {
-        let manager = OBS_MANAGER.lock();
-        manager.unwrap().observers = observers;
+    pub fn attach_observers(&mut self, observers: Vec<HealthchecksObserverEntity>) {
+        self.router = ObservationRouter::new(observers);
     }
 
-    pub fn run_event<F, T, E>(source: Uuid, event: ObservableEvent, work: F) -> core::result::Result<T, E>
+    pub async fn run_event<F, T, E, R>(
+        &self,
+        source: Uuid,
+        event: ObservableEvent,
+        work: F,
+    ) -> core::result::Result<T, E>
     where
-        F: FnOnce() -> core::result::Result<T, E>,
+        F: FnOnce() -> R,
+        R: Future<Output = core::result::Result<T, E>>,
         E: Debug,
     {
-        trace!("Emit start event {:?} from entity {:?}.", event, source);
-        let result = work();
-        if let core::result::Result::Err(ref e) = result {
-            trace!("Emit failure event {:?} from entity {:?}: {:?}.", event, source, e);
-        } else {
-            trace!("Emit finish event {:?} from entity {:?}.", event, source);
-        }
-
-        result
+        let observations = self.router.route(source, event);
+        self.emitter.observe_work(observations, work).await
     }
 }
 
@@ -504,5 +518,58 @@ impl ObservationRouter {
             .flat_map(|o| o.observations.iter())
             .filter(|obs| obs.observation.entity_id == source && obs.observation.event == event)
             .collect()
+    }
+}
+
+pub struct ObservationEmitter {
+    http_client: HttpsClient,
+}
+
+impl ObservationEmitter {
+    pub fn default() -> Self {
+        Self {
+            http_client: HttpsClient::default(),
+        }
+    }
+
+    pub async fn observe_work<F, T, E, R>(
+        &self,
+        observations: Vec<&HealthchecksObservation>,
+        work: F,
+    ) -> core::result::Result<T, E>
+    where
+        F: FnOnce() -> R,
+        R: Future<Output = core::result::Result<T, E>>,
+        E: Debug,
+    {
+        for observation in observations.iter() {
+            trace!("Emit start event for check {:?}.", observation.healthcheck_id);
+            self.emit(observation, "/start").await;
+        }
+
+        let result = work().await;
+
+        if let core::result::Result::Err(ref e) = result {
+            for observation in observations.iter() {
+                trace!("Emit fail event for check {:?}: {:?}.", observation.healthcheck_id, e);
+                self.emit(observation, "/start").await;
+            }
+        } else {
+            for observation in observations.iter() {
+                trace!("Emit finish event for check {:?}.", observation.healthcheck_id);
+                self.emit(observation, "").await;
+            }
+        }
+
+        result
+    }
+
+    async fn emit(&self, observation: &HealthchecksObservation, suffix: &str) {
+        let uri_string = format!("https://hc-ping.com/{}", observation.healthcheck_id.to_hyphenated());
+        let uri = Uri::from_str((uri_string + suffix).as_str()).unwrap();
+
+        if let std::result::Result::Err(e) = self.http_client.get(uri).await {
+            error!("Failed to send healthcheck. {:?}", e);
+        }
     }
 }

@@ -12,5 +12,7 @@ log = "0.4"
 pretty_env_logger = "0.4"
 human-panic = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "0.2", features = ["full"] }
+futures-util = "0.3"
 
 [dev-dependencies]

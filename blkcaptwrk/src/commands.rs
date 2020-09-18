@@ -1,15 +1,14 @@
 use crate::worker::{Job, LocalPruneJob, LocalSnapshotJob, LocalSyncJob};
 use anyhow::Result;
-use libblkcapt::core::{BtrfsContainer, BtrfsDataset, BtrfsPool, ObservationManager};
+use libblkcapt::core::{observation_manager_init, BtrfsContainer, BtrfsDataset, BtrfsPool};
 use libblkcapt::model::storage;
 use libblkcapt::model::Entity;
 use log::*;
 use std::{mem, rc::Rc};
 
-pub fn service() -> Result<()> {
+pub async fn service() -> Result<()> {
     let mut entities = storage::load_entity_state();
-
-    ObservationManager::attach_observers(mem::take(entities.observers.as_mut()));
+    observation_manager_init(mem::take(entities.observers.as_mut()));
     let entities = entities;
 
     // should these have into iters and consume the models?
@@ -61,7 +60,7 @@ pub fn service() -> Result<()> {
     while !ready_jobs.is_empty() {
         debug!("Iterating Work with {} ready jobs.", ready_jobs.len());
         for job in ready_jobs {
-            job.run()?;
+            job.run().await?;
         }
         ready_jobs = jobs
             .iter()

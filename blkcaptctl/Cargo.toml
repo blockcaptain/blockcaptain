@@ -17,6 +17,7 @@ uuid = { version = "0.8", features = ["serde", "v4"] }
 humantime = "2.0"
 hyper = "0.13"
 tokio = { version = "0.2", features = ["full"] }
+futures-util = "0.3"
 
 [dev-dependencies]
 

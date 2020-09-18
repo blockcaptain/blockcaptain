@@ -1,12 +1,15 @@
 use anyhow::{bail, Context, Result};
 use clap::Clap;
-use hyper::Uri;
-use libblkcapt::model::{
-    entities::HealthchecksObserverEntity,
-    entities::{FeatureState, HealthchecksObservation, ObservableEvent, Observation},
-    Entities,
-};
+use futures_util::future::FutureExt;
 use libblkcapt::sys::fs::{find_mountentry, DevicePathBuf};
+use libblkcapt::{
+    core::ObservationEmitter,
+    model::{
+        entities::HealthchecksObserverEntity,
+        entities::{FeatureState, HealthchecksObservation, ObservableEvent, Observation},
+        Entities,
+    },
+};
 use libblkcapt::{
     core::ObservationRouter,
     model::entities::{IntervalSpec, KeepSpec},
@@ -461,25 +464,13 @@ pub async fn test_observer(options: ObserverTestOptions) -> Result<()> {
         bail!("No matching observations found.");
     }
 
+    let emitter = ObservationEmitter::default();
     for observation_match in matches {
-        let uri_string = format!(
-            "https://hc-ping.com/{}",
-            observation_match.healthcheck_id.to_hyphenated()
-        );
-        let uri = Uri::from_str((uri_string.clone() + "/start").as_str()).unwrap();
-        let result = libblkcapt::sys::net::https_request(uri).await?;
-        info!("Start {} Result: {:#?}", observation_match.healthcheck_id, result);
-        tokio::time::delay_for(Duration::from_millis(100)).await;
-
-        if options.fail {
-            let uri = Uri::from_str((uri_string.clone() + "/fail").as_str()).unwrap();
-            let result = libblkcapt::sys::net::https_request(uri).await?;
-            info!("Fail {} Result: {:#?}", observation_match.healthcheck_id, result);
-        } else {
-            let uri = Uri::from_str(uri_string.as_str()).unwrap();
-            let result = libblkcapt::sys::net::https_request(uri).await?;
-            info!("Finish {} Result: {:#?}", observation_match.healthcheck_id, result);
-        }
+        emitter
+            .observe_work(vec![observation_match], || {
+                tokio::time::delay_for(Duration::from_millis(300)).map(|_| Result::<_>::Ok(()))
+            })
+            .await?;
     }
 
     Ok(())

@@ -40,11 +40,11 @@ impl LocalSnapshotJob {
 
 impl Job for LocalSnapshotJob {
     fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
-        Box::pin(
-            observation_manager().run_event(self.dataset.uuid(), ObservableEvent::DatasetSnapshot, move || {
-                ready(self.dataset.create_local_snapshot())
-            }),
-        )
+        Box::pin(observation_manager().run_event(
+            self.dataset.model().id(),
+            ObservableEvent::DatasetSnapshot,
+            move || ready(self.dataset.create_local_snapshot()),
+        ))
     }
 
     fn next_check(&self) -> Result<Duration> {
@@ -191,7 +191,7 @@ impl LocalSyncJob {
 impl Job for LocalSyncJob {
     fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
         Box::pin(
-            observation_manager().run_event(self.dataset.uuid(), ObservableEvent::SnapshotSync, move || {
+            observation_manager().run_event(self.dataset.model().id(), ObservableEvent::SnapshotSync, move || {
                 ready(self.work())
             }),
         )
@@ -267,7 +267,7 @@ impl LocalPruneJob {
 impl Job for LocalPruneJob {
     fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
         Box::pin(
-            observation_manager().run_event(self.dataset.uuid(), ObservableEvent::DatasetPrune, move || {
+            observation_manager().run_event(self.dataset.model().id(), ObservableEvent::DatasetPrune, move || {
                 ready(self.work())
             }),
         )

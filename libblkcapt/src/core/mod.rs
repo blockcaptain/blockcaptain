@@ -316,11 +316,12 @@ impl BtrfsContainer {
                 .as_pathbuf(&self.pool.filesystem.fstree_mountpoint),
         )?
         .into_iter()
+        .filter(|s| s.path.extension() == Some("bcrcv".as_ref()))
         .filter_map(|s| {
             match NaiveDateTime::parse_from_str(
                 &s.path
-                    .file_name()
-                    .expect("Snapshot path should never end in ..")
+                    .file_stem()
+                    .expect("Snapshot path always has filename.")
                     .to_string_lossy(),
                 "%FT%H-%M-%SZ",
             ) {
@@ -410,7 +411,7 @@ pub fn transfer_full_snapshot(
     snapshot: &BtrfsDatasetSnapshot,
     container: &Rc<BtrfsContainer>,
 ) -> Result<BtrfsContainerSnapshot> {
-    _transfer_delta_snapshot(None, snapshot, container)
+    _transfer_snapshot(None, snapshot, container)
 }
 
 pub fn transfer_delta_snapshot(
@@ -418,11 +419,11 @@ pub fn transfer_delta_snapshot(
     snapshot: &BtrfsDatasetSnapshot,
     container: &Rc<BtrfsContainer>,
 ) -> Result<BtrfsContainerSnapshot> {
-    _transfer_delta_snapshot(Some(parent), snapshot, container)
+    _transfer_snapshot(Some(parent), snapshot, container)
 }
 
 // need to push logic down to sys::btrfs
-fn _transfer_delta_snapshot(
+fn _transfer_snapshot(
     parent: Option<&BtrfsDatasetSnapshot>,
     snapshot: &BtrfsDatasetSnapshot,
     container: &Rc<BtrfsContainer>,
@@ -442,14 +443,26 @@ fn _transfer_delta_snapshot(
                 .subvolume
                 .path
                 .as_pathbuf(&dataset.pool.filesystem.fstree_mountpoint);
-            duct_cmd!("btrfs", "send", "-p", parent_snap_path, source_snap_path)
+            duct_cmd!("btrfs", "send", "-p", parent_snap_path, &source_snap_path)
         }
-        None => duct_cmd!("btrfs", "send", source_snap_path),
+        None => duct_cmd!("btrfs", "send", &source_snap_path),
     };
-    let receive_expr = duct_cmd!("btrfs", "receive", "-v", container_path);
+    let receive_expr = duct_cmd!("btrfs", "receive", "-v", &container_path);
 
     let pipe_expr = send_expr.pipe(receive_expr);
     pipe_expr.run()?;
+
+    let incoming_subvol_name = source_snap_path.file_name().expect("Never ends with ..");
+    let final_subvol_name = {
+        let mut x = incoming_subvol_name.to_owned();
+        x.push(".bcrcv");
+        x
+    };
+    fs::rename(
+        container_path.join(incoming_subvol_name),
+        container_path.join(final_subvol_name),
+    )
+    .context("Failed to rename the subvolume after successfully receiving it.")?;
 
     // todo get the single subvol instead by path
     let snapshots = container.snapshots(dataset.model())?;

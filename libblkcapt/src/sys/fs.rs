@@ -24,6 +24,14 @@ impl FsPathBuf {
         self.0.file_name()
     }
 
+    pub fn file_stem(&self) -> Option<&OsStr> {
+        self.0.file_stem()
+    }
+
+    pub fn extension(&self) -> Option<&OsStr> {
+        self.0.extension()
+    }
+
     pub fn join<P: AsRef<Path>>(&self, path: P) -> Self {
         Self(self.0.join(path))
     }

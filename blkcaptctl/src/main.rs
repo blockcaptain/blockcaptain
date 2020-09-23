@@ -11,12 +11,18 @@ async fn main() {
     setup_panic!();
 
     let options: CliOptions = CliOptions::parse();
-    let level = match options.verbose {
-        0 => LevelFilter::Info,
-        1 => LevelFilter::Debug,
-        _ => LevelFilter::Trace,
+    let (blkcapt_level, all_level) = match options.verbose {
+        0 => (LevelFilter::Info, LevelFilter::Info),
+        1 => (LevelFilter::Debug, LevelFilter::Info),
+        2 => (LevelFilter::Trace, LevelFilter::Info),
+        3 => (LevelFilter::Trace, LevelFilter::Debug),
+        _ => (LevelFilter::Trace, LevelFilter::Trace),
     };
-    pretty_env_logger::formatted_builder().filter_level(level).init();
+    pretty_env_logger::formatted_builder()
+        .filter_level(all_level)
+        .filter_module("blkcaptctl", blkcapt_level)
+        .filter_module("libblkcapt", blkcapt_level)
+        .init();
 
     debug!("Debug verbosity enabled.");
     trace!("Trace verbosity enabled.");

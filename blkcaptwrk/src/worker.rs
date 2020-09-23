@@ -1,17 +1,18 @@
+use crate::actors::observation::observable_func;
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use futures_util::future::ready;
 use libblkcapt::model::{entities::KeepSpec, entities::ObservableEvent, Entity};
 use libblkcapt::{
-    core::{self, observation_manager, BtrfsContainer, BtrfsContainerSnapshot, BtrfsDataset, BtrfsDatasetSnapshot},
+    core::{self, BtrfsContainer, BtrfsContainerSnapshot, BtrfsDataset, BtrfsDatasetSnapshot},
     model::entities::RetentionRuleset,
 };
 use log::*;
-use std::{cmp::Reverse, future::Future, iter::repeat, pin::Pin};
-use std::{convert::TryFrom, num::NonZeroUsize, rc::Rc};
+use std::{cmp::Reverse, future::Future, iter::repeat, pin::Pin, sync::Arc};
+use std::{convert::TryFrom, num::NonZeroUsize};
 
-pub trait Job {
-    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + '_>>;
+pub trait Job: Send + Sync {
+    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
     fn next_check(&self) -> Result<Duration>;
 
     fn is_ready(&self) -> Result<bool> {
@@ -27,20 +28,20 @@ pub trait Job {
 }
 
 pub struct LocalSnapshotJob {
-    dataset: Rc<BtrfsDataset>,
+    dataset: Arc<BtrfsDataset>,
 }
 
 impl LocalSnapshotJob {
-    pub fn new(dataset: &Rc<BtrfsDataset>) -> Self {
+    pub fn new(dataset: &Arc<BtrfsDataset>) -> Self {
         Self {
-            dataset: Rc::clone(dataset),
+            dataset: Arc::clone(dataset),
         }
     }
 }
 
 impl Job for LocalSnapshotJob {
-    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
-        Box::pin(observation_manager().run_event(
+    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(observable_func(
             self.dataset.model().id(),
             ObservableEvent::DatasetSnapshot,
             move || ready(self.dataset.create_local_snapshot()),
@@ -70,15 +71,15 @@ impl Job for LocalSnapshotJob {
 }
 
 pub struct LocalSyncJob {
-    dataset: Rc<BtrfsDataset>,
-    container: Rc<BtrfsContainer>,
+    dataset: Arc<BtrfsDataset>,
+    container: Arc<BtrfsContainer>,
 }
 
 impl LocalSyncJob {
-    pub fn new(dataset: &Rc<BtrfsDataset>, container: &Rc<BtrfsContainer>) -> Self {
+    pub fn new(dataset: &Arc<BtrfsDataset>, container: &Arc<BtrfsContainer>) -> Self {
         Self {
-            dataset: Rc::clone(dataset),
-            container: Rc::clone(container),
+            dataset: Arc::clone(dataset),
+            container: Arc::clone(container),
         }
     }
 
@@ -189,12 +190,12 @@ impl LocalSyncJob {
 }
 
 impl Job for LocalSyncJob {
-    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
-        Box::pin(
-            observation_manager().run_event(self.dataset.model().id(), ObservableEvent::SnapshotSync, move || {
-                ready(self.work())
-            }),
-        )
+    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(observable_func(
+            self.dataset.model().id(),
+            ObservableEvent::SnapshotSync,
+            move || ready(self.work()),
+        ))
     }
 
     fn next_check(&self) -> Result<Duration> {
@@ -223,13 +224,13 @@ impl Job for LocalSyncJob {
 }
 
 pub struct LocalPruneJob {
-    dataset: Rc<BtrfsDataset>,
+    dataset: Arc<BtrfsDataset>,
 }
 
 impl LocalPruneJob {
-    pub fn new(dataset: &Rc<BtrfsDataset>) -> Self {
+    pub fn new(dataset: &Arc<BtrfsDataset>) -> Self {
         Self {
-            dataset: Rc::clone(dataset),
+            dataset: Arc::clone(dataset),
         }
     }
 
@@ -265,12 +266,12 @@ impl LocalPruneJob {
 }
 
 impl Job for LocalPruneJob {
-    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
-        Box::pin(
-            observation_manager().run_event(self.dataset.model().id(), ObservableEvent::DatasetPrune, move || {
-                ready(self.work())
-            }),
-        )
+    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(observable_func(
+            self.dataset.model().id(),
+            ObservableEvent::DatasetPrune,
+            move || ready(self.work()),
+        ))
     }
 
     fn next_check(&self) -> Result<Duration> {

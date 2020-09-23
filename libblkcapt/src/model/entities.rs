@@ -284,6 +284,14 @@ pub struct HealthchecksObserverEntity {
     name: String,
     pub custom_url: Option<String>,
     pub observations: Vec<HealthchecksObservation>,
+    pub heartbeat: Option<HealthchecksHeartbeat>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HealthchecksHeartbeat {
+    #[serde(with = "humantime_serde")]
+    pub frequency: Duration,
+    pub healthcheck_id: Uuid,
 }
 
 impl HealthchecksObserverEntity {
@@ -293,11 +301,12 @@ impl HealthchecksObserverEntity {
             name,
             custom_url: None,
             observations,
+            heartbeat: None,
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HealthchecksObservation {
     #[serde(flatten)]
     pub observation: Observation,
@@ -316,7 +325,13 @@ impl Entity for HealthchecksObserverEntity {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+impl<'a> AsRef<dyn Entity + 'a> for HealthchecksObserverEntity {
+    fn as_ref(&self) -> &(dyn Entity + 'a) {
+        self
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Observation {
     pub entity_id: Uuid,
     pub event: ObservableEvent,
@@ -326,7 +341,6 @@ pub struct Observation {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum ObservableEvent {
-    WorkerHeartbeat,
     DatasetSnapshot,
     DatasetPrune,
     ContainerPrune,

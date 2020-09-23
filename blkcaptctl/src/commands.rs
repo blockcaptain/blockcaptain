@@ -1,7 +1,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Clap;
-use futures_util::future::FutureExt;
-use libblkcapt::sys::fs::{find_mountentry, DevicePathBuf};
+use libblkcapt::{
+    core::ObservableEventStage,
+    sys::fs::{find_mountentry, DevicePathBuf},
+};
 use libblkcapt::{
     core::ObservationEmitter,
     model::{
@@ -19,7 +21,7 @@ use libblkcapt::{
     model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
 };
 use log::*;
-use std::{num::NonZeroU32, path::PathBuf, rc::Rc, str::FromStr, time::Duration};
+use std::{num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 use uuid::Uuid;
 
 // #[derive(Clap, Debug)]
@@ -136,7 +138,7 @@ pub fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
             .to_string()
     });
 
-    let pool = Rc::new(BtrfsPool::validate(pool_model.clone())?);
+    let pool = Arc::new(BtrfsPool::validate(pool_model.clone())?);
     let dataset = BtrfsDataset::new(&pool, name, options.path)?;
 
     pool_model.attach_dataset(dataset.take_model())?;
@@ -337,7 +339,7 @@ pub fn attach_container(options: ContainerAttachOptions) -> Result<()> {
             .to_string()
     });
 
-    let pool = Rc::new(BtrfsPool::validate(pool_model.clone())?);
+    let pool = Arc::new(BtrfsPool::validate(pool_model.clone())?);
     let container = BtrfsContainer::new(&pool, name, options.path)?;
 
     let pool = entities
@@ -438,13 +440,17 @@ fn find_entity(entities: &Entities, id: Uuid) -> Option<&dyn Entity> {
 
 #[derive(Clap, Debug)]
 pub struct ObserverTestOptions {
-    /// Id of the source entity.
-    #[clap()]
-    entity: Uuid,
-
     /// Fail instead of pass.
     #[clap(short, long)]
     fail: bool,
+
+    /// The dataset to update
+    #[clap(value_name("observer|id"))]
+    observer: String,
+
+    /// Id of the source entity.
+    #[clap()]
+    entity: Uuid,
 
     /// Event to emit.
     #[clap()]
@@ -455,22 +461,41 @@ pub async fn test_observer(options: ObserverTestOptions) -> Result<()> {
     debug!("Command 'create_observer': {:?}", options);
 
     let entities = storage::load_entity_state();
+
+    let observer = entity_by_name_or_id(entities.observers.iter(), &options.observer)?.context("Dataset not found.")?;
+
     let entity = find_entity(&entities, options.entity).context("Id not found.")?;
     info!("Found {:?}.", entity);
 
-    let router = ObservationRouter::new(entities.observers);
+    let emitter = observer
+        .custom_url
+        .clone()
+        .map_or_else(ObservationEmitter::default, ObservationEmitter::new);
+    if let Some(heartbeat_config) = &observer.heartbeat {
+        info!("Testing heartbeat...");
+        emitter
+            .emit(heartbeat_config.healthcheck_id, ObservableEventStage::Succeeded)
+            .await?;
+    }
+    let router = ObservationRouter::new(observer.observations.clone());
     let matches = router.route(options.entity, options.event);
     if matches.is_empty() {
         bail!("No matching observations found.");
     }
 
-    let emitter = ObservationEmitter::default();
     for observation_match in matches {
+        info!("Testing match: {:?}", observation_match);
         emitter
-            .observe_work(vec![observation_match], || {
-                tokio::time::delay_for(Duration::from_millis(300)).map(|_| Result::<_>::Ok(()))
-            })
+            .emit(observation_match.healthcheck_id, ObservableEventStage::Starting)
             .await?;
+        tokio::time::delay_for(Duration::from_millis(300)).await;
+
+        let end_stage = match options.fail {
+            true => ObservableEventStage::Failed(String::from("This is a test failure.")),
+            false => ObservableEventStage::Succeeded,
+        };
+        emitter.emit(observation_match.healthcheck_id, end_stage).await?;
+        info!("Test succeeded.");
     }
 
     Ok(())

@@ -3,8 +3,8 @@ use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
 use crate::{
     model::entities::{
-        BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObservation, HealthchecksObserverEntity,
-        ObservableEvent, SubvolumeEntity,
+        BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObservation, ObservableEvent,
+        SubvolumeEntity,
     },
     sys::net::HttpsClient,
 };
@@ -13,9 +13,9 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use derivative::Derivative;
 use hyper::Uri;
 use log::*;
-use std::path::PathBuf;
-use std::{cell::RefCell, convert::TryFrom, future::Future, rc::Rc, str::FromStr};
+use std::{convert::TryFrom, str::FromStr, sync::Arc};
 use std::{fmt::Debug, fmt::Display, fs};
+use std::{path::PathBuf, sync::Mutex};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -103,20 +103,20 @@ pub struct BtrfsDataset {
     model: BtrfsDatasetEntity,
     subvolume: Subvolume,
     #[derivative(Debug = "ignore")]
-    pool: Rc<BtrfsPool>,
+    pool: Arc<BtrfsPool>,
     #[derivative(Debug = "ignore")]
-    snapshots: RefCell<Option<Vec<BtrfsDatasetSnapshot>>>,
+    snapshots: Mutex<Option<Vec<BtrfsDatasetSnapshot>>>,
 }
 
 impl BtrfsDataset {
-    pub fn new(pool: &Rc<BtrfsPool>, name: String, path: PathBuf) -> Result<Self> {
+    pub fn new(pool: &Arc<BtrfsPool>, name: String, path: PathBuf) -> Result<Self> {
         let subvolume = Subvolume::from_path(&path).context("Path does not resolve to a subvolume.")?;
 
         let dataset = Self {
             model: BtrfsDatasetEntity::new(name, subvolume.path.clone(), subvolume.uuid)?,
             subvolume,
-            pool: Rc::clone(pool),
-            snapshots: RefCell::new(Option::None),
+            pool: Arc::clone(pool),
+            snapshots: Mutex::new(Option::None),
         };
 
         let snapshot_path = dataset.snapshot_container_path();
@@ -142,9 +142,10 @@ impl BtrfsDataset {
         Ok(())
     }
 
-    pub fn snapshots(self: &Rc<Self>) -> Result<Vec<BtrfsDatasetSnapshot>> {
-        if self.snapshots.borrow().is_none() {
-            *self.snapshots.borrow_mut() = Some(
+    pub fn snapshots(self: &Arc<Self>) -> Result<Vec<BtrfsDatasetSnapshot>> {
+        let mut snapshots = self.snapshots.lock().unwrap();
+        if snapshots.is_none() {
+            *snapshots = Some(
                 Subvolume::list_subvolumes(
                     &self
                         .snapshot_container_path()
@@ -162,7 +163,7 @@ impl BtrfsDataset {
                         Ok(d) => Some(BtrfsDatasetSnapshot {
                             subvolume: s,
                             datetime: DateTime::<Utc>::from_utc(d, Utc),
-                            dataset: Rc::clone(self),
+                            dataset: Arc::clone(self),
                         }),
                         Err(_) => None,
                     }
@@ -170,14 +171,14 @@ impl BtrfsDataset {
                 .collect::<Vec<_>>(),
             )
         }
-        Ok(self.snapshots.borrow().as_ref().unwrap().clone())
+        Ok(snapshots.as_ref().unwrap().clone())
     }
 
     fn invalidate_snapshots(&self) {
-        *self.snapshots.borrow_mut() = None;
+        *self.snapshots.lock().unwrap() = None;
     }
 
-    pub fn latest_snapshot(self: &Rc<Self>) -> Result<Option<BtrfsDatasetSnapshot>> {
+    pub fn latest_snapshot(self: &Arc<Self>) -> Result<Option<BtrfsDatasetSnapshot>> {
         let mut snapshots = self.snapshots()?;
         snapshots.sort_unstable_by_key(|s| s.datetime);
         Ok(snapshots.pop())
@@ -198,7 +199,7 @@ impl BtrfsDataset {
         self.subvolume.parent_uuid
     }
 
-    pub fn validate(pool: &Rc<BtrfsPool>, model: BtrfsDatasetEntity) -> Result<Self> {
+    pub fn validate(pool: &Arc<BtrfsPool>, model: BtrfsDatasetEntity) -> Result<Self> {
         let subvolume = pool
             .filesystem
             .subvolume_by_uuid(model.uuid())
@@ -207,8 +208,8 @@ impl BtrfsDataset {
         Ok(Self {
             model,
             subvolume,
-            pool: Rc::clone(pool),
-            snapshots: RefCell::new(Option::None),
+            pool: Arc::clone(pool),
+            snapshots: Mutex::new(Option::None),
         })
     }
 
@@ -233,7 +234,7 @@ pub struct BtrfsDatasetSnapshot {
     subvolume: Subvolume,
     datetime: DateTime<Utc>,
     #[derivative(Debug = "ignore")]
-    dataset: Rc<BtrfsDataset>,
+    dataset: Arc<BtrfsDataset>,
 }
 
 impl BtrfsDatasetSnapshot {
@@ -293,23 +294,23 @@ pub struct BtrfsContainer {
     model: BtrfsContainerEntity,
     subvolume: Subvolume,
     #[derivative(Debug = "ignore")]
-    pool: Rc<BtrfsPool>,
+    pool: Arc<BtrfsPool>,
 }
 
 impl BtrfsContainer {
-    pub fn new(pool: &Rc<BtrfsPool>, name: String, path: PathBuf) -> Result<Self> {
+    pub fn new(pool: &Arc<BtrfsPool>, name: String, path: PathBuf) -> Result<Self> {
         let subvolume = Subvolume::from_path(&path).context("Path does not resolve to a subvolume.")?;
 
         let dataset = Self {
             model: BtrfsContainerEntity::new(name, subvolume.path.clone(), subvolume.uuid)?,
             subvolume,
-            pool: Rc::clone(pool),
+            pool: Arc::clone(pool),
         };
 
         Ok(dataset)
     }
 
-    pub fn snapshots(self: &Rc<Self>, dataset: &BtrfsDatasetEntity) -> Result<Vec<BtrfsContainerSnapshot>> {
+    pub fn snapshots(self: &Arc<Self>, dataset: &BtrfsDatasetEntity) -> Result<Vec<BtrfsContainerSnapshot>> {
         Ok(Subvolume::list_subvolumes(
             &self
                 .snapshot_container_path(dataset)
@@ -328,7 +329,7 @@ impl BtrfsContainer {
                 Ok(d) => Some(BtrfsContainerSnapshot {
                     subvolume: s,
                     datetime: DateTime::<Utc>::from_utc(d, Utc),
-                    container: Rc::clone(self),
+                    container: Arc::clone(self),
                 }),
                 Err(_) => None,
             }
@@ -340,7 +341,7 @@ impl BtrfsContainer {
         self.subvolume.path.join(dataset.id().to_string())
     }
 
-    pub fn validate(pool: &Rc<BtrfsPool>, model: BtrfsContainerEntity) -> Result<Self> {
+    pub fn validate(pool: &Arc<BtrfsPool>, model: BtrfsContainerEntity) -> Result<Self> {
         let subvolume = pool
             .filesystem
             .subvolume_by_uuid(model.uuid())
@@ -349,7 +350,7 @@ impl BtrfsContainer {
         Ok(Self {
             model,
             subvolume,
-            pool: Rc::clone(pool),
+            pool: Arc::clone(pool),
         })
     }
 
@@ -374,7 +375,7 @@ pub struct BtrfsContainerSnapshot {
     subvolume: Subvolume,
     datetime: DateTime<Utc>,
     #[derivative(Debug = "ignore")]
-    container: Rc<BtrfsContainer>,
+    container: Arc<BtrfsContainer>,
 }
 
 impl BtrfsContainerSnapshot {
@@ -409,7 +410,7 @@ impl Display for BtrfsContainerSnapshot {
 
 pub fn transfer_full_snapshot(
     snapshot: &BtrfsDatasetSnapshot,
-    container: &Rc<BtrfsContainer>,
+    container: &Arc<BtrfsContainer>,
 ) -> Result<BtrfsContainerSnapshot> {
     _transfer_snapshot(None, snapshot, container)
 }
@@ -417,7 +418,7 @@ pub fn transfer_full_snapshot(
 pub fn transfer_delta_snapshot(
     parent: &BtrfsDatasetSnapshot,
     snapshot: &BtrfsDatasetSnapshot,
-    container: &Rc<BtrfsContainer>,
+    container: &Arc<BtrfsContainer>,
 ) -> Result<BtrfsContainerSnapshot> {
     _transfer_snapshot(Some(parent), snapshot, container)
 }
@@ -426,7 +427,7 @@ pub fn transfer_delta_snapshot(
 fn _transfer_snapshot(
     parent: Option<&BtrfsDatasetSnapshot>,
     snapshot: &BtrfsDatasetSnapshot,
-    container: &Rc<BtrfsContainer>,
+    container: &Arc<BtrfsContainer>,
 ) -> Result<BtrfsContainerSnapshot> {
     let dataset = snapshot.dataset.as_ref();
     let source_snap_path = snapshot
@@ -474,61 +475,25 @@ fn _transfer_snapshot(
 
 // ## Observer #######################################################################################################
 
-static mut OBS_MANAGER: Option<ObservationManager> = None;
-
-pub fn observation_manager() -> &'static ObservationManager {
-    unsafe { OBS_MANAGER.as_ref().unwrap() }
-}
-
-pub fn observation_manager_init(observers: Vec<HealthchecksObserverEntity>) {
-    let manager = ObservationManager {
-        router: ObservationRouter::new(observers),
-        emitter: ObservationEmitter::default(),
-    };
-    unsafe {
-        OBS_MANAGER = Some(manager);
-    }
-}
-
-pub struct ObservationManager {
-    router: ObservationRouter,
-    emitter: ObservationEmitter,
-}
-
-impl ObservationManager {
-    pub fn attach_observers(&mut self, observers: Vec<HealthchecksObserverEntity>) {
-        self.router = ObservationRouter::new(observers);
-    }
-
-    pub async fn run_event<F, T, E, R>(
-        &self,
-        source: Uuid,
-        event: ObservableEvent,
-        work: F,
-    ) -> core::result::Result<T, E>
-    where
-        F: FnOnce() -> R,
-        R: Future<Output = core::result::Result<T, E>>,
-        E: Debug,
-    {
-        let observations = self.router.route(source, event);
-        self.emitter.observe_work(observations, work).await
-    }
+#[derive(Clone, Debug)]
+pub enum ObservableEventStage {
+    Starting,
+    Succeeded,
+    Failed(String),
 }
 
 pub struct ObservationRouter {
-    observers: Vec<HealthchecksObserverEntity>,
+    observerations: Vec<HealthchecksObservation>,
 }
 
 impl ObservationRouter {
-    pub fn new(model: Vec<HealthchecksObserverEntity>) -> Self {
-        Self { observers: model }
+    pub fn new(model: Vec<HealthchecksObservation>) -> Self {
+        Self { observerations: model }
     }
 
     pub fn route(&self, source: Uuid, event: ObservableEvent) -> Vec<&HealthchecksObservation> {
-        self.observers
+        self.observerations
             .iter()
-            .flat_map(|o| o.observations.iter())
             .filter(|obs| obs.observation.entity_id == source && obs.observation.event == event)
             .collect()
     }
@@ -536,53 +501,36 @@ impl ObservationRouter {
 
 pub struct ObservationEmitter {
     http_client: HttpsClient,
+    url: String,
 }
 
 impl ObservationEmitter {
-    pub fn default() -> Self {
+    pub fn new(custom_url: String) -> Self {
         Self {
             http_client: HttpsClient::default(),
+            url: custom_url,
         }
     }
 
-    pub async fn observe_work<F, T, E, R>(
-        &self,
-        observations: Vec<&HealthchecksObservation>,
-        work: F,
-    ) -> core::result::Result<T, E>
-    where
-        F: FnOnce() -> R,
-        R: Future<Output = core::result::Result<T, E>>,
-        E: Debug,
-    {
-        for observation in observations.iter() {
-            trace!("Emit start event for check {:?}.", observation.healthcheck_id);
-            self.emit(observation, "/start").await;
-        }
-
-        let result = work().await;
-
-        if let core::result::Result::Err(ref e) = result {
-            for observation in observations.iter() {
-                trace!("Emit fail event for check {:?}: {:?}.", observation.healthcheck_id, e);
-                self.emit(observation, "/start").await;
-            }
-        } else {
-            for observation in observations.iter() {
-                trace!("Emit finish event for check {:?}.", observation.healthcheck_id);
-                self.emit(observation, "").await;
-            }
-        }
-
-        result
-    }
-
-    async fn emit(&self, observation: &HealthchecksObservation, suffix: &str) {
-        let uri_string = format!("https://hc-ping.com/{}", observation.healthcheck_id.to_hyphenated());
+    pub async fn emit(&self, healthcheck_id: Uuid, stage: ObservableEventStage) -> Result<(), hyper::Error> {
+        let suffix = match stage {
+            ObservableEventStage::Starting => "/start",
+            ObservableEventStage::Succeeded => "",
+            ObservableEventStage::Failed(_) => "/fail",
+        };
+        let uri_string = format!("{}{}", &self.url, healthcheck_id.to_hyphenated());
         let uri = Uri::from_str((uri_string + suffix).as_str()).unwrap();
 
-        if let std::result::Result::Err(e) = self.http_client.get(uri).await {
-            error!("Failed to send healthcheck. {:?}", e);
+        trace!("Emitting health check to url: {}", uri);
+        self.http_client.get(uri).await.map(|_| ())
+    }
+}
+
+impl Default for ObservationEmitter {
+    fn default() -> Self {
+        Self {
+            http_client: HttpsClient::default(),
+            url: String::from("https://hc-ping.com/"),
         }
     }
 }

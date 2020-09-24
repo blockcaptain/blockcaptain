@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use clap::Clap;
+use comfy_table::Cell;
 use libblkcapt::{
     core::ObservableEventStage,
     sys::fs::{find_mountentry, DevicePathBuf},
@@ -8,7 +9,7 @@ use libblkcapt::{
     core::ObservationEmitter,
     model::{
         entities::HealthchecksObserverEntity,
-        entities::{FeatureState, HealthchecksObservation, ObservableEvent, Observation},
+        entities::{HealthchecksObservation, ObservableEvent, Observation},
         Entities,
     },
 };
@@ -23,6 +24,8 @@ use libblkcapt::{
 use log::*;
 use std::{num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 use uuid::Uuid;
+
+use crate::ui::{comfy_feature_state_cell, comfy_id_header, comfy_id_value, comfy_name_value, print_comfy_table};
 
 // #[derive(Clap, Debug)]
 // struct PoolAttachOptions {
@@ -60,6 +63,38 @@ use uuid::Uuid;
 // }
 
 // Pool Attach
+
+#[derive(Clap, Debug)]
+pub struct PoolListOptions {}
+
+pub fn list_pool(options: PoolListOptions) -> Result<()> {
+    debug!("Command 'list_pool': {:?}", options);
+
+    let entities = storage::load_entity_state();
+
+    print_comfy_table(
+        vec![
+            comfy_id_header(),
+            Cell::new("Pool Name"),
+            Cell::new("Filesystem UUID"),
+            Cell::new("Disks"),
+            Cell::new("Datasets"),
+            Cell::new("Containers"),
+        ],
+        entities.btrfs_pools.iter().map(|p| {
+            vec![
+                comfy_id_value(p.id()),
+                comfy_name_value(p.name()),
+                Cell::new(p.uuid),
+                Cell::new(p.uuid_subs.len()),
+                Cell::new(p.datasets.len()),
+                Cell::new(p.containers.len()),
+            ]
+        }),
+    );
+
+    Ok(())
+}
 
 const DEFAULT_POOL_NAME: &str = "default";
 
@@ -151,47 +186,30 @@ pub fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
 pub struct DatasetListOptions {}
 
 pub fn list_dataset(options: DatasetListOptions) -> Result<()> {
-    use comfy_table::presets::UTF8_FULL;
-    use comfy_table::*;
     debug!("Command 'list_dataset': {:?}", options);
 
     let entities = storage::load_entity_state();
 
-    let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec![
-            Cell::new("ID").add_attribute(Attribute::Bold),
+    print_comfy_table(
+        vec![
+            comfy_id_header(),
             Cell::new("Pool Name"),
             Cell::new("Dataset Name"),
             Cell::new("Snapshotting"),
             Cell::new("Pruning"),
-        ]);
-
-    for dataset in entities.datasets() {
-        table.add_row(vec![
-            Cell::new(&dataset.entity.id().to_string()[0..8])
-                .fg(Color::Blue)
-                .add_attribute(Attribute::Bold),
-            Cell::new(dataset.parent.name()).fg(Color::Blue),
-            Cell::new(dataset.entity.name()).fg(Color::Blue),
-            feature_state_cell(dataset.entity.snapshotting_state()),
-            feature_state_cell(dataset.entity.pruning_state()),
-        ]);
-    }
-
-    println!("{}", table);
+        ],
+        entities.datasets().map(|ds| {
+            vec![
+                comfy_id_value(ds.entity.id()),
+                comfy_name_value(ds.parent.name()),
+                comfy_name_value(ds.entity.name()),
+                comfy_feature_state_cell(ds.entity.snapshotting_state()),
+                comfy_feature_state_cell(ds.entity.pruning_state()),
+            ]
+        }),
+    );
 
     Ok(())
-}
-
-pub fn feature_state_cell(state: FeatureState) -> comfy_table::Cell {
-    comfy_table::Cell::new(state).fg(match state {
-        FeatureState::Enabled => comfy_table::Color::Green,
-        FeatureState::Paused => comfy_table::Color::Yellow,
-        FeatureState::Unconfigured => comfy_table::Color::Red,
-    })
 }
 
 const AFTER_HELP: &str = r"RETENTION:
@@ -353,6 +371,34 @@ pub fn attach_container(options: ContainerAttachOptions) -> Result<()> {
 }
 
 #[derive(Clap, Debug)]
+pub struct ContainerListOptions {}
+
+pub fn list_container(options: ContainerListOptions) -> Result<()> {
+    debug!("Command 'list_container': {:?}", options);
+
+    let entities = storage::load_entity_state();
+
+    print_comfy_table(
+        vec![
+            comfy_id_header(),
+            Cell::new("Pool Name"),
+            Cell::new("Container Name"),
+            Cell::new("Pruning"),
+        ],
+        entities.containers().map(|c| {
+            vec![
+                comfy_id_value(c.entity.id()),
+                comfy_name_value(c.parent.name()),
+                comfy_name_value(c.entity.name()),
+                comfy_feature_state_cell(c.entity.pruning_state()),
+            ]
+        }),
+    );
+
+    Ok(())
+}
+
+#[derive(Clap, Debug)]
 pub struct ObserverCreateOptions {
     /// Name of the observer.
     #[clap(short, long, default_value = "default")]
@@ -497,6 +543,34 @@ pub async fn test_observer(options: ObserverTestOptions) -> Result<()> {
         emitter.emit(observation_match.healthcheck_id, end_stage).await?;
         info!("Test succeeded.");
     }
+
+    Ok(())
+}
+
+#[derive(Clap, Debug)]
+pub struct ObserverListOptions {}
+
+pub fn list_observer(options: ObserverListOptions) -> Result<()> {
+    debug!("Command 'list_pool': {:?}", options);
+
+    let entities = storage::load_entity_state();
+
+    print_comfy_table(
+        vec![
+            comfy_id_header(),
+            Cell::new("Observer Name"),
+            Cell::new("Observations"),
+            Cell::new("Heartbeat"),
+        ],
+        entities.observers.iter().map(|p| {
+            vec![
+                comfy_id_value(p.id()),
+                comfy_name_value(p.name()),
+                Cell::new(p.observations.len()),
+                comfy_feature_state_cell(p.heartbeat_state()),
+            ]
+        }),
+    );
 
     Ok(())
 }

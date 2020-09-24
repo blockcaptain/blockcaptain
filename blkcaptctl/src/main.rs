@@ -41,6 +41,7 @@ async fn command_dispath(options: CliOptions) -> Result<()> {
         TopCommands::Pool(top_options) => match top_options.subcmd {
             PoolSubCommands::Attach(options) => attach_pool(options)?,
             PoolSubCommands::Create(options) => create_pool(options)?,
+            PoolSubCommands::List(options) => list_pool(options)?,
         },
         TopCommands::Dataset(top_options) => match top_options.subcmd {
             DatasetSubCommands::Attach(options) => attach_dataset(options)?,
@@ -49,10 +50,12 @@ async fn command_dispath(options: CliOptions) -> Result<()> {
         },
         TopCommands::Container(top_options) => match top_options.subcmd {
             ContainerSubCommands::Attach(options) => attach_container(options)?,
+            ContainerSubCommands::List(options) => list_container(options)?,
         },
         TopCommands::Observer(top_options) => match top_options.subcmd {
             ObserverSubCommands::Create(options) => create_observer(options)?,
             ObserverSubCommands::Test(options) => test_observer(options).await?,
+            ObserverSubCommands::List(options) => list_observer(options)?,
         },
     }
 
@@ -87,6 +90,7 @@ struct PoolCommands {
 enum PoolSubCommands {
     Create(PoolCreateOptions),
     Attach(PoolAttachOptions),
+    List(PoolListOptions),
 }
 
 #[derive(Clap)]
@@ -112,6 +116,7 @@ struct ContainerCommands {
 #[derive(Clap)]
 enum ContainerSubCommands {
     Attach(ContainerAttachOptions),
+    List(ContainerListOptions),
 }
 
 #[derive(Clap)]
@@ -124,4 +129,5 @@ struct ObserverCommands {
 enum ObserverSubCommands {
     Create(ObserverCreateOptions),
     Test(ObserverTestOptions),
+    List(ObserverListOptions),
 }

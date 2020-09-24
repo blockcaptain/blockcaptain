@@ -181,8 +181,10 @@ impl BtrfsDatasetEntity {
 pub struct BtrfsContainerEntity {
     id: Uuid,
     name: String,
-    path: FsPathBuf,
-    uuid: Uuid,
+    pub path: FsPathBuf,
+    pub uuid: Uuid,
+    pub snapshot_retention: Option<RetentionRuleset>,
+    pub pause_pruning: bool,
 }
 
 impl BtrfsContainerEntity {
@@ -192,7 +194,21 @@ impl BtrfsContainerEntity {
             name,
             path: subvolume_path,
             uuid: subvolume_uuid,
+            snapshot_retention: None,
+            pause_pruning: false,
         })
+    }
+
+    pub fn pruning_state(&self) -> FeatureState {
+        if self.snapshot_retention.is_some() {
+            if self.pause_pruning {
+                FeatureState::Paused
+            } else {
+                FeatureState::Enabled
+            }
+        } else {
+            FeatureState::Unconfigured
+        }
     }
 }
 
@@ -302,6 +318,14 @@ impl HealthchecksObserverEntity {
             custom_url: None,
             observations,
             heartbeat: None,
+        }
+    }
+
+    pub fn heartbeat_state(&self) -> FeatureState {
+        if self.heartbeat.is_some() {
+            FeatureState::Enabled
+        } else {
+            FeatureState::Unconfigured
         }
     }
 }

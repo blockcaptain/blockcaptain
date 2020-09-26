@@ -1,6 +1,7 @@
 use comfy_table::presets::UTF8_FULL;
 use comfy_table::*;
 use libblkcapt::model::entities::FeatureState;
+use presets::ASCII_NO_BORDERS;
 use uuid::Uuid;
 
 pub fn print_comfy_table(header: Vec<Cell>, rows: impl Iterator<Item = Vec<Cell>>) {
@@ -35,6 +36,56 @@ pub fn comfy_id_value(uuid: Uuid) -> Cell {
         .add_attribute(Attribute::Bold)
 }
 
+pub fn comfy_id_value_full(uuid: Uuid) -> Cell {
+    Cell::new(&uuid.to_string())
+        .fg(Color::Blue)
+        .add_attribute(Attribute::Bold)
+}
+
 pub fn comfy_name_value(name: &str) -> Cell {
     Cell::new(name).fg(Color::Blue)
+}
+
+pub enum CellOrCells {
+    Cell(Cell),
+    Cells(Vec<Cell>),
+}
+
+impl From<Cell> for CellOrCells {
+    fn from(cell: Cell) -> Self {
+        Self::Cell(cell)
+    }
+}
+
+impl From<Vec<Cell>> for CellOrCells {
+    fn from(cells: Vec<Cell>) -> Self {
+        Self::Cells(cells)
+    }
+}
+
+pub fn print_comfy_info(rows: Vec<(Cell, CellOrCells)>) {
+    let mut table = Table::new();
+    table
+        .load_preset(ASCII_NO_BORDERS)
+        .remove_style(TableComponent::HorizontalLines)
+        .remove_style(TableComponent::VerticalLines)
+        .remove_style(TableComponent::MiddleIntersections)
+        .set_content_arrangement(ContentArrangement::Dynamic);
+
+    for (header, value) in rows {
+        match value {
+            CellOrCells::Cell(cell) => {
+                table.add_row(vec![header, cell]);
+            }
+            CellOrCells::Cells(cells) => {
+                let mut cell_iter = cells.into_iter();
+                table.add_row(vec![header, cell_iter.next().unwrap_or_else(|| Cell::new(""))]);
+                cell_iter.for_each(|c| {
+                    table.add_row(vec![Cell::new(""), c]);
+                });
+            }
+        }
+    }
+
+    println!("{}", table);
 }

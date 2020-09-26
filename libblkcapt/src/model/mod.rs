@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use entities::{
     BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObserverEntity, SnapshotSyncEntity,
 };
+use log::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::{fmt::Debug, iter::repeat};
@@ -29,6 +30,27 @@ impl Entities {
         })?;
 
         self.btrfs_pools.push(pool);
+        Ok(())
+    }
+
+    pub fn attach_observer(&mut self, observer: HealthchecksObserverEntity) -> Result<()> {
+        entity_by_name(&self.observers, observer.name())
+            .map_or(Ok(()), |o| Err(anyhow!("Observer name '{}' already exists.", o.name())))?;
+
+        if let Some(other) = self.observers.iter().find(|o| o.custom_url == observer.custom_url) {
+            let other_type = match observer.custom_url {
+                Some(_) => "same custom Healthchecks instance",
+                None => "Healthchecks.io service",
+            };
+            warn!(
+                "Observer {} already uses the {}. It is not neccessary to create multiple observers \
+                that report to the same instance.",
+                other.name(),
+                other_type
+            );
+        }
+
+        self.observers.push(observer);
         Ok(())
     }
 

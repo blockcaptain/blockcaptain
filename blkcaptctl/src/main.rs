@@ -47,6 +47,7 @@ async fn command_dispath(options: CliOptions) -> Result<()> {
             DatasetSubCommands::Attach(options) => attach_dataset(options)?,
             DatasetSubCommands::List(options) => list_dataset(options)?,
             DatasetSubCommands::Update(options) => update_dataset(options)?,
+            DatasetSubCommands::Show(options) => show_dataset(options)?,
         },
         TopCommands::Container(top_options) => match top_options.subcmd {
             ContainerSubCommands::Attach(options) => attach_container(options)?,
@@ -105,6 +106,7 @@ enum DatasetSubCommands {
     Attach(DatasetAttachOptions),
     List(DatasetListOptions),
     Update(DatasetUpdateOptions),
+    Show(DatasetShowOptions),
 }
 
 #[derive(Clap)]

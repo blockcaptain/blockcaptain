@@ -3,6 +3,7 @@ use clap::Clap;
 use comfy_table::Cell;
 use libblkcapt::{
     core::ObservableEventStage,
+    model::entity_by_name,
     sys::fs::{find_mountentry, DevicePathBuf},
 };
 use libblkcapt::{
@@ -25,7 +26,10 @@ use log::*;
 use std::{num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 use uuid::Uuid;
 
-use crate::ui::{comfy_feature_state_cell, comfy_id_header, comfy_id_value, comfy_name_value, print_comfy_table};
+use crate::ui::{
+    comfy_feature_state_cell, comfy_id_header, comfy_id_value, comfy_id_value_full, comfy_name_value, print_comfy_info,
+    print_comfy_table,
+};
 
 // #[derive(Clap, Debug)]
 // struct PoolAttachOptions {
@@ -178,6 +182,40 @@ pub fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
 
     pool_model.attach_dataset(dataset.take_model())?;
     storage::store_entity_state(entities);
+
+    Ok(())
+}
+
+#[derive(Clap, Debug)]
+pub struct DatasetShowOptions {
+    /// The dataset to show
+    #[clap(value_name("[pool/]dataset|id"))]
+    dataset: String,
+}
+
+pub fn show_dataset(options: DatasetShowOptions) -> Result<()> {
+    debug!("Command 'show_dataset': {:?}", options);
+
+    let entities = storage::load_entity_state();
+    let parts = options.dataset.splitn(2, '/').collect::<Vec<_>>();
+    let dataset = if parts.len() == 2 {
+        let filesystem = entity_by_name(&entities.btrfs_pools, parts[0]).context("Filesystem not found.")?;
+        entity_by_name(&filesystem.datasets, parts[1]).context("Dataset not found in filesystem.")?
+    } else {
+        entity_by_name_or_id(entities.datasets(), parts[0])?
+            .context("Dataset not found.")?
+            .entity
+    };
+
+    print_comfy_info(vec![
+        (comfy_id_header(), comfy_id_value_full(dataset.id()).into()),
+        (Cell::new("Pool Name"), comfy_name_value(dataset.name()).into()),
+        (Cell::new("Dataset Name"), comfy_name_value(dataset.name()).into()),
+        (
+            Cell::new("Snaps"),
+            vec![Cell::new("Test1"), Cell::new("Test2"), Cell::new("Test5")].into(),
+        ),
+    ]);
 
     Ok(())
 }
@@ -465,7 +503,7 @@ pub fn create_observer(options: ObserverCreateOptions) -> Result<()> {
 
     let observer = HealthchecksObserverEntity::new(options.name, observations);
 
-    entities.observers.push(observer);
+    entities.attach_observer(observer)?;
 
     storage::store_entity_state(entities);
 
@@ -508,7 +546,8 @@ pub async fn test_observer(options: ObserverTestOptions) -> Result<()> {
 
     let entities = storage::load_entity_state();
 
-    let observer = entity_by_name_or_id(entities.observers.iter(), &options.observer)?.context("Dataset not found.")?;
+    let observer =
+        entity_by_name_or_id(entities.observers.iter(), &options.observer)?.context("Observer not found.")?;
 
     let entity = find_entity(&entities, options.entity).context("Id not found.")?;
     info!("Found {:?}.", entity);

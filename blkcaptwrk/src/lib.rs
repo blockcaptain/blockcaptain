@@ -1,6 +1,6 @@
 pub mod actors {
     pub mod captain;
-    pub mod jobdispatch;
     pub mod observation;
+    pub mod pool;
 }
-mod worker;
+mod xactorext;

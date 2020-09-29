@@ -97,7 +97,7 @@ pub trait SubvolumeEntity: Entity {
     fn uuid(&self) -> &Uuid;
 }
 
-#[derive(Display, Copy, Clone)]
+#[derive(Display, Copy, Clone, Eq, PartialEq)]
 pub enum FeatureState {
     Unconfigured,
     Paused,
@@ -266,6 +266,8 @@ impl Entity for SnapshotSyncEntity {
 pub struct RetentionRuleset {
     pub interval: Vec<IntervalSpec>,
     pub newest_count: NonZeroU32,
+    #[serde(with = "humantime_serde")]
+    pub evaluation_frequency: Duration,
 }
 
 impl Default for RetentionRuleset {
@@ -273,6 +275,7 @@ impl Default for RetentionRuleset {
         Self {
             interval: Default::default(),
             newest_count: NonZeroU32::new(1).unwrap(),
+            evaluation_frequency: Duration::from_secs(3600 * 24),
         }
     }
 }

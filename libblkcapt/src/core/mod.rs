@@ -1,3 +1,4 @@
+pub mod retention;
 use crate::model::Entity;
 use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
@@ -16,8 +17,8 @@ use log::*;
 use std::{convert::TryFrom, str::FromStr, sync::Arc};
 use std::{fmt::Debug, fmt::Display, fs};
 use std::{path::PathBuf, sync::Mutex};
-use thiserror::Error;
 use uuid::Uuid;
+//use thiserror::Error;
 
 const BLKCAPT_FS_META_DIR: &str = ".blkcapt";
 
@@ -228,6 +229,11 @@ impl Display for BtrfsDataset {
     }
 }
 
+pub trait BtrfsSnapshot: Display {
+    fn datetime(&self) -> DateTime<Utc>;
+    fn delete(self) -> Result<()>;
+}
+
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub struct BtrfsDatasetSnapshot {
@@ -238,10 +244,6 @@ pub struct BtrfsDatasetSnapshot {
 }
 
 impl BtrfsDatasetSnapshot {
-    pub fn datetime(&self) -> DateTime<Utc> {
-        self.datetime
-    }
-
     pub fn uuid(&self) -> Uuid {
         self.subvolume.uuid
     }
@@ -257,16 +259,19 @@ impl BtrfsDatasetSnapshot {
     pub fn received_uuid(&self) -> Option<Uuid> {
         self.subvolume.received_uuid
     }
+}
 
-    pub fn delete(self) -> Result<(), SnapshotDeleteError> {
-        self.dataset
-            .pool
-            .filesystem
-            .delete(self.path())
-            .map_err(|e| SnapshotDeleteError {
-                source: e,
-                snapshot: self,
-            })
+impl BtrfsSnapshot for BtrfsDatasetSnapshot {
+    fn datetime(&self) -> DateTime<Utc> {
+        self.datetime
+    }
+
+    fn delete(self) -> Result<()> {
+        self.dataset.pool.filesystem.delete(self.path())
+        // .map_err(|e| SnapshotDeleteError {
+        //     source: e,
+        //     snapshot: self,
+        // })
     }
 }
 
@@ -280,13 +285,13 @@ impl Display for BtrfsDatasetSnapshot {
     }
 }
 
-#[derive(Error, Debug)]
-#[error("{source}")]
-pub struct SnapshotDeleteError {
-    #[source]
-    pub source: anyhow::Error,
-    pub snapshot: BtrfsDatasetSnapshot,
-}
+// #[derive(Error, Debug)]
+// #[error("{source}")]
+// pub struct SnapshotDeleteError<T: BtrfsSnapshot> {
+//     #[source]
+//     pub source: anyhow::Error,
+//     pub snapshot: T,
+// }
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -310,10 +315,19 @@ impl BtrfsContainer {
         Ok(dataset)
     }
 
-    pub fn snapshots(self: &Arc<Self>, dataset: &BtrfsDatasetEntity) -> Result<Vec<BtrfsContainerSnapshot>> {
+    pub fn source_dataset_ids(self: &Self) -> Result<Vec<Uuid>> {
+        Ok(
+            Subvolume::list_subvolumes(&self.subvolume.path.as_pathbuf(&self.pool.filesystem.fstree_mountpoint))?
+                .into_iter()
+                .filter_map(|s| Uuid::parse_str(&s.path.file_name().unwrap_or_default().to_string_lossy()).ok())
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub fn snapshots(self: &Arc<Self>, dataset_id: Uuid) -> Result<Vec<BtrfsContainerSnapshot>> {
         Ok(Subvolume::list_subvolumes(
             &self
-                .snapshot_container_path(dataset)
+                .snapshot_container_path(dataset_id)
                 .as_pathbuf(&self.pool.filesystem.fstree_mountpoint),
         )?
         .into_iter()
@@ -337,8 +351,8 @@ impl BtrfsContainer {
         .collect::<Vec<_>>())
     }
 
-    pub fn snapshot_container_path(&self, dataset: &BtrfsDatasetEntity) -> FsPathBuf {
-        self.subvolume.path.join(dataset.id().to_string())
+    pub fn snapshot_container_path(&self, dataset_id: Uuid) -> FsPathBuf {
+        self.subvolume.path.join(dataset_id.to_string())
     }
 
     pub fn validate(pool: &Arc<BtrfsPool>, model: BtrfsContainerEntity) -> Result<Self> {
@@ -379,12 +393,12 @@ pub struct BtrfsContainerSnapshot {
 }
 
 impl BtrfsContainerSnapshot {
-    pub fn datetime(&self) -> DateTime<Utc> {
-        self.datetime
-    }
-
     pub fn uuid(&self) -> Uuid {
         self.subvolume.uuid
+    }
+
+    pub fn path(&self) -> &FsPathBuf {
+        &self.subvolume.path
     }
 
     pub fn parent_uuid(&self) -> Option<Uuid> {
@@ -395,6 +409,16 @@ impl BtrfsContainerSnapshot {
         self.subvolume
             .received_uuid
             .expect("container snapshots are always received")
+    }
+}
+
+impl BtrfsSnapshot for BtrfsContainerSnapshot {
+    fn datetime(&self) -> DateTime<Utc> {
+        self.datetime
+    }
+
+    fn delete(self) -> Result<()> {
+        self.container.pool.filesystem.delete(self.path())
     }
 }
 
@@ -435,7 +459,7 @@ fn _transfer_snapshot(
         .path
         .as_pathbuf(&dataset.pool.filesystem.fstree_mountpoint);
     let container_path = container
-        .snapshot_container_path(dataset.model())
+        .snapshot_container_path(dataset.model().id())
         .as_pathbuf(&container.pool.filesystem.fstree_mountpoint);
 
     let send_expr = match parent {
@@ -466,7 +490,7 @@ fn _transfer_snapshot(
     .context("Failed to rename the subvolume after successfully receiving it.")?;
 
     // todo get the single subvol instead by path
-    let snapshots = container.snapshots(dataset.model())?;
+    let snapshots = container.snapshots(dataset.model().id())?;
     snapshots
         .into_iter()
         .find(|s| s.received_uuid() == snapshot.uuid())

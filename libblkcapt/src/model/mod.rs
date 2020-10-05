@@ -101,10 +101,6 @@ impl Entities {
     pub fn pool_by_mountpoint_mut(&mut self, path: &Path) -> Option<&mut BtrfsPoolEntity> {
         self.btrfs_pools.iter_mut().find(|p| p.mountpoint_path == path)
     }
-
-    pub fn snapshot_syncs(&self) -> impl Iterator<Item = &SnapshotSyncEntity> {
-        self.snapshot_syncs.iter()
-    }
 }
 
 #[derive(Debug)]

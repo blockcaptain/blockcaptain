@@ -11,65 +11,12 @@ use log::*;
 use std::{cmp::Reverse, future::Future, iter::repeat, pin::Pin, sync::Arc};
 use std::{convert::TryFrom, num::NonZeroUsize};
 
-pub trait Job: Send + Sync {
-    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
-    fn next_check(&self) -> Result<Duration>;
-
-    fn is_ready(&self) -> Result<bool> {
-        self.next_check().map(|d| {
-            trace!(
-                "Job is {}ready based on having {} delay to next check.",
-                if d.is_zero() { "" } else { "not " },
-                if d.is_zero() { "no" } else { "a" }
-            );
-            d.is_zero()
-        })
-    }
-}
-
 pub struct LocalSyncJob {
     dataset: Arc<BtrfsDataset>,
     container: Arc<BtrfsContainer>,
 }
 
 impl LocalSyncJob {
-    pub fn new(dataset: &Arc<BtrfsDataset>, container: &Arc<BtrfsContainer>) -> Self {
-        Self {
-            dataset: Arc::clone(dataset),
-            container: Arc::clone(container),
-        }
-    }
-
-    fn ready_snapshots(&self) -> Result<(Vec<BtrfsDatasetSnapshot>, Vec<BtrfsContainerSnapshot>, Vec<usize>)> {
-        let dataset_snapshots = {
-            let mut snaps = self.dataset.snapshots()?;
-            snaps.sort_unstable_by_key(|s| s.datetime());
-            snaps
-        };
-
-        let container_snapshots = {
-            let mut snaps = self.container.snapshots(self.dataset.model())?;
-            snaps.sort_unstable_by_key(|s| s.datetime());
-            snaps
-        };
-
-        let ready_index = if container_snapshots.is_empty() {
-            dataset_snapshots
-                .last()
-                .map_or(vec![], |_| vec![dataset_snapshots.len() - 1])
-        } else {
-            let latest_in_container = container_snapshots.last().unwrap();
-            dataset_snapshots
-                .iter()
-                .enumerate()
-                .skip_while(|(_, s)| s.datetime() <= latest_in_container.datetime())
-                .map(|(i, _)| i)
-                .collect()
-        };
-
-        Ok((dataset_snapshots, container_snapshots, ready_index))
-    }
-
     fn work(&self) -> Result<()> {
         let (dataset_snapshots, mut container_snapshots, send_snapshots) = self.ready_snapshots()?;
 
@@ -143,39 +90,5 @@ impl LocalSyncJob {
             container_snapshots.push(new_snapshot);
         }
         Ok(())
-    }
-}
-
-impl Job for LocalSyncJob {
-    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
-        Box::pin(observable_func(
-            self.dataset.model().id(),
-            ObservableEvent::SnapshotSync,
-            move || ready(self.work()),
-        ))
-    }
-
-    fn next_check(&self) -> Result<Duration> {
-        if !self.ready_snapshots()?.2.is_empty() {
-            return Ok(Duration::zero());
-        }
-        let latest = self.dataset.latest_snapshot()?;
-        Ok(if let Some(latest_snapshot) = latest {
-            trace!(
-                "Existing snapshot for {} at {}.",
-                self.dataset.model().id(),
-                latest_snapshot.datetime()
-            );
-            let now = Utc::now();
-            let next_datetime = latest_snapshot.datetime() + Duration::hours(1);
-            if now < next_datetime {
-                next_datetime - now
-            } else {
-                Duration::minutes(5)
-            }
-        } else {
-            trace!("No existing snapshot for {}.", self.dataset.model().id());
-            Duration::minutes(5)
-        })
     }
 }

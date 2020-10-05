@@ -1,19 +1,22 @@
-use super::observation::HealthchecksActor;
 use super::pool::PoolActor;
-use anyhow::Result;
+use super::{observation::HealthchecksActor, sync::SyncActor};
+use crate::xactorext::{join_all_actors, stop_all_actors};
+use anyhow::{Context as AnyhowContext, Result};
 use futures_util::{
     future::join_all,
-    stream::{FuturesUnordered, TryStreamExt},
+    stream::{FuturesOrdered, FuturesUnordered, StreamExt, TryStreamExt},
 };
-use libblkcapt::model::storage;
+use libblkcapt::model::{storage, Entity};
 use log::*;
-use std::iter::FromIterator;
+use std::{collections::HashMap, future::Future, iter::FromIterator, mem};
+use uuid::Uuid;
 use xactor::{Actor, Addr, Context};
 
 #[derive(Default)]
 pub struct CaptainActor {
     healthcheck_actors: Vec<Addr<HealthchecksActor>>,
-    pool_actors: Vec<Addr<PoolActor>>,
+    sync_actors: Vec<Addr<SyncActor>>,
+    pool_actors: HashMap<Uuid, Addr<PoolActor>>,
 }
 
 #[async_trait::async_trait]
@@ -22,49 +25,103 @@ impl Actor for CaptainActor {
         let mut entities = storage::load_entity_state();
         if !entities.observers.is_empty() {
             trace!("Building observer actors.");
-            self.healthcheck_actors =
-                FuturesUnordered::from_iter(entities.observers.drain(0..).map(|e| HealthchecksActor::new(e).start()))
-                    .try_collect()
-                    .await?;
+            self.healthcheck_actors = entities
+                .observers
+                .drain(..)
+                .map(|m| HealthchecksActor::new(m).start())
+                .collect::<FuturesUnordered<_>>()
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .filter_map(|sa| match sa {
+                    Ok(started_actor) => Some(started_actor),
+                    Err(error) => {
+                        error!("Failed to start observer actor: {}", error);
+                        None
+                    }
+                })
+                .collect();
         };
 
         if !entities.btrfs_pools.is_empty() {
             trace!("Building pool actors.");
-            self.pool_actors = FuturesUnordered::from_iter(
-                entities
-                    .btrfs_pools
-                    .drain(0..)
-                    .map(|e| PoolActor::new(e).expect("FIXME").start()),
-            )
-            .try_collect()
-            .await?;
+            self.pool_actors = entities
+                .btrfs_pools
+                .iter()
+                .map(|m| PoolActor::new(m.clone()))
+                .map(|actor| async {
+                    let id = actor.id();
+                    let addr = actor.start().await?;
+                    Result::<_>::Ok((id, addr))
+                })
+                .collect::<FuturesUnordered<_>>()
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .filter_map(|sa| match sa {
+                    Ok(started_actor) => Some(started_actor),
+                    Err(error) => {
+                        error!("Failed to start pool actor: {}", error);
+                        None
+                    }
+                })
+                .collect();
         }
 
-        // setup syncs somehow. maybe message the pools with addr of where they need to send to.
-        // for sync in model.snapshot_syncs() {
-        //     let sync_dataset = datasets
-        //         .iter()
-        //         .find(|d| d.model().id() == sync.dataset_id())
-        //         .expect("FIXME");
-        //     let sync_container = containers
-        //         .iter()
-        //         .find(|d| d.model().id() == sync.container_id())
-        //         .expect("FIXME");
-        //     jobs.push(Box::new(LocalSyncJob::new(sync_dataset, sync_container)));
-        // }
+        if !entities.snapshot_syncs.is_empty() {
+            let x = mem::take(&mut entities.snapshot_syncs)
+                .into_iter()
+                .filter_map(|m| {
+                    let dataset_pool_id = match entities.dataset(m.dataset_id()) {
+                        Some(entity_path) => entity_path.parent.id(),
+                        None => {
+                            error!("Invalid sync configuration. Source dataset does not exist.");
+                            return None;
+                        }
+                    };
+                    let container_pool_id = match entities.container(m.container_id()) {
+                        Some(entity_path) => entity_path.parent.id(),
+                        None => {
+                            error!("Invalid sync configuration. Destination container does not exist.");
+                            return None;
+                        }
+                    };
+                    // look up the pool actor
+                    // ask the pool actor for the dataset actor
+                    // create a return the new sync actor
+
+                    Some(1)
+                });
+        }
+        
+        
+            //     entities
+            //         .dataset(sync.dataset_id())
+            //         .context("")?;
+            //     let sync_container = entities
+            //         .container(sync.container_id())
+            //         .context("Invalid sync configuration. does not exist.")?;
+
+            //     let pool_addr = self
+            //         .pool_actors
+            //         .get(&sync_container.parent.id())
+            //         .expect("INVARIANT: Actors for all pools are created above. If container is found, pool must exist.");
+
+      
+        
 
         info!("Captain actor started successfully.");
         Ok(())
     }
 
     async fn stopped(&mut self, _ctx: &mut Context<Self>) {
-        for actor in self.healthcheck_actors.iter_mut() {
-            actor
-                .stop(None)
-                .unwrap_or_else(|e| error!("Stopping Healthchecks actor failed: {}.", e));
-        }
+        stop_all_actors(&mut self.healthcheck_actors);
+        stop_all_actors(&mut self.sync_actors);
+        stop_all_actors(self.pool_actors.values_mut());
 
-        join_all(self.healthcheck_actors.drain(0..).map(|a| a.wait_for_stop())).await;
+        join_all_actors(self.healthcheck_actors.drain(..)).await;
+        join_all_actors(self.sync_actors.drain(..)).await;
+        join_all_actors(self.pool_actors.drain().map(|(_k, v)| v)).await;
 
         info!("Captain stopped successfully.");
     }

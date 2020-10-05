@@ -1,4 +1,5 @@
 pub mod retention;
+pub mod sync;
 use crate::model::Entity;
 use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
@@ -105,8 +106,6 @@ pub struct BtrfsDataset {
     subvolume: Subvolume,
     #[derivative(Debug = "ignore")]
     pool: Arc<BtrfsPool>,
-    #[derivative(Debug = "ignore")]
-    snapshots: Mutex<Option<Vec<BtrfsDatasetSnapshot>>>,
 }
 
 impl BtrfsDataset {
@@ -117,7 +116,6 @@ impl BtrfsDataset {
             model: BtrfsDatasetEntity::new(name, subvolume.path.clone(), subvolume.uuid)?,
             subvolume,
             pool: Arc::clone(pool),
-            snapshots: Mutex::new(Option::None),
         };
 
         let snapshot_path = dataset.snapshot_container_path();
@@ -138,50 +136,40 @@ impl BtrfsDataset {
             .snapshot_container_path()
             .join(now.format("%FT%H-%M-%SZ").to_string());
         self.pool.filesystem.create_snapshot(&self.subvolume, &snapshot_path)?;
-        self.invalidate_snapshots();
         // TODO: return the new snapshot.
         Ok(())
     }
 
-    pub fn snapshots(self: &Arc<Self>) -> Result<Vec<BtrfsDatasetSnapshot>> {
-        let mut snapshots = self.snapshots.lock().unwrap();
-        if snapshots.is_none() {
-            *snapshots = Some(
-                Subvolume::list_subvolumes(
-                    &self
-                        .snapshot_container_path()
-                        .as_pathbuf(&self.pool.filesystem.fstree_mountpoint),
-                )?
-                .into_iter()
-                .filter_map(|s| {
-                    match NaiveDateTime::parse_from_str(
-                        &s.path
-                            .file_name()
-                            .expect("Snapshot path should never end in ..")
-                            .to_string_lossy(),
-                        "%FT%H-%M-%SZ",
-                    ) {
-                        Ok(d) => Some(BtrfsDatasetSnapshot {
-                            subvolume: s,
-                            datetime: DateTime::<Utc>::from_utc(d, Utc),
-                            dataset: Arc::clone(self),
-                        }),
-                        Err(_) => None,
-                    }
-                })
-                .collect::<Vec<_>>(),
-            )
-        }
-        Ok(snapshots.as_ref().unwrap().clone())
-    }
-
-    fn invalidate_snapshots(&self) {
-        *self.snapshots.lock().unwrap() = None;
+    pub fn snapshots(self: &Arc<Self>) -> Result<Vec<BtrfsDatasetSnapshot>> { 
+        let mut snapshots = Subvolume::list_subvolumes(
+            &self
+                .snapshot_container_path()
+                .as_pathbuf(&self.pool.filesystem.fstree_mountpoint),
+        )?
+        .into_iter()
+        .filter_map(|s| {
+            match NaiveDateTime::parse_from_str(
+                &s.path
+                    .file_name()
+                    .expect("Snapshot path should never end in ..")
+                    .to_string_lossy(),
+                "%FT%H-%M-%SZ",
+            ) {
+                Ok(d) => Some(BtrfsDatasetSnapshot {
+                    subvolume: s,
+                    datetime: DateTime::<Utc>::from_utc(d, Utc),
+                    dataset: Arc::clone(self),
+                }),
+                Err(_) => None,
+            }
+        })
+        .collect::<Vec<_>>();
+        snapshots.sort_unstable_by_key(|s| s.datetime);
+        Ok(snapshots)
     }
 
     pub fn latest_snapshot(self: &Arc<Self>) -> Result<Option<BtrfsDatasetSnapshot>> {
         let mut snapshots = self.snapshots()?;
-        snapshots.sort_unstable_by_key(|s| s.datetime);
         Ok(snapshots.pop())
     }
 
@@ -210,7 +198,6 @@ impl BtrfsDataset {
             model,
             subvolume,
             pool: Arc::clone(pool),
-            snapshots: Mutex::new(Option::None),
         })
     }
 
@@ -325,7 +312,7 @@ impl BtrfsContainer {
     }
 
     pub fn snapshots(self: &Arc<Self>, dataset_id: Uuid) -> Result<Vec<BtrfsContainerSnapshot>> {
-        Ok(Subvolume::list_subvolumes(
+        let mut snapshots = Subvolume::list_subvolumes(
             &self
                 .snapshot_container_path(dataset_id)
                 .as_pathbuf(&self.pool.filesystem.fstree_mountpoint),
@@ -348,7 +335,9 @@ impl BtrfsContainer {
                 Err(_) => None,
             }
         })
-        .collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+        snapshots.sort_unstable_by_key(|s| s.datetime);
+        Ok(snapshots)
     }
 
     pub fn snapshot_container_path(&self, dataset_id: Uuid) -> FsPathBuf {

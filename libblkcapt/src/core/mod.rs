@@ -1,3 +1,4 @@
+pub mod localsndrcv;
 pub mod retention;
 pub mod sync;
 use crate::model::Entity;
@@ -15,10 +16,12 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use derivative::Derivative;
 use hyper::Uri;
 use log::*;
+use std::path::PathBuf;
 use std::{convert::TryFrom, str::FromStr, sync::Arc};
 use std::{fmt::Debug, fmt::Display, fs};
-use std::{path::PathBuf, sync::Mutex};
 use uuid::Uuid;
+
+use self::localsndrcv::{SnapshotReceiver, SnapshotSender};
 //use thiserror::Error;
 
 const BLKCAPT_FS_META_DIR: &str = ".blkcapt";
@@ -140,30 +143,29 @@ impl BtrfsDataset {
         Ok(())
     }
 
-    pub fn snapshots(self: &Arc<Self>) -> Result<Vec<BtrfsDatasetSnapshot>> { 
-        let mut snapshots = Subvolume::list_subvolumes(
-            &self
-                .snapshot_container_path()
-                .as_pathbuf(&self.pool.filesystem.fstree_mountpoint),
-        )?
-        .into_iter()
-        .filter_map(|s| {
-            match NaiveDateTime::parse_from_str(
-                &s.path
-                    .file_name()
-                    .expect("Snapshot path should never end in ..")
-                    .to_string_lossy(),
-                "%FT%H-%M-%SZ",
-            ) {
-                Ok(d) => Some(BtrfsDatasetSnapshot {
-                    subvolume: s,
-                    datetime: DateTime::<Utc>::from_utc(d, Utc),
-                    dataset: Arc::clone(self),
-                }),
-                Err(_) => None,
-            }
-        })
-        .collect::<Vec<_>>();
+    pub fn snapshots(self: &Arc<Self>) -> Result<Vec<BtrfsDatasetSnapshot>> {
+        let mut snapshots = self
+            .pool
+            .filesystem
+            .list_subvolumes(&self.snapshot_container_path())?
+            .into_iter()
+            .filter_map(|s| {
+                match NaiveDateTime::parse_from_str(
+                    &s.path
+                        .file_name()
+                        .expect("Snapshot path should never end in ..")
+                        .to_string_lossy(),
+                    "%FT%H-%M-%SZ",
+                ) {
+                    Ok(d) => Some(BtrfsDatasetSnapshot {
+                        subvolume: s,
+                        datetime: DateTime::<Utc>::from_utc(d, Utc),
+                        dataset: Arc::clone(self),
+                    }),
+                    Err(_) => None,
+                }
+            })
+            .collect::<Vec<_>>();
         snapshots.sort_unstable_by_key(|s| s.datetime);
         Ok(snapshots)
     }
@@ -216,7 +218,14 @@ impl Display for BtrfsDataset {
     }
 }
 
+impl AsRef<BtrfsDataset> for BtrfsDataset {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
 pub trait BtrfsSnapshot: Display {
+    fn uuid(&self) -> Uuid;
     fn datetime(&self) -> DateTime<Utc>;
     fn delete(self) -> Result<()>;
 }
@@ -231,10 +240,6 @@ pub struct BtrfsDatasetSnapshot {
 }
 
 impl BtrfsDatasetSnapshot {
-    pub fn uuid(&self) -> Uuid {
-        self.subvolume.uuid
-    }
-
     pub fn path(&self) -> &FsPathBuf {
         &self.subvolume.path
     }
@@ -246,6 +251,15 @@ impl BtrfsDatasetSnapshot {
     pub fn received_uuid(&self) -> Option<Uuid> {
         self.subvolume.received_uuid
     }
+
+    pub fn send(&self, parent: Option<&BtrfsDatasetSnapshot>) -> SnapshotSender {
+        SnapshotSender::new(
+            self.dataset
+                .pool
+                .filesystem
+                .send_subvolume(self.path(), parent.map(|s| s.path())),
+        )
+    }
 }
 
 impl BtrfsSnapshot for BtrfsDatasetSnapshot {
@@ -253,8 +267,12 @@ impl BtrfsSnapshot for BtrfsDatasetSnapshot {
         self.datetime
     }
 
+    fn uuid(&self) -> Uuid {
+        self.subvolume.uuid
+    }
+
     fn delete(self) -> Result<()> {
-        self.dataset.pool.filesystem.delete(self.path())
+        self.dataset.pool.filesystem.delete_subvolume(self.path())
         // .map_err(|e| SnapshotDeleteError {
         //     source: e,
         //     snapshot: self,
@@ -269,6 +287,102 @@ impl Display for BtrfsDatasetSnapshot {
             self.dataset,
             self.datetime.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         ))
+    }
+}
+
+impl AsRef<BtrfsDatasetSnapshot> for BtrfsDatasetSnapshot {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
+pub struct BtrfsDatasetHandle {
+    pub uuid: Uuid,
+    pub state: BtrfsDatasetState,
+}
+
+impl<T> From<T> for BtrfsDatasetHandle
+where
+    T: AsRef<BtrfsDataset>,
+{
+    fn from(dataset: T) -> Self {
+        let dataset = dataset.as_ref();
+        Self {
+            uuid: dataset.uuid(),
+            state: match dataset.parent_uuid() {
+                Some(parent_snapshot) => BtrfsDatasetState::Restored { parent_snapshot },
+                None => BtrfsDatasetState::Original,
+            },
+        }
+    }
+}
+
+pub enum BtrfsDatasetState {
+    Restored { parent_snapshot: Uuid },
+    Original,
+}
+
+#[derive(Debug)]
+pub struct BtrfsDatasetSnapshotHandle {
+    pub datetime: DateTime<Utc>,
+    pub uuid: Uuid,
+    pub state: BtrfsDatasetSnapshotState,
+}
+
+impl<T> From<T> for BtrfsDatasetSnapshotHandle
+where
+    T: AsRef<BtrfsDatasetSnapshot>,
+{
+    fn from(snapshot: T) -> Self {
+        let snapshot = snapshot.as_ref();
+        Self {
+            datetime: snapshot.datetime(),
+            uuid: snapshot.uuid(),
+            state: match snapshot.received_uuid() {
+                Some(source_snapshot) => BtrfsDatasetSnapshotState::Restored {
+                    source_snapshot,
+                    parent_snapshot: snapshot.parent_uuid(),
+                },
+                None => BtrfsDatasetSnapshotState::Original {
+                    parent_dataset: snapshot
+                        .parent_uuid()
+                        .expect("INVARIANT: Local snapshots always have a parent."),
+                },
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum BtrfsDatasetSnapshotState {
+    Restored {
+        source_snapshot: Uuid,
+        parent_snapshot: Option<Uuid>,
+    },
+    Original {
+        parent_dataset: Uuid,
+    },
+}
+
+pub struct BtrfsContainerSnapshotHandle {
+    pub datetime: DateTime<Utc>,
+    pub uuid: Uuid,
+    pub source_snapshot: Uuid,
+    pub parent_snapshot: Option<Uuid>,
+}
+
+impl<T> From<T> for BtrfsContainerSnapshotHandle
+where
+    T: AsRef<BtrfsContainerSnapshot>,
+{
+    fn from(snapshot: T) -> Self {
+        let snapshot = snapshot.as_ref();
+        Self {
+            datetime: snapshot.datetime(),
+            uuid: snapshot.uuid(),
+            source_snapshot: snapshot.received_uuid(),
+            parent_snapshot: snapshot.parent_uuid(),
+        }
     }
 }
 
@@ -303,45 +417,40 @@ impl BtrfsContainer {
     }
 
     pub fn source_dataset_ids(self: &Self) -> Result<Vec<Uuid>> {
-        Ok(
-            Subvolume::list_subvolumes(&self.subvolume.path.as_pathbuf(&self.pool.filesystem.fstree_mountpoint))?
-                .into_iter()
-                .filter_map(|s| Uuid::parse_str(&s.path.file_name().unwrap_or_default().to_string_lossy()).ok())
-                .collect::<Vec<_>>(),
-        )
+        Ok(self
+            .pool
+            .filesystem
+            .list_subvolumes(&self.subvolume.path)?
+            .into_iter()
+            .filter_map(|s| Uuid::parse_str(&s.path.file_name().unwrap_or_default().to_string_lossy()).ok())
+            .collect::<Vec<_>>())
     }
 
     pub fn snapshots(self: &Arc<Self>, dataset_id: Uuid) -> Result<Vec<BtrfsContainerSnapshot>> {
-        let mut snapshots = Subvolume::list_subvolumes(
-            &self
-                .snapshot_container_path(dataset_id)
-                .as_pathbuf(&self.pool.filesystem.fstree_mountpoint),
-        )?
-        .into_iter()
-        .filter(|s| s.path.extension() == Some("bcrcv".as_ref()))
-        .filter_map(|s| {
-            match NaiveDateTime::parse_from_str(
-                &s.path
-                    .file_stem()
-                    .expect("Snapshot path always has filename.")
-                    .to_string_lossy(),
-                "%FT%H-%M-%SZ",
-            ) {
-                Ok(d) => Some(BtrfsContainerSnapshot {
-                    subvolume: s,
-                    datetime: DateTime::<Utc>::from_utc(d, Utc),
-                    container: Arc::clone(self),
-                }),
-                Err(_) => None,
-            }
-        })
-        .collect::<Vec<_>>();
+        let mut snapshots = self
+            .pool
+            .filesystem
+            .list_subvolumes(&self.snapshot_container_path(dataset_id))?
+            .into_iter()
+            .filter(|s| s.path.extension() == Some("bcrcv".as_ref()))
+            .filter_map(|s| self.new_child_snapshot(s).ok())
+            .collect::<Vec<_>>();
         snapshots.sort_unstable_by_key(|s| s.datetime);
         Ok(snapshots)
     }
 
     pub fn snapshot_container_path(&self, dataset_id: Uuid) -> FsPathBuf {
         self.subvolume.path.join(dataset_id.to_string())
+    }
+
+    pub fn receive(self: &Arc<Self>, dataset_id: Uuid) -> SnapshotReceiver {
+        SnapshotReceiver::new(
+            self.pool
+                .filesystem
+                .receive_subvolume(&self.snapshot_container_path(dataset_id)),
+            dataset_id,
+            Arc::clone(self),
+        )
     }
 
     pub fn validate(pool: &Arc<BtrfsPool>, model: BtrfsContainerEntity) -> Result<Self> {
@@ -364,6 +473,29 @@ impl BtrfsContainer {
     pub fn take_model(self) -> BtrfsContainerEntity {
         self.model
     }
+
+    fn snapshot_by_name(self: &Arc<Self>, dataset_id: Uuid, name: &str) -> Result<BtrfsContainerSnapshot> {
+        self.pool
+            .filesystem
+            .subvolume_by_path(&self.snapshot_container_path(dataset_id).join(name))
+            .and_then(|s| self.new_child_snapshot(s).map_err(|e| anyhow!(e)))
+    }
+
+    fn new_child_snapshot(self: &Arc<Self>, subvolume: Subvolume) -> chrono::ParseResult<BtrfsContainerSnapshot> {
+        NaiveDateTime::parse_from_str(
+            &subvolume
+                .path
+                .file_stem()
+                .expect("Snapshot path always has filename.")
+                .to_string_lossy(),
+            "%FT%H-%M-%SZ",
+        )
+        .map(|naive_datetime| BtrfsContainerSnapshot {
+            subvolume,
+            datetime: DateTime::<Utc>::from_utc(naive_datetime, Utc),
+            container: Arc::clone(self),
+        })
+    }
 }
 
 impl Display for BtrfsContainer {
@@ -382,10 +514,6 @@ pub struct BtrfsContainerSnapshot {
 }
 
 impl BtrfsContainerSnapshot {
-    pub fn uuid(&self) -> Uuid {
-        self.subvolume.uuid
-    }
-
     pub fn path(&self) -> &FsPathBuf {
         &self.subvolume.path
     }
@@ -402,12 +530,16 @@ impl BtrfsContainerSnapshot {
 }
 
 impl BtrfsSnapshot for BtrfsContainerSnapshot {
+    fn uuid(&self) -> Uuid {
+        self.subvolume.uuid
+    }
+
     fn datetime(&self) -> DateTime<Utc> {
         self.datetime
     }
 
     fn delete(self) -> Result<()> {
-        self.container.pool.filesystem.delete(self.path())
+        self.container.pool.filesystem.delete_subvolume(self.path())
     }
 }
 
@@ -421,74 +553,15 @@ impl Display for BtrfsContainerSnapshot {
     }
 }
 
-pub fn transfer_full_snapshot(
-    snapshot: &BtrfsDatasetSnapshot,
-    container: &Arc<BtrfsContainer>,
-) -> Result<BtrfsContainerSnapshot> {
-    _transfer_snapshot(None, snapshot, container)
-}
-
-pub fn transfer_delta_snapshot(
-    parent: &BtrfsDatasetSnapshot,
-    snapshot: &BtrfsDatasetSnapshot,
-    container: &Arc<BtrfsContainer>,
-) -> Result<BtrfsContainerSnapshot> {
-    _transfer_snapshot(Some(parent), snapshot, container)
-}
-
-// need to push logic down to sys::btrfs
-fn _transfer_snapshot(
-    parent: Option<&BtrfsDatasetSnapshot>,
-    snapshot: &BtrfsDatasetSnapshot,
-    container: &Arc<BtrfsContainer>,
-) -> Result<BtrfsContainerSnapshot> {
-    let dataset = snapshot.dataset.as_ref();
-    let source_snap_path = snapshot
-        .subvolume
-        .path
-        .as_pathbuf(&dataset.pool.filesystem.fstree_mountpoint);
-    let container_path = container
-        .snapshot_container_path(dataset.model().id())
-        .as_pathbuf(&container.pool.filesystem.fstree_mountpoint);
-
-    let send_expr = match parent {
-        Some(parent_snapshot) => {
-            let parent_snap_path = parent_snapshot
-                .subvolume
-                .path
-                .as_pathbuf(&dataset.pool.filesystem.fstree_mountpoint);
-            duct_cmd!("btrfs", "send", "-p", parent_snap_path, &source_snap_path)
-        }
-        None => duct_cmd!("btrfs", "send", &source_snap_path),
-    };
-    let receive_expr = duct_cmd!("btrfs", "receive", "-v", &container_path);
-
-    let pipe_expr = send_expr.pipe(receive_expr);
-    pipe_expr.run()?;
-
-    let incoming_subvol_name = source_snap_path.file_name().expect("Never ends with ..");
-    let final_subvol_name = {
-        let mut x = incoming_subvol_name.to_owned();
-        x.push(".bcrcv");
-        x
-    };
-    fs::rename(
-        container_path.join(incoming_subvol_name),
-        container_path.join(final_subvol_name),
-    )
-    .context("Failed to rename the subvolume after successfully receiving it.")?;
-
-    // todo get the single subvol instead by path
-    let snapshots = container.snapshots(dataset.model().id())?;
-    snapshots
-        .into_iter()
-        .find(|s| s.received_uuid() == snapshot.uuid())
-        .ok_or_else(|| anyhow!("Failed to locate new snapshot."))
+impl AsRef<BtrfsContainerSnapshot> for BtrfsContainerSnapshot {
+    fn as_ref(&self) -> &Self {
+        self
+    }
 }
 
 // ## Observer #######################################################################################################
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ObservableEventStage {
     Starting,
     Succeeded,

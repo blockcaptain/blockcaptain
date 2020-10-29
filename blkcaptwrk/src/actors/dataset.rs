@@ -1,21 +1,22 @@
 use super::{observation::observable_func, pool::PoolActor};
 use crate::xactorext::ActorContextExt;
-use anyhow::Result;
+use anyhow::{Context as AnyhowContext, Result};
 use chrono::{DateTime, Local, Timelike, Utc};
 use futures_util::future::ready;
 use libblkcapt::{
+    core::localsndrcv::SnapshotSender,
     core::{
         retention::{evaluate_retention, RetentionEvaluation},
-        BtrfsDataset, BtrfsDatasetSnapshot, BtrfsPool, BtrfsSnapshot,
+        BtrfsDataset, BtrfsDatasetHandle, BtrfsDatasetSnapshot, BtrfsDatasetSnapshotHandle, BtrfsPool, BtrfsSnapshot,
     },
     model::entities::BtrfsDatasetEntity,
     model::entities::FeatureState,
     model::entities::ObservableEvent,
     model::Entity,
 };
-use log::*;
+use slog::{debug, error, info, o, trace, Logger};
 use std::sync::Arc;
-use std::{collections::HashMap, collections::VecDeque, fmt::Debug, fmt::Display, time::Duration};
+use std::time::Duration;
 use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler};
 
@@ -23,6 +24,7 @@ pub struct DatasetActor {
     pool: Addr<PoolActor>,
     dataset: Arc<BtrfsDataset>,
     snapshots: Vec<BtrfsDatasetSnapshot>,
+    log: Logger,
 }
 
 #[message()]
@@ -32,6 +34,20 @@ struct SnapshotMessage();
 #[message()]
 #[derive(Clone)]
 struct PruneMessage();
+
+#[message(result = "DatasetSnapshotsResponse")]
+pub struct GetDatasetSnapshotsMessage();
+
+pub struct DatasetSnapshotsResponse {
+    pub dataset: BtrfsDatasetHandle,
+    pub snapshots: Vec<BtrfsDatasetSnapshotHandle>,
+}
+
+#[message(result = "Result<SnapshotSender>")]
+pub struct GetSnapshotSenderMessage {
+    pub send_snapshot_uuid: Uuid,
+    pub parent_snapshot_uuid: Option<Uuid>,
+}
 
 // #[message()]
 // pub struct ConfigureSendSnapshotMessage {
@@ -53,9 +69,16 @@ struct PruneMessage();
 // }
 
 impl DatasetActor {
-    pub fn new(pool_actor: Addr<PoolActor>, pool: &Arc<BtrfsPool>, model: BtrfsDatasetEntity) -> Result<DatasetActor> {
+    pub fn new(
+        pool_actor: Addr<PoolActor>,
+        pool: &Arc<BtrfsPool>,
+        model: BtrfsDatasetEntity,
+        log: &Logger,
+    ) -> Result<DatasetActor> {
+        let id = model.id();
         BtrfsDataset::validate(pool, model).map(Arc::new).and_then(|dataset| {
             Ok(DatasetActor {
+                log: log.new(o!("actor" => "dataset", "dataset_id" => id.to_string())),
                 pool: pool_actor,
                 snapshots: dataset.snapshots()?,
                 dataset,
@@ -71,6 +94,7 @@ impl DatasetActor {
         let latest = self.snapshots.last();
         if let Some(latest_snapshot) = latest {
             trace!(
+                self.log,
                 "Existing snapshot for {} at {}.",
                 self.dataset,
                 latest_snapshot.datetime()
@@ -81,7 +105,7 @@ impl DatasetActor {
                 return (next_datetime - now).to_std().unwrap();
             }
         } else {
-            trace!("No existing snapshot for {}.", self.dataset);
+            trace!(self.log, "No existing snapshot for {}.", self.dataset);
         }
         Duration::from_secs(0)
     }
@@ -102,6 +126,8 @@ impl DatasetActor {
 #[async_trait::async_trait]
 impl Actor for DatasetActor {
     async fn started(&mut self, ctx: &mut xactor::Context<Self>) -> Result<()> {
+        debug!(self.log, "starting");
+
         if self.dataset.model().snapshotting_state() == FeatureState::Enabled {
             let frequency = self
                 .dataset
@@ -110,6 +136,7 @@ impl Actor for DatasetActor {
                 .expect("INVARIANT: Frequency must exist for snapshotting to be enabled.");
             let delay_next = self.next_scheduled_snapshot(frequency);
             debug!(
+                self.log,
                 "First snapshot for {} in {}.",
                 self.dataset,
                 humantime::Duration::from(delay_next)
@@ -120,6 +147,7 @@ impl Actor for DatasetActor {
         if self.dataset.model().pruning_state() == FeatureState::Enabled {
             let delay_next = Self::next_scheduled_prune();
             debug!(
+                self.log,
                 "First prune for {} in {}.",
                 self.dataset,
                 humantime::Duration::from(delay_next)
@@ -136,22 +164,25 @@ impl Actor for DatasetActor {
             );
         }
 
+        debug!(self.log, "started");
         Ok(())
     }
 
-    async fn stopped(&mut self, ctx: &mut xactor::Context<Self>) {}
+    async fn stopped(&mut self, _ctx: &mut xactor::Context<Self>) {
+        debug!(self.log, "stopped");
+    }
 }
 
 #[async_trait::async_trait]
 impl Handler<SnapshotMessage> for DatasetActor {
     async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: SnapshotMessage) {
-        trace!("Dataset actor snapshot message.");
-        let result = observable_func(self.id(), ObservableEvent::DatasetSnapshot, move || {
+        trace!(self.log, "Dataset actor snapshot message.");
+        let result = observable_func(self.id(), ObservableEvent::DatasetSnapshot, || {
             ready(self.dataset.create_local_snapshot())
         })
         .await;
         if let Err(e) = result {
-            error!("Failed to create snapshot: {}", e);
+            error!(self.log, "Failed to create snapshot: {}", e);
         }
     }
 }
@@ -159,7 +190,7 @@ impl Handler<SnapshotMessage> for DatasetActor {
 #[async_trait::async_trait]
 impl Handler<PruneMessage> for DatasetActor {
     async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: PruneMessage) {
-        trace!("Dataset prune snapshot message.");
+        trace!(self.log, "Dataset prune snapshot message.");
 
         let rules = self
             .dataset
@@ -173,32 +204,61 @@ impl Handler<PruneMessage> for DatasetActor {
                 .dataset
                 .snapshots()
                 .and_then(|snapshots| evaluate_retention(snapshots, rules))
-                .and_then(prune_snapshots);
+                .and_then(|eval| prune_snapshots(eval, &self.log));
             ready(result)
         })
         .await;
 
         if let Err(e) = result {
-            error!("Failed to prune dataset or container: {}", e);
+            error!(self.log, "Failed to prune dataset or container: {}", e);
         }
     }
 }
 
-fn prune_snapshots<T: BtrfsSnapshot>(evaluation: RetentionEvaluation<T>) -> Result<()> {
-    if log_enabled!(Level::Trace) {
-        for snapshot in evaluation.keep_interval_buckets.iter().flat_map(|b| b.snapshots.iter()) {
-            trace!("Keeping snapshot {} reason: in retention interval.", snapshot);
+#[async_trait::async_trait]
+impl Handler<GetDatasetSnapshotsMessage> for DatasetActor {
+    async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: GetDatasetSnapshotsMessage) -> DatasetSnapshotsResponse {
+        DatasetSnapshotsResponse {
+            dataset: self.dataset.as_ref().into(),
+            snapshots: self.snapshots.iter().map(|s| s.into()).collect(),
         }
+    }
+}
 
-        for snapshot in evaluation.keep_minimum_snapshots.iter() {
-            trace!("Keeping snapshot {} reason: keep minimum newest.", snapshot);
-        }
+#[async_trait::async_trait]
+impl Handler<GetSnapshotSenderMessage> for DatasetActor {
+    async fn handle(&mut self, _ctx: &mut Context<Self>, msg: GetSnapshotSenderMessage) -> Result<SnapshotSender> {
+        let send_snapshot = self
+            .snapshots
+            .iter()
+            .find(|s| s.uuid() == msg.send_snapshot_uuid)
+            .context("Snapshot not found.")?;
+        let parent_snapshot = match msg.parent_snapshot_uuid {
+            Some(uuid) => Some(
+                self.snapshots
+                    .iter()
+                    .find(|s| s.uuid() == uuid)
+                    .context("Parent not found")?,
+            ),
+            None => None,
+        };
+        Ok(send_snapshot.send(parent_snapshot))
+    }
+}
+
+fn prune_snapshots<T: BtrfsSnapshot>(evaluation: RetentionEvaluation<T>, log: &Logger) -> Result<()> {
+    for snapshot in evaluation.keep_interval_buckets.iter().flat_map(|b| b.snapshots.iter()) {
+        trace!(log, "Keeping snapshot {} reason: in retention interval.", snapshot);
+    }
+
+    for snapshot in evaluation.keep_minimum_snapshots.iter() {
+        trace!(log, "Keeping snapshot {} reason: keep minimum newest.", snapshot);
     }
 
     for snapshot in evaluation.drop_snapshots {
         info!(
-            "Snapshot {} is being pruned because it did not meet any retention criteria.",
-            snapshot
+            log,
+            "Snapshot {} is being pruned because it did not meet any retention criteria.", snapshot
         );
         snapshot.delete()?;
     }

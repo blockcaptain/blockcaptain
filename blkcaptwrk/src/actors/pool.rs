@@ -1,25 +1,26 @@
 use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
-use chrono::{DateTime, Local, Timelike, Utc};
-use futures_util::{future::ready, stream::FuturesUnordered};
+
+use futures_util::stream::FuturesUnordered;
 use libblkcapt::{
-    core::retention::evaluate_retention, core::retention::RetentionEvaluation, core::sync::ready_snapshots,
-    core::BtrfsContainer, core::BtrfsContainerSnapshot, core::BtrfsDataset, core::BtrfsDatasetSnapshot,
-    core::BtrfsPool, core::BtrfsSnapshot, model::entities::BtrfsPoolEntity, model::entities::FeatureState,
-    model::entities::ObservableEvent, model::entities::SnapshotSyncEntity, model::Entity,
+    core::retention::evaluate_retention, core::retention::RetentionEvaluation, core::BtrfsContainer,
+    core::BtrfsContainerSnapshot, core::BtrfsDataset, core::BtrfsDatasetSnapshot, core::BtrfsPool, core::BtrfsSnapshot,
+    model::entities::BtrfsPoolEntity, model::entities::FeatureState, model::entities::ObservableEvent,
+    model::entities::SnapshotSyncEntity, model::Entity,
 };
-use log::*;
+use slog::{debug, error, o, Logger};
 use std::{collections::HashMap, collections::VecDeque, fmt::Debug, fmt::Display, sync::Arc, time::Duration};
 use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler};
 
-use super::{container::ContainerActor, dataset::DatasetActor, observation::observable_func, sync::SyncActor};
-use crate::xactorext::ActorContextExt;
+use super::{container::ContainerActor, dataset::DatasetActor};
+use crate::xactorext::GetChildActorMessage;
 use futures_util::stream::StreamExt;
 
 pub struct PoolActor {
     pool: PoolState,
     datasets: HashMap<Uuid, Addr<DatasetActor>>,
     containers: HashMap<Uuid, Addr<ContainerActor>>,
+    log: Logger,
 }
 
 enum PoolState {
@@ -32,8 +33,9 @@ enum PoolState {
 struct ScrubMessage();
 
 impl PoolActor {
-    pub fn new(model: BtrfsPoolEntity) -> Self {
+    pub fn new(model: BtrfsPoolEntity, log: &Logger) -> Self {
         Self {
+            log: log.new(o!("actor" => "pool", "pool_id" => model.id().to_string())),
             pool: PoolState::Pending(model),
             datasets: HashMap::<_, _>::default(),
             containers: HashMap::<_, _>::default(),
@@ -89,29 +91,27 @@ impl PoolActor {
 #[async_trait::async_trait]
 impl Actor for PoolActor {
     async fn started(&mut self, ctx: &mut Context<Self>) -> Result<()> {
+        debug!(self.log, "starting");
+
         if let PoolState::Pending(model) = &self.pool {
             self.pool = PoolState::Started(BtrfsPool::validate(model.clone()).map(Arc::new)?);
         } else {
             bail!("Pool already started.");
         }
 
-        let dataset_actors = self
+        self.datasets = self
             .pool()
             .model()
             .datasets
             .iter()
-            .map(|m| DatasetActor::new(ctx.address(), self.pool(), m.clone()))
+            .map(|m| DatasetActor::new(ctx.address(), self.pool(), m.clone(), &self.log))
             .filter_map(|d| match d {
                 Ok(dataset_actor) => Some(dataset_actor),
                 Err(error) => {
-                    error!("Failed to create dataset actor: {}", error);
+                    error!(self.log, "Failed to create dataset actor: {}", error);
                     None
                 }
             })
-            .collect::<Vec<_>>();
-
-        self.datasets = dataset_actors
-            .into_iter()
             .map(|actor| async {
                 let id = actor.id();
                 let addr = actor.start().await?;
@@ -124,22 +124,74 @@ impl Actor for PoolActor {
             .filter_map(|sa| match sa {
                 Ok(started_actor) => Some(started_actor),
                 Err(error) => {
-                    error!("Failed to start dataset actor: {}", error);
+                    error!(self.log, "Failed to start dataset actor: {}", error);
                     None
                 }
             })
             .collect();
 
-        // init containers here
+        // How to do more code sharing with above???
+        self.containers = self
+            .pool()
+            .model()
+            .containers
+            .iter()
+            .map(|m| ContainerActor::new(ctx.address(), self.pool(), m.clone()))
+            .filter_map(|d| match d {
+                Ok(container_actor) => Some(container_actor),
+                Err(error) => {
+                    error!(self.log, "Failed to create container actor: {}", error);
+                    None
+                }
+            })
+            .map(|actor| async {
+                let id = actor.id();
+                let addr = actor.start().await?;
+                Result::<_>::Ok((id, addr))
+            })
+            .collect::<FuturesUnordered<_>>()
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .filter_map(|sa| match sa {
+                Ok(started_actor) => Some(started_actor),
+                Err(error) => {
+                    error!(self.log, "Failed to start container actor: {}", error);
+                    None
+                }
+            })
+            .collect();
 
         // init scrubbing here
         // trace!("pool scrub {}", self.pool());
 
-        info!("Pool actor started successfully.");
+        debug!(self.log, "started");
         Ok(())
     }
 
     async fn stopped(&mut self, _ctx: &mut Context<Self>) {
-        info!("Pool actor stopped successfully.");
+        debug!(self.log, "stopped");
+    }
+}
+
+#[async_trait::async_trait]
+impl Handler<GetChildActorMessage<DatasetActor>> for PoolActor {
+    async fn handle(
+        &mut self,
+        _ctx: &mut Context<Self>,
+        msg: GetChildActorMessage<DatasetActor>,
+    ) -> Option<Addr<DatasetActor>> {
+        self.datasets.get(&msg.0).map(|d| d.clone())
+    }
+}
+
+#[async_trait::async_trait]
+impl Handler<GetChildActorMessage<ContainerActor>> for PoolActor {
+    async fn handle(
+        &mut self,
+        _ctx: &mut Context<Self>,
+        msg: GetChildActorMessage<ContainerActor>,
+    ) -> Option<Addr<ContainerActor>> {
+        self.containers.get(&msg.0).map(|d| d.clone())
     }
 }

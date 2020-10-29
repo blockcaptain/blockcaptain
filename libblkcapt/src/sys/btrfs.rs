@@ -151,7 +151,7 @@ impl MountedFilesystem {
             .map(|_| ())
     }
 
-    pub fn delete(&self, path: &FsPathBuf) -> Result<()> {
+    pub fn delete_subvolume(&self, path: &FsPathBuf) -> Result<()> {
         let target_path = path.as_pathbuf(&self.fstree_mountpoint);
         if !target_path.exists() {
             bail!("Path to subvolume, {:?}, is non-existant!", &target_path)
@@ -159,6 +159,35 @@ impl MountedFilesystem {
         btrfs_cmd!("subvolume", "delete", target_path)
             .context(format!("Failed to delete btrfs subvolume at {:?}.", path))
             .map(|_| ())
+    }
+
+    pub fn send_subvolume(&self, path: &FsPathBuf, parent: Option<&FsPathBuf>) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new("btrfs");
+        let source_snap_path = path.as_pathbuf(&self.fstree_mountpoint);
+        match parent {
+            Some(parent_snapshot) => {
+                let parent_snap_path = parent_snapshot.as_pathbuf(&self.fstree_mountpoint);
+                command
+                    .arg("send")
+                    .arg("-p")
+                    .arg(parent_snap_path)
+                    .arg(source_snap_path)
+            }
+            None => command.arg("send").arg(source_snap_path),
+        };
+        command
+    }
+
+    pub fn receive_subvolume(&self, into_path: &FsPathBuf) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new("btrfs");
+        let target_into_path = into_path.as_pathbuf(&self.fstree_mountpoint);
+        command.arg("receive").arg(target_into_path);
+        command
+    }
+
+    pub fn list_subvolumes(&self, path: &FsPathBuf) -> Result<Vec<Subvolume>> {
+        let target_path = path.as_pathbuf(&self.fstree_mountpoint);
+        Subvolume::list_subvolumes(&target_path)
     }
 }
 

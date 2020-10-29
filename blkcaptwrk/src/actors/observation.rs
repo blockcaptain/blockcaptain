@@ -5,18 +5,19 @@ use libblkcapt::{
     core::ObservationRouter,
     model::entities::HealthchecksHeartbeat,
     model::entities::{HealthchecksObserverEntity, ObservableEvent},
+    model::Entity,
 };
-use log::*;
+use slog::{debug, error, o, trace, Logger};
 use std::{fmt::Debug, future::Future};
 use uuid::Uuid;
 use xactor::{message, Actor, Broker, Context, Handler, Service};
 
 #[message()]
 #[derive(Clone, Debug)]
-struct ObservableEventMessage {
-    source: Uuid,
-    event: ObservableEvent,
-    stage: ObservableEventStage,
+pub struct ObservableEventMessage {
+    pub source: Uuid,
+    pub event: ObservableEvent,
+    pub stage: ObservableEventStage,
 }
 
 #[message()]
@@ -41,7 +42,7 @@ where
     let result = func().await;
 
     if let core::result::Result::Err(ref e) = result {
-        trace!("Publishing fail event for source {:?} event {:?}.", source, event);
+        //trace!(self.log, "Publishing fail event for source {:?} event {:?}.", source, event);
         broker
             .publish(ObservableEventMessage {
                 source,
@@ -66,11 +67,13 @@ pub struct HealthchecksActor {
     router: ObservationRouter,
     emitter: ObservationEmitter,
     heartbeat_config: Option<HealthchecksHeartbeat>,
+    log: Logger,
 }
 
 impl HealthchecksActor {
-    pub fn new(model: HealthchecksObserverEntity) -> Self {
+    pub fn new(model: HealthchecksObserverEntity, log: &Logger) -> Self {
         Self {
+            log: log.new(o!("actor" => "healthchecks", "observer_id" => model.id().to_string())),
             router: ObservationRouter::new(model.observations),
             emitter: model
                 .custom_url
@@ -83,6 +86,7 @@ impl HealthchecksActor {
 #[async_trait::async_trait]
 impl Actor for HealthchecksActor {
     async fn started(&mut self, ctx: &mut Context<Self>) -> Result<()> {
+        debug!(self.log, "starting");
         ctx.subscribe::<ObservableEventMessage>().await?;
 
         if let Some(config) = &self.heartbeat_config {
@@ -90,27 +94,29 @@ impl Actor for HealthchecksActor {
             ctx.send_interval(HeartbeatMessage(), config.frequency);
         }
 
-        info!("Healthchecks actor started successfully.");
+        debug!(self.log, "started");
         Ok(())
     }
 
     async fn stopped(&mut self, ctx: &mut Context<Self>) {
+        debug!(self.log, "stopping");
         ctx.unsubscribe::<ObservableEventMessage>()
             .await
             .expect("Failed to unsubscribe from ObservableEvents.");
-        info!("Healthchecks actor stopped successfully.");
+
+        debug!(self.log, "stopped");
     }
 }
 
 #[async_trait::async_trait]
 impl Handler<ObservableEventMessage> for HealthchecksActor {
     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: ObservableEventMessage) {
-        trace!("Healthchecks actor received event {:?}", msg);
+        trace!(self.log, "received event {:?}", msg);
         let observers = self.router.route(msg.source, msg.event);
         for observer in observers {
             let result = self.emitter.emit(observer.healthcheck_id, msg.stage.clone()).await;
             if let Err(e) = result {
-                error!("Failed to send Healthchecks event {:?}: {}", msg, e);
+                error!(self.log, "Failed to send Healthchecks event {:?}: {}", msg, e);
             }
         }
     }
@@ -119,7 +125,7 @@ impl Handler<ObservableEventMessage> for HealthchecksActor {
 #[async_trait::async_trait]
 impl Handler<HeartbeatMessage> for HealthchecksActor {
     async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: HeartbeatMessage) {
-        trace!("Healthchecks actor heartbeat event.");
+        trace!(self.log, "heartbeat");
         let result = self
             .emitter
             .emit(
@@ -131,7 +137,7 @@ impl Handler<HeartbeatMessage> for HealthchecksActor {
             )
             .await;
         if let Err(e) = result {
-            error!("Failed to send Healthchecks heartbeat: {}", e);
+            error!(self.log, "Failed to send Healthchecks heartbeat: {}", e);
         }
     }
 }

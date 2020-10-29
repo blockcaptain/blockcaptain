@@ -1,14 +1,94 @@
-use std::sync::Arc;
-use xactor::Addr;
-use libblkcapt::{core::{BtrfsContainer, BtrfsPool}, model::entities::BtrfsContainerEntity};
 use super::pool::PoolActor;
 use anyhow::Result;
+use libblkcapt::{
+    core::localsndrcv::SnapshotReceiver,
+    core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsContainerSnapshotHandle, BtrfsPool},
+    model::entities::BtrfsContainerEntity,
+    model::Entity,
+};
+use log::trace;
+use std::{collections::HashMap, sync::Arc};
+use uuid::Uuid;
+use xactor::{message, Actor, Addr, Context, Handler};
 
 pub struct ContainerActor {
     pool: Addr<PoolActor>,
     container: Arc<BtrfsContainer>,
+    snapshots: HashMap<Uuid, Vec<BtrfsContainerSnapshot>>,
 }
 
+#[message(result = "ContainerSnapshotsResponse")]
+pub struct GetContainerSnapshotsMessage {
+    pub source_dataset_id: Uuid,
+}
+
+pub struct ContainerSnapshotsResponse {
+    pub snapshots: Vec<BtrfsContainerSnapshotHandle>,
+}
+
+#[message(result = "Result<SnapshotReceiver>")]
+pub struct GetSnapshotReceiverMessage {
+    pub source_dataset_id: Uuid,
+}
+
+impl ContainerActor {
+    pub fn new(pool_actor: Addr<PoolActor>, pool: &Arc<BtrfsPool>, model: BtrfsContainerEntity) -> Result<Self> {
+        BtrfsContainer::validate(pool, model)
+            .map(Arc::new)
+            .and_then(|container| {
+                let source_ids = container.source_dataset_ids()?;
+                Ok(Self {
+                    pool: pool_actor,
+                    snapshots: source_ids
+                        .iter()
+                        .map(|&source_id| container.snapshots(source_id).map(|snapshots| (source_id, snapshots)))
+                        .collect::<Result<_>>()?,
+                    container,
+                })
+            })
+    }
+
+    pub fn id(&self) -> Uuid {
+        self.container.model().id()
+    }
+}
+
+#[async_trait::async_trait]
+impl Actor for ContainerActor {
+    async fn started(&mut self, _ctx: &mut Context<Self>) -> Result<()> {
+        trace!(
+            "Starting container with {} snapshots from {} datasets.",
+            self.snapshots.values().fold(0, |acc, v| acc + v.len()),
+            self.snapshots.len()
+        );
+        Ok(())
+    }
+
+    async fn stopped(&mut self, _ctx: &mut Context<Self>) {}
+}
+
+#[async_trait::async_trait]
+impl Handler<GetContainerSnapshotsMessage> for ContainerActor {
+    async fn handle(
+        &mut self,
+        _ctx: &mut Context<Self>,
+        msg: GetContainerSnapshotsMessage,
+    ) -> ContainerSnapshotsResponse {
+        ContainerSnapshotsResponse {
+            snapshots: self.snapshots[&msg.source_dataset_id]
+                .iter()
+                .map(|s| s.into())
+                .collect(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Handler<GetSnapshotReceiverMessage> for ContainerActor {
+    async fn handle(&mut self, _ctx: &mut Context<Self>, msg: GetSnapshotReceiverMessage) -> Result<SnapshotReceiver> {
+        Ok(self.container.receive(msg.source_dataset_id))
+    }
+}
 
 // else if let Ok(container) = self.container(msg.dataset_or_container_id) {
 //     let rules = container

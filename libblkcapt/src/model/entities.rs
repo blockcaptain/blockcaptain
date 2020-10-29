@@ -239,6 +239,15 @@ pub struct SnapshotSyncEntity {
     name: String,
     dataset: Uuid,
     container: Uuid,
+    pub sync_mode: SnapshotSyncMode,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotSyncMode {
+    SyncAll,
+    SyncLatest,
+    SyncImmediate,
 }
 
 impl SnapshotSyncEntity {

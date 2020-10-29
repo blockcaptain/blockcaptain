@@ -8,8 +8,6 @@ edition = "2018"
 libblkcapt = { path = "../libblkcapt" }
 anyhow = "1.0.31"
 thiserror = "1.0.20"
-log = "0.4"
-pretty_env_logger = "0.4"
 human-panic = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "0.2", features = ["full"] }
@@ -18,5 +16,13 @@ humantime = "2.0"
 async-trait = "0.1"
 xactor = { version = "0.7", features = ["runtime-tokio"], default-features = false }
 uuid = { version = "0.8", features = ["serde", "v4"] }
+bytes = "0.5"
+log = "0.4"
+slog = { version = "2.5.2", features = ["max_level_trace", "release_max_level_warn"] }
+slog-term = "2.6.0"
+slog-async = "2.5.0"
+slog-stdlog = "4.1.0"
+slog-scope = "4.3.0"
+slog-atomic = "3.0.0"
 
 [dev-dependencies]

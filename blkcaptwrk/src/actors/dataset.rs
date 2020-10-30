@@ -19,12 +19,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler};
+use crate::{
+    actorbase::unhandled_result,
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
 
 pub struct DatasetActor {
-    pool: Addr<PoolActor>,
+    pool: Addr<BcActor<PoolActor>>,
     dataset: Arc<BtrfsDataset>,
     snapshots: Vec<BtrfsDatasetSnapshot>,
-    log: Logger,
 }
 
 #[message()]
@@ -70,31 +73,26 @@ pub struct GetSnapshotSenderMessage {
 
 impl DatasetActor {
     pub fn new(
-        pool_actor: Addr<PoolActor>,
+        pool_actor: Addr<BcActor<PoolActor>>,
         pool: &Arc<BtrfsPool>,
         model: BtrfsDatasetEntity,
         log: &Logger,
-    ) -> Result<DatasetActor> {
+    ) -> Result<BcActor<DatasetActor>> {
         let id = model.id();
         BtrfsDataset::validate(pool, model).map(Arc::new).and_then(|dataset| {
-            Ok(DatasetActor {
-                log: log.new(o!("actor" => "dataset", "dataset_id" => id.to_string())),
+            Ok(BcActor::new(DatasetActor {
                 pool: pool_actor,
                 snapshots: dataset.snapshots()?,
                 dataset,
-            })
+            }, &log.new(o!("dataset_id" => id.to_string()))))
         })
     }
 
-    pub fn id(&self) -> Uuid {
-        self.dataset.model().id()
-    }
-
-    fn next_scheduled_snapshot(&self, frequency: Duration) -> Duration {
+    fn next_scheduled_snapshot(&self, frequency: Duration, log: &Logger) -> Duration {
         let latest = self.snapshots.last();
         if let Some(latest_snapshot) = latest {
             trace!(
-                self.log,
+                log,
                 "Existing snapshot for {} at {}.",
                 self.dataset,
                 latest_snapshot.datetime()
@@ -105,7 +103,7 @@ impl DatasetActor {
                 return (next_datetime - now).to_std().unwrap();
             }
         } else {
-            trace!(self.log, "No existing snapshot for {}.", self.dataset);
+            trace!(log, "No existing snapshot for {}.", self.dataset);
         }
         Duration::from_secs(0)
     }
@@ -124,19 +122,17 @@ impl DatasetActor {
 }
 
 #[async_trait::async_trait]
-impl Actor for DatasetActor {
-    async fn started(&mut self, ctx: &mut xactor::Context<Self>) -> Result<()> {
-        debug!(self.log, "starting");
-
+impl BcActorCtrl for DatasetActor {
+    async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         if self.dataset.model().snapshotting_state() == FeatureState::Enabled {
             let frequency = self
                 .dataset
                 .model()
                 .snapshot_frequency
                 .expect("INVARIANT: Frequency must exist for snapshotting to be enabled.");
-            let delay_next = self.next_scheduled_snapshot(frequency);
+            let delay_next = self.next_scheduled_snapshot(frequency, log);
             debug!(
-                self.log,
+                log,
                 "First snapshot for {} in {}.",
                 self.dataset,
                 humantime::Duration::from(delay_next)
@@ -147,7 +143,7 @@ impl Actor for DatasetActor {
         if self.dataset.model().pruning_state() == FeatureState::Enabled {
             let delay_next = Self::next_scheduled_prune();
             debug!(
-                self.log,
+                log,
                 "First prune for {} in {}.",
                 self.dataset,
                 humantime::Duration::from(delay_next)
@@ -164,34 +160,30 @@ impl Actor for DatasetActor {
             );
         }
 
-        debug!(self.log, "started");
         Ok(())
     }
 
-    async fn stopped(&mut self, _ctx: &mut xactor::Context<Self>) {
-        debug!(self.log, "stopped");
+    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
     }
 }
 
 #[async_trait::async_trait]
-impl Handler<SnapshotMessage> for DatasetActor {
-    async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: SnapshotMessage) {
-        trace!(self.log, "Dataset actor snapshot message.");
-        let result = observable_func(self.id(), ObservableEvent::DatasetSnapshot, || {
+impl BcHandler<SnapshotMessage> for DatasetActor {
+    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: SnapshotMessage) {
+        trace!(log, "Dataset actor snapshot message.");
+        let result = observable_func(self.dataset.model().id(), ObservableEvent::DatasetSnapshot, || {
             ready(self.dataset.create_local_snapshot())
         })
         .await;
         if let Err(e) = result {
-            error!(self.log, "Failed to create snapshot: {}", e);
+            error!(log, "Failed to create snapshot: {}", e);
         }
     }
 }
 
 #[async_trait::async_trait]
-impl Handler<PruneMessage> for DatasetActor {
-    async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: PruneMessage) {
-        trace!(self.log, "Dataset prune snapshot message.");
-
+impl BcHandler<PruneMessage> for DatasetActor {
+    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: PruneMessage) {
         let rules = self
             .dataset
             .model()
@@ -199,25 +191,23 @@ impl Handler<PruneMessage> for DatasetActor {
             .as_ref()
             .expect("INVARIANT: Retention exist based on message scheduling in started.");
 
-        let result = observable_func(self.id(), ObservableEvent::DatasetPrune, || {
+        let result = observable_func(self.dataset.model().id(), ObservableEvent::DatasetPrune, || {
             let result = self
                 .dataset
                 .snapshots()
                 .and_then(|snapshots| evaluate_retention(snapshots, rules))
-                .and_then(|eval| prune_snapshots(eval, &self.log));
+                .and_then(|eval| prune_snapshots(eval, &log));
             ready(result)
         })
         .await;
 
-        if let Err(e) = result {
-            error!(self.log, "Failed to prune dataset or container: {}", e);
-        }
+        unhandled_result(log, result);
     }
 }
 
 #[async_trait::async_trait]
-impl Handler<GetDatasetSnapshotsMessage> for DatasetActor {
-    async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: GetDatasetSnapshotsMessage) -> DatasetSnapshotsResponse {
+impl BcHandler<GetDatasetSnapshotsMessage> for DatasetActor {
+    async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetDatasetSnapshotsMessage) -> DatasetSnapshotsResponse {
         DatasetSnapshotsResponse {
             dataset: self.dataset.as_ref().into(),
             snapshots: self.snapshots.iter().map(|s| s.into()).collect(),
@@ -226,8 +216,8 @@ impl Handler<GetDatasetSnapshotsMessage> for DatasetActor {
 }
 
 #[async_trait::async_trait]
-impl Handler<GetSnapshotSenderMessage> for DatasetActor {
-    async fn handle(&mut self, _ctx: &mut Context<Self>, msg: GetSnapshotSenderMessage) -> Result<SnapshotSender> {
+impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
+    async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetSnapshotSenderMessage) -> Result<SnapshotSender> {
         let send_snapshot = self
             .snapshots
             .iter()
@@ -267,8 +257,8 @@ fn prune_snapshots<T: BtrfsSnapshot>(evaluation: RetentionEvaluation<T>, log: &L
 }
 
 // #[async_trait::async_trait]
-// impl Handler<ConfigureSendSnapshotMessage> for PoolActor {
-//     async fn handle(&mut self, ctx: &mut Context<Self>, msg: ConfigureSendSnapshotMessage) {
+// impl BcHandler<ConfigureSendSnapshotMessage> for PoolActor {
+//     async fn handle(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: ConfigureSendSnapshotMessage) {
 //         trace!("Pool actor configure send message.");
 //         let delay_next = Self::next_scheduled_prune(); // TODO: change to a proper schedule
 //         debug!(
@@ -285,8 +275,8 @@ fn prune_snapshots<T: BtrfsSnapshot>(evaluation: RetentionEvaluation<T>, log: &L
 // }
 
 // #[async_trait::async_trait]
-// impl Handler<SendSnapshotMessage> for PoolActor {
-//     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: SendSnapshotMessage) {
+// impl BcHandler<SendSnapshotMessage> for PoolActor {
+//     async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: SendSnapshotMessage) {
 //         trace!("Pool actor send message.");
 //         let dataset = &*self.owned_dataset(msg.0.config.dataset_id()).expect("FIXME");
 //         let latest_in_container = msg
@@ -312,8 +302,8 @@ fn prune_snapshots<T: BtrfsSnapshot>(evaluation: RetentionEvaluation<T>, log: &L
 // }
 
 // #[async_trait::async_trait]
-// impl Handler<SendSnapshotCompleteMessage> for PoolActor {
-//     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: SendSnapshotCompleteMessage) {
+// impl BcHandler<SendSnapshotCompleteMessage> for PoolActor {
+//     async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: SendSnapshotCompleteMessage) {
 //         trace!("Pool actor send complete message.");
 //         self.active_sync = None;
 //         self.process_send_queue();
@@ -321,8 +311,8 @@ fn prune_snapshots<T: BtrfsSnapshot>(evaluation: RetentionEvaluation<T>, log: &L
 // }
 
 // #[async_trait::async_trait]
-// impl Handler<GetLatestSnapshot> for PoolActor {
-//     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: GetLatestSnapshot) -> Option<DateTime<Utc>> {
+// impl BcHandler<GetLatestSnapshot> for PoolActor {
+//     async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetLatestSnapshot) -> Option<DateTime<Utc>> {
 //         trace!("Pool actor send message.");
 //         let container = self.container(msg.container_id).expect("FIXME");
 

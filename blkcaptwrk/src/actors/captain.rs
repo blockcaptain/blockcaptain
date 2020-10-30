@@ -1,6 +1,6 @@
 use super::pool::PoolActor;
 use super::{observation::HealthchecksActor, sync::SyncActor};
-use crate::xactorext::{join_all_actors, stop_all_actors, BcActor, GetChildActorMessage};
+use crate::xactorext::{join_all_actors, stop_all_actors, GetChildActorMessage};
 use anyhow::{Context as AnyhowContext, Result};
 use futures_util::{
     future::ready,
@@ -11,25 +11,27 @@ use slog::{debug, error, o, trace, Logger};
 use std::{collections::HashMap, mem};
 use uuid::Uuid;
 use xactor::{Actor, Addr, Context};
+use crate::{
+    actorbase::unhandled_result,
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
 
 pub struct CaptainActor {
     healthcheck_actors: Vec<Addr<BcActor<HealthchecksActor>>>,
-    sync_actors: Vec<Addr<SyncActor>>,
-    pool_actors: HashMap<Uuid, Addr<PoolActor>>,
-    log: Logger,
+    sync_actors: Vec<Addr<BcActor<SyncActor>>>,
+    pool_actors: HashMap<Uuid, Addr<BcActor<PoolActor>>>,
 }
 
 impl CaptainActor {
-    pub fn new(log: &Logger) -> Self {
-        Self {
+    pub fn new(log: &Logger) -> BcActor<Self> {
+        BcActor::new(Self {
             healthcheck_actors: Default::default(),
             sync_actors: Default::default(),
             pool_actors: Default::default(),
-            log: log.new(o!("actor" => "captain")),
-        }
+        }, log)
     }
 
-    async fn new_sync_actor(&self, entities: &Entities, model: SnapshotSyncEntity) -> Result<SyncActor> {
+    async fn new_sync_actor(&self, entities: &Entities, model: SnapshotSyncEntity, log: &Logger) -> Result<BcActor<SyncActor>> {
         let dataset_pool_id = entities
             .dataset(model.dataset_id())
             .map(|p| p.parent.id())
@@ -58,22 +60,20 @@ impl CaptainActor {
             .await?
             .context("Destination container didn't start.")?;
 
-        Ok(SyncActor::new(dataset_actor, container_actor, model))
+        Ok(SyncActor::new(dataset_actor, container_actor, model, log))
     }
 }
 
 #[async_trait::async_trait]
-impl Actor for CaptainActor {
-    async fn started(&mut self, _ctx: &mut Context<Self>) -> Result<()> {
-        debug!(self.log, "starting");
-
+impl BcActorCtrl for CaptainActor {
+    async fn started(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         let mut entities = storage::load_entity_state();
         if !entities.observers.is_empty() {
-            trace!(self.log, "building observer actors");
+            trace!(log, "building observer actors");
             self.healthcheck_actors = entities
                 .observers
                 .drain(..)
-                .map(|m| HealthchecksActor::new(m, &self.log).start())
+                .map(|m| HealthchecksActor::new(m, &log).start())
                 .collect::<FuturesUnordered<_>>()
                 .collect::<Vec<_>>()
                 .await
@@ -81,7 +81,7 @@ impl Actor for CaptainActor {
                 .filter_map(|sa| match sa {
                     Ok(started_actor) => Some(started_actor),
                     Err(error) => {
-                        error!(self.log, "Failed to start observer actor: {}", error);
+                        error!(log, "Failed to start observer actor: {}", error);
                         None
                     }
                 })
@@ -89,13 +89,12 @@ impl Actor for CaptainActor {
         };
 
         if !entities.btrfs_pools.is_empty() {
-            trace!(self.log, "building pool actors");
+            trace!(log, "building pool actors");
             self.pool_actors = entities
                 .btrfs_pools
                 .iter()
-                .map(|m| PoolActor::new(m.clone(), &self.log))
-                .map(|actor| async {
-                    let id = actor.id();
+                .map(|m| (m.id(), PoolActor::new(m.clone(), &log)))
+                .map(|(id, actor)| async move {
                     let addr = actor.start().await?;
                     Result::<_>::Ok((id, addr))
                 })
@@ -106,7 +105,7 @@ impl Actor for CaptainActor {
                 .filter_map(|sa| match sa {
                     Ok(started_actor) => Some(started_actor),
                     Err(error) => {
-                        error!(self.log, "Failed to start pool actor: {}", error);
+                        error!(log, "Failed to start pool actor: {}", error);
                         None
                     }
                 })
@@ -114,14 +113,14 @@ impl Actor for CaptainActor {
         }
 
         if !entities.snapshot_syncs.is_empty() {
-            trace!(self.log, "building sync actors");
+            trace!(log, "building sync actors");
             self.sync_actors = stream::iter(mem::take(&mut entities.snapshot_syncs).into_iter())
-                .then(|m| self.new_sync_actor(&entities, m))
+                .then(|m| self.new_sync_actor(&entities, m, log))
                 .filter_map(|s| {
                     let actor = match s {
                         Ok(sync_actor) => Some(sync_actor),
                         Err(error) => {
-                            error!(self.log, "Failed to create sync actor: {}", error);
+                            error!(log, "Failed to create sync actor: {}", error);
                             None
                         }
                     };
@@ -134,20 +133,17 @@ impl Actor for CaptainActor {
                 .filter_map(|sa| match sa {
                     Ok(started_actor) => Some(started_actor),
                     Err(error) => {
-                        error!(self.log, "Failed to start sync actor: {}", error);
+                        error!(log, "Failed to start sync actor: {}", error);
                         None
                     }
                 })
                 .collect();
         }
 
-        debug!(self.log, "started");
         Ok(())
     }
 
-    async fn stopped(&mut self, _ctx: &mut Context<Self>) {
-        debug!(self.log, "stopping");
-
+    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
         stop_all_actors(&mut self.healthcheck_actors);
         stop_all_actors(&mut self.sync_actors);
         stop_all_actors(self.pool_actors.values_mut());
@@ -155,7 +151,5 @@ impl Actor for CaptainActor {
         join_all_actors(self.healthcheck_actors.drain(..)).await;
         join_all_actors(self.sync_actors.drain(..)).await;
         join_all_actors(self.pool_actors.drain().map(|(_k, v)| v)).await;
-
-        debug!(self.log, "stopped");
     }
 }

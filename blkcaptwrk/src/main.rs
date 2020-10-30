@@ -1,6 +1,6 @@
 use anyhow::Result;
 use blkcaptwrk::actors::captain::CaptainActor;
-use blkcaptwrk::slogext::{CustomFullFormat, DedupDrain};
+use blkcaptwrk::slogext::{CustomFullFormat, DedupDrain, SlogLogLogger};
 use human_panic::setup_panic;
 use slog::{debug, error, info, o, trace, Drain, Level, Logger};
 use std::{sync::Arc, time::Duration};
@@ -19,42 +19,39 @@ fn main() {
     });
 
     let (internal_level, external_level) = match vcount {
-        0 => (Level::Info, log::Level::Info),
-        1 => (Level::Debug, log::Level::Info),
-        2 => (Level::Trace, log::Level::Info),
-        3 => (Level::Trace, log::Level::Debug),
-        _ => (Level::Trace, log::Level::Trace),
+        0 => (Level::Info, log::LevelFilter::Info),
+        1 => (Level::Debug, log::LevelFilter::Info),
+        2 => (Level::Trace, log::LevelFilter::Info),
+        3 => (Level::Trace, log::LevelFilter::Debug),
+        _ => (Level::Trace, log::LevelFilter::Trace),
     };
 
     println!();
 
     {
-        let slog_drain = {
+        let (slog_drain, slog_drain_ctrl) = {
             let decorator = slog_term::TermDecorator::new().build();
             let drain = CustomFullFormat::new(decorator).fuse();
-            slog_async::Async::new(drain).build().fuse().map(Arc::new)
+            let drain = slog_async::Async::new(drain).build().fuse();
+            let drain = slog_atomic::AtomicSwitch::new(drain);
+            let ctrl = drain.ctrl();
+            (drain.map(Arc::new), ctrl)
         };
 
         {
-            let (slog_internal_logger, slog_internal_ctrl) = {
-                let drain = slog_atomic::AtomicSwitch::new(Arc::clone(&slog_drain));
-                let ctrl = drain.ctrl();
-                let drain = DedupDrain::new(drain);
+            let slog_internal_logger = {
+                let drain = DedupDrain::new(Arc::clone(&slog_drain));
                 let drain = drain.filter_level(internal_level).fuse();
-                (Logger::root(drain, o!()), ctrl)
+                Logger::root(drain, o!())
             };
 
             let slog_external_logger = {
-                // TEMPORARY FILTERING WHILE TRANSITIONING INTERNAL TO SLOG.
-                let drain = Arc::clone(&slog_drain)
-                    .filter(|r| r.module().contains("blkcapt"))
-                    .fuse();
-                // let drain = Arc::clone(&slog_drain);
-                Logger::root(drain, o!("log" => "external"))
+                let drain = Arc::clone(&slog_drain);
+                Logger::root(drain, o!())
             };
 
-            slog_scope::set_global_logger(slog_external_logger).cancel_reset();
-            slog_stdlog::init_with_level(external_level).expect("can always init stdlog");
+            slog_scope::set_global_logger(slog_internal_logger.clone()).cancel_reset();
+            SlogLogLogger::install(slog_external_logger, external_level);
 
             debug!(slog_internal_logger, "debug messages enabled");
             trace!(slog_internal_logger, "trace messages enabled");
@@ -75,12 +72,9 @@ fn main() {
             info!(slog_internal_logger, "process exiting");
 
             slog_scope::set_global_logger(Logger::root(slog::Discard, o!())).cancel_reset();
-            slog_internal_ctrl.set(Logger::root(slog::Discard, o!()));
         }
 
-        Arc::try_unwrap(slog_drain)
-            .map_err(|_| "leaked reference")
-            .expect("all references to main async drain are dropped");
+        slog_drain_ctrl.set(Logger::root(slog::Discard, o!()));
     }
 
     println!();

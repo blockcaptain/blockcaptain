@@ -1,8 +1,6 @@
 use std::mem;
-
 use anyhow::{bail, Result};
 use bytes::BytesMut;
-
 use libblkcapt::{
     core::localsndrcv::{SnapshotReceiver, SnapshotSender, StartedSnapshotReceiver, StartedSnapshotSender},
     core::sync::find_parent,
@@ -10,13 +8,16 @@ use libblkcapt::{
     core::{localsndrcv::FinishedSnapshotReceiver, sync::find_ready},
     model::entities::{SnapshotSyncEntity, SnapshotSyncMode},
 };
-use log::*;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     task::JoinHandle,
 };
-
 use xactor::{message, Actor, Context, Handler, Sender};
+use crate::{
+    actorbase::unhandled_result,
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
+use slog::Logger;
 
 pub struct TransferActor {
     state: State,
@@ -32,11 +33,11 @@ enum State {
 }
 
 impl TransferActor {
-    pub fn new(parent: Sender<TransferComplete>, sender: SnapshotSender, receiver: SnapshotReceiver) -> Self {
-        Self {
+    pub fn new(parent: Sender<TransferComplete>, sender: SnapshotSender, receiver: SnapshotReceiver, log: &Logger) -> BcActor<Self> {
+        BcActor::new(Self {
             state: State::PreStart(sender, receiver),
             parent,
-        }
+        }, log)
     }
 }
 
@@ -47,9 +48,8 @@ pub struct TransferComplete(pub Result<FinishedSnapshotReceiver>);
 struct InternalTransferComplete();
 
 #[async_trait::async_trait]
-impl Actor for TransferActor {
-    async fn started(&mut self, ctx: &mut Context<Self>) -> Result<()> {
-        trace!("SYNC ACTOR START");
+impl BcActorCtrl for TransferActor {
+    async fn started(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         let (mut sender, mut receiver) =
             if let State::PreStart(sender, receiver) = mem::replace(&mut self.state, State::Faulted) {
                 (sender.start()?, receiver.start()?)
@@ -79,17 +79,14 @@ impl Actor for TransferActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, _ctx: &mut Context<Self>) {
-        trace!("Transfer ACTOR STOP");
+    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
         self.state = State::Stopped;
     }
 }
 
 #[async_trait::async_trait]
-impl Handler<InternalTransferComplete> for TransferActor {
-    async fn handle(&mut self, ctx: &mut Context<Self>, _msg: InternalTransferComplete) {
-        trace!("Transfer actor internal transfer complete message.");
-
+impl BcHandler<InternalTransferComplete> for TransferActor {
+    async fn handle(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: InternalTransferComplete) {
         if let State::Started(sender, receiver, handle) = mem::replace(&mut self.state, State::Finished) {
             let _result = handle.await;
             let send_result = sender.wait().await;

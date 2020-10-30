@@ -127,6 +127,8 @@ dependencies = [
  "libblkcapt",
  "log",
  "pretty_env_logger",
+ "slog",
+ "slog-scope",
  "thiserror",
  "tokio",
  "uuid",
@@ -150,7 +152,6 @@ dependencies = [
  "slog-async",
  "slog-atomic",
  "slog-scope",
- "slog-stdlog",
  "slog-term",
  "thiserror",
  "tokio",
@@ -796,7 +797,6 @@ dependencies = [
  "hyper-tls",
  "indoc",
  "lazy_static",
- "log",
  "mnt",
  "mockall",
  "regex",
@@ -804,6 +804,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "slog",
+ "slog-scope",
  "strum",
  "strum_macros",
  "thiserror",
@@ -1558,17 +1559,6 @@ dependencies = [
  "arc-swap",
  "lazy_static",
  "slog",
-]
-
-[[package]]
-name = "slog-stdlog"
-version = "4.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8228ab7302adbf4fcb37e66f3cda78003feb521e7fd9e3847ec117a7784d0f5a"
-dependencies = [
- "log",
- "slog",
- "slog-scope",
 ]
 
 [[package]]

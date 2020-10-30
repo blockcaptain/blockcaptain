@@ -5,7 +5,6 @@ use anyhow::{anyhow, Result};
 use entities::{
     BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObserverEntity, SnapshotSyncEntity,
 };
-use log::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::{fmt::Debug, iter::repeat};
@@ -42,7 +41,7 @@ impl Entities {
                 Some(_) => "same custom Healthchecks instance",
                 None => "Healthchecks.io service",
             };
-            warn!(
+            slog_scope::warn!(
                 "Observer {} already uses the {}. It is not neccessary to create multiple observers \
                 that report to the same instance.",
                 other.name(),

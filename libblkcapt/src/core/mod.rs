@@ -15,7 +15,6 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use derivative::Derivative;
 use hyper::Uri;
-use log::*;
 use std::path::PathBuf;
 use std::{convert::TryFrom, str::FromStr, sync::Arc};
 use std::{fmt::Debug, fmt::Display, fs};
@@ -64,7 +63,7 @@ impl BtrfsPool {
         let meta_dir = FsPathBuf::from(BLKCAPT_FS_META_DIR);
         let mounted_meta_dir = meta_dir.as_pathbuf(&mountpoint);
         if !mounted_meta_dir.exists() {
-            info!("Attached to new filesystem. Creating blkcapt dir.");
+            slog_scope::info!("Attached to new filesystem. Creating blkcapt dir.");
             fs::create_dir(&mounted_meta_dir)?;
             btrfs_info.create_subvolume(&meta_dir.join("snapshots"))?;
         }
@@ -126,7 +125,7 @@ impl BtrfsDataset {
             .as_pathbuf(&dataset.pool.filesystem.fstree_mountpoint)
             .exists()
         {
-            info!("Attached to new dataset. Creating local snap container.");
+            slog_scope::info!("Attached to new dataset. Creating local snap container.");
             dataset.pool.filesystem.create_subvolume(&snapshot_path)?;
         }
 
@@ -607,7 +606,7 @@ impl ObservationEmitter {
         let uri_string = format!("{}{}", &self.url, healthcheck_id.to_hyphenated());
         let uri = Uri::from_str((uri_string + suffix).as_str()).unwrap();
 
-        trace!("Emitting health check to url: {}", uri);
+        slog_scope::trace!("Emitting health check to url: {}", uri);
         self.http_client
             .get(uri)
             .await

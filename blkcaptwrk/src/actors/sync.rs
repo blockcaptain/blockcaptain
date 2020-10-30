@@ -1,12 +1,10 @@
 use std::{collections::VecDeque, time::Duration};
-
 use super::{
     container::ContainerActor, container::GetContainerSnapshotsMessage, container::GetSnapshotReceiverMessage,
     dataset::DatasetActor, dataset::GetDatasetSnapshotsMessage, dataset::GetSnapshotSenderMessage,
     observation::ObservableEventMessage, transfer::TransferActor, transfer::TransferComplete,
 };
 use anyhow::Result;
-
 use chrono::{DateTime, Utc};
 use libblkcapt::{
     core::localsndrcv::{SnapshotReceiver, SnapshotSender},
@@ -16,17 +14,20 @@ use libblkcapt::{
     core::ObservableEventStage,
     model::entities::{ObservableEvent, SnapshotSyncEntity, SnapshotSyncMode},
 };
-use log::*;
-
 use xactor::{message, Actor, Addr, Context, Handler};
+use crate::{
+    actorbase::unhandled_result,
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
+use slog::{Logger, debug, trace, info, error};
 
 pub struct SyncActor {
-    dataset: Addr<DatasetActor>,
-    container: Addr<ContainerActor>,
+    dataset: Addr<BcActor<DatasetActor>>,
+    container: Addr<BcActor<ContainerActor>>,
     model: SnapshotSyncEntity,
 
     state_mode: ModeState,
-    state_active_send: Option<Addr<TransferActor>>,
+    state_active_send: Option<Addr<BcActor<TransferActor>>>,
 }
 
 enum ModeState {
@@ -39,9 +40,8 @@ enum ModeState {
 struct StartSnapshotSyncCycleMessage();
 
 impl SyncActor {
-    pub fn new(dataset: Addr<DatasetActor>, container: Addr<ContainerActor>, model: SnapshotSyncEntity) -> Self {
-        trace!("Creating SyncActor for {:?}", model);
-        Self {
+    pub fn new(dataset: Addr<BcActor<DatasetActor>>, container: Addr<BcActor<ContainerActor>>, model: SnapshotSyncEntity, log: &Logger) -> BcActor<Self> {
+        BcActor::new(Self {
             dataset,
             container,
             state_mode: match model.sync_mode {
@@ -50,10 +50,10 @@ impl SyncActor {
             },
             state_active_send: None,
             model,
-        }
+        }, log)
     }
 
-    async fn run_cycle(&mut self, ctx: &Context<Self>) -> Result<()> {
+    async fn run_cycle(&mut self, ctx: &Context<BcActor<Self>>, log: &Logger) -> Result<()> {
         let dataset = self.dataset.call(GetDatasetSnapshotsMessage()).await.unwrap();
         let container = self
             .container
@@ -79,7 +79,7 @@ impl SyncActor {
         let to_send = if let Some(handle) = to_send {
             handle
         } else {
-            debug!("No snapshots to send this cycle.");
+            debug!(log,"No snapshots to send this cycle.");
             return Ok(());
         };
 
@@ -104,7 +104,7 @@ impl SyncActor {
             .expect("can call")
             .expect("valid receiver");
 
-        let transfer_actor = TransferActor::new(ctx.address().sender::<TransferComplete>(), sender, receiver);
+        let transfer_actor = TransferActor::new(ctx.address().sender::<TransferComplete>(), sender, receiver, log);
         let transfer_actor = transfer_actor.start().await.unwrap();
         self.state_active_send = Some(transfer_actor);
 
@@ -113,9 +113,8 @@ impl SyncActor {
 }
 
 #[async_trait::async_trait]
-impl Actor for SyncActor {
-    async fn started(&mut self, ctx: &mut Context<Self>) -> Result<()> {
-        trace!("SYNC ACTOR STARTED");
+impl BcActorCtrl for SyncActor {
+    async fn started(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         if self.model.sync_mode == SnapshotSyncMode::SyncImmediate {
             ctx.subscribe::<ObservableEventMessage>().await?;
         }
@@ -123,8 +122,7 @@ impl Actor for SyncActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, ctx: &mut Context<Self>) {
-        trace!("SYNC ACTOR STOPPED");
+    async fn stopped(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) {
         if self.model.sync_mode == SnapshotSyncMode::SyncImmediate {
             ctx.unsubscribe::<ObservableEventMessage>().await.expect("FIXME");
         }
@@ -132,8 +130,8 @@ impl Actor for SyncActor {
 }
 
 #[async_trait::async_trait]
-impl Handler<ObservableEventMessage> for SyncActor {
-    async fn handle(&mut self, ctx: &mut Context<Self>, msg: ObservableEventMessage) {
+impl BcHandler<ObservableEventMessage> for SyncActor {
+    async fn handle(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: ObservableEventMessage) {
         if msg.source == self.model.dataset_id()
             && msg.event == ObservableEvent::DatasetSnapshot
             && msg.stage == ObservableEventStage::Succeeded
@@ -144,48 +142,48 @@ impl Handler<ObservableEventMessage> for SyncActor {
 }
 
 #[async_trait::async_trait]
-impl Handler<StartSnapshotSyncCycleMessage> for SyncActor {
-    async fn handle(&mut self, ctx: &mut Context<Self>, _msg: StartSnapshotSyncCycleMessage) {
-        trace!("Sync actor snapshot cycle message.");
+impl BcHandler<StartSnapshotSyncCycleMessage> for SyncActor {
+    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: StartSnapshotSyncCycleMessage) {
+        trace!(log,"Sync actor snapshot cycle message.");
 
         let new_limit_time = Utc::now();
         match &mut self.state_mode {
             ModeState::SendLatest(queue) => {
-                trace!("Adding sync time {} to queue.", new_limit_time);
+                trace!(log,"Adding sync time {} to queue.", new_limit_time);
                 queue.push_back(new_limit_time);
             }
             ModeState::SendAll(limit) => {
-                trace!("Moving limit sync forward to {}", new_limit_time);
+                trace!(log,"Moving limit sync forward to {}", new_limit_time);
                 limit.replace(new_limit_time);
             }
         }
 
         if self.state_active_send.is_some() {
-            debug!("Received snapshot cycle message while in active send state.");
+            debug!(log,"Received snapshot cycle message while in active send state.");
             return;
         }
 
-        let result = self.run_cycle(ctx).await;
+        let result = self.run_cycle(ctx, log).await;
 
         if let Err(e) = result {
-            error!("Failed to start sync cycle: {}", e);
+            error!(log,"Failed to start sync cycle: {}", e);
         }
     }
 }
 
 #[async_trait::async_trait]
-impl Handler<TransferComplete> for SyncActor {
-    async fn handle(&mut self, ctx: &mut Context<Self>, msg: TransferComplete) {
-        trace!("Sync actor transfer complete message.");
+impl BcHandler<TransferComplete> for SyncActor {
+    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: TransferComplete) {
+        trace!(log,"Sync actor transfer complete message.");
 
         self.state_active_send = None;
         let TransferComplete(finished_receiver) = msg;
-        info!("received: {:?}", finished_receiver.expect("FIXME").received_snapshot);
+        info!(log,"received: {:?}", finished_receiver.expect("FIXME").received_snapshot);
 
-        let result = self.run_cycle(ctx).await;
+        let result = self.run_cycle(ctx, log).await;
 
         if let Err(e) = result {
-            error!("Failed to start sync cycle: {}", e);
+            error!(log,"Failed to start sync cycle: {}", e);
         }
     }
 }

@@ -16,6 +16,7 @@ pub struct SnapshotSender {
 impl SnapshotSender {
     pub fn new(mut command: Command) -> Self {
         command.stdout(Stdio::piped());
+        command.stderr(Stdio::null());
         Self { command }
     }
 

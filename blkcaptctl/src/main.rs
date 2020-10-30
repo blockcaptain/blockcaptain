@@ -1,10 +1,10 @@
 use anyhow::Result;
 use clap::{crate_version, Clap};
 use human_panic::setup_panic;
-use log::*;
 mod commands;
 mod ui;
 use commands::*;
+use log::*;
 
 #[tokio::main]
 async fn main() {

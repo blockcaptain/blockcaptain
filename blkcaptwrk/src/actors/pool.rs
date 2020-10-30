@@ -15,11 +15,15 @@ use xactor::{message, Actor, Addr, Context, Handler};
 use super::{container::ContainerActor, dataset::DatasetActor};
 use crate::xactorext::GetChildActorMessage;
 use futures_util::stream::StreamExt;
+use crate::{
+    actorbase::unhandled_result,
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
 
 pub struct PoolActor {
     pool: PoolState,
-    datasets: HashMap<Uuid, Addr<DatasetActor>>,
-    containers: HashMap<Uuid, Addr<ContainerActor>>,
+    datasets: HashMap<Uuid, Addr<BcActor<DatasetActor>>>,
+    containers: HashMap<Uuid, Addr<BcActor<ContainerActor>>>,
     log: Logger,
 }
 
@@ -33,20 +37,13 @@ enum PoolState {
 struct ScrubMessage();
 
 impl PoolActor {
-    pub fn new(model: BtrfsPoolEntity, log: &Logger) -> Self {
-        Self {
+    pub fn new(model: BtrfsPoolEntity, log: &Logger) -> BcActor<Self> {
+        BcActor::new(Self {
             log: log.new(o!("actor" => "pool", "pool_id" => model.id().to_string())),
             pool: PoolState::Pending(model),
             datasets: HashMap::<_, _>::default(),
             containers: HashMap::<_, _>::default(),
-        }
-    }
-
-    pub fn id(&self) -> Uuid {
-        match &self.pool {
-            PoolState::Started(pool) => pool.model().id(),
-            PoolState::Pending(model) => model.id(),
-        }
+        }, log)
     }
 
     fn pool(&self) -> &Arc<BtrfsPool> {
@@ -89,8 +86,8 @@ impl PoolActor {
 }
 
 #[async_trait::async_trait]
-impl Actor for PoolActor {
-    async fn started(&mut self, ctx: &mut Context<Self>) -> Result<()> {
+impl BcActorCtrl for PoolActor {
+    async fn started(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         debug!(self.log, "starting");
 
         if let PoolState::Pending(model) = &self.pool {
@@ -104,16 +101,15 @@ impl Actor for PoolActor {
             .model()
             .datasets
             .iter()
-            .map(|m| DatasetActor::new(ctx.address(), self.pool(), m.clone(), &self.log))
-            .filter_map(|d| match d {
-                Ok(dataset_actor) => Some(dataset_actor),
+            .map(|m| (m.id(), DatasetActor::new(ctx.address(), self.pool(), m.clone(), &self.log)))
+            .filter_map(|(id, actor)| match actor {
+                Ok(dataset_actor) => Some((id, dataset_actor)),
                 Err(error) => {
                     error!(self.log, "Failed to create dataset actor: {}", error);
                     None
                 }
             })
-            .map(|actor| async {
-                let id = actor.id();
+            .map(|(id, actor)| async move {
                 let addr = actor.start().await?;
                 Result::<_>::Ok((id, addr))
             })
@@ -136,16 +132,15 @@ impl Actor for PoolActor {
             .model()
             .containers
             .iter()
-            .map(|m| ContainerActor::new(ctx.address(), self.pool(), m.clone()))
-            .filter_map(|d| match d {
-                Ok(container_actor) => Some(container_actor),
+            .map(|m| (m.id(), ContainerActor::new(ctx.address(), self.pool(), m.clone(), &self.log)))
+            .filter_map(|(id, actor)| match actor {
+                Ok(container_actor) => Some((id, container_actor)),
                 Err(error) => {
                     error!(self.log, "Failed to create container actor: {}", error);
                     None
                 }
             })
-            .map(|actor| async {
-                let id = actor.id();
+            .map(|(id, actor)| async move {
                 let addr = actor.start().await?;
                 Result::<_>::Ok((id, addr))
             })
@@ -169,29 +164,31 @@ impl Actor for PoolActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, _ctx: &mut Context<Self>) {
+    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
         debug!(self.log, "stopped");
     }
 }
 
 #[async_trait::async_trait]
-impl Handler<GetChildActorMessage<DatasetActor>> for PoolActor {
+impl BcHandler<GetChildActorMessage<BcActor<DatasetActor>>> for PoolActor {
     async fn handle(
         &mut self,
-        _ctx: &mut Context<Self>,
-        msg: GetChildActorMessage<DatasetActor>,
-    ) -> Option<Addr<DatasetActor>> {
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        msg: GetChildActorMessage<BcActor<DatasetActor>>,
+    ) -> Option<Addr<BcActor<DatasetActor>>> {
         self.datasets.get(&msg.0).map(|d| d.clone())
     }
 }
 
 #[async_trait::async_trait]
-impl Handler<GetChildActorMessage<ContainerActor>> for PoolActor {
+impl BcHandler<GetChildActorMessage<BcActor<ContainerActor>>> for PoolActor {
     async fn handle(
         &mut self,
-        _ctx: &mut Context<Self>,
-        msg: GetChildActorMessage<ContainerActor>,
-    ) -> Option<Addr<ContainerActor>> {
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        msg: GetChildActorMessage<BcActor<ContainerActor>>,
+    ) -> Option<Addr<BcActor<ContainerActor>>> {
         self.containers.get(&msg.0).map(|d| d.clone())
     }
 }

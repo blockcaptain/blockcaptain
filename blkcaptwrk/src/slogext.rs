@@ -1,4 +1,4 @@
-use slog::{kv, o, Discard, Drain, Logger, OwnedKVList, Record, KV};
+use slog::{b, kv, o, Discard, Drain, Level, Logger, OwnedKVList, Record, KV};
 use slog_term::{timestamp_local, CountingWriter, Decorator, RecordDecorator, Serializer};
 use std::{fmt, io, io::Write, result};
 
@@ -222,4 +222,59 @@ impl<D: Drain> Drain for DedupDrain<D> {
         let values = slog::OwnedKV(DedupKV(values.clone()));
         self.inner.log(record, &values.into())
     }
+}
+
+pub struct SlogLogLogger(Logger);
+
+fn log_to_slog_level(level: log::Level) -> Level {
+    match level {
+        log::Level::Trace => Level::Trace,
+        log::Level::Debug => Level::Debug,
+        log::Level::Info => Level::Info,
+        log::Level::Warn => Level::Warning,
+        log::Level::Error => Level::Error,
+    }
+}
+
+fn record_as_location(r: &log::Record) -> slog::RecordLocation {
+    let module = r.module_path_static().unwrap_or("<unknown>");
+    let file = r.file_static().unwrap_or("<unknown>");
+    let line = r.line().unwrap_or_default();
+
+    slog::RecordLocation {
+        file,
+        line,
+        column: 0,
+        function: "",
+        module,
+    }
+}
+
+impl SlogLogLogger {
+    pub fn install(log: Logger, level_filter: log::LevelFilter) {
+        log::set_boxed_logger(Box::new(Self(log))).expect("no handling of set logger errors");
+        log::set_max_level(level_filter);
+    }
+}
+
+impl log::Log for SlogLogLogger {
+    fn enabled(&self, _: &log::Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, r: &log::Record) {
+        let level = log_to_slog_level(r.metadata().level());
+
+        let args = r.args();
+        let target = r.target();
+        let location = &record_as_location(r);
+        let s = slog::RecordStatic {
+            location,
+            level,
+            tag: target,
+        };
+        self.0.log(&slog::Record::new(&s, args, b!()));
+    }
+
+    fn flush(&self) {}
 }

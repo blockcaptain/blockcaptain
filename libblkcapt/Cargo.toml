@@ -22,6 +22,7 @@ chrono = { version = "0.4", features = ["serde"] }
 humantime = "2.0"
 humantime-serde = "1.0"
 derivative = "2.1"
+http = "0.2"
 hyper = "0.13"
 hyper-tls = "0.4"
 hyper-timeout = "0.3"

@@ -598,7 +598,7 @@ impl ObservationEmitter {
         }
     }
 
-    pub async fn emit(&self, healthcheck_id: Uuid, stage: ObservableEventStage) -> Result<(), hyper::Error> {
+    pub async fn emit(&self, healthcheck_id: Uuid, stage: ObservableEventStage) -> Result<()> {
         let suffix = match stage {
             ObservableEventStage::Starting => "/start",
             ObservableEventStage::Succeeded => "",
@@ -608,7 +608,14 @@ impl ObservationEmitter {
         let uri = Uri::from_str((uri_string + suffix).as_str()).unwrap();
 
         trace!("Emitting health check to url: {}", uri);
-        self.http_client.get(uri).await.map(|_| ())
+        self.http_client
+            .get(uri)
+            .await
+            .map_err(|e| anyhow!(e))
+            .and_then(|r| match r.status() {
+                http::status::StatusCode::OK => Ok(()),
+                e => Err(anyhow!(e)),
+            })
     }
 }
 

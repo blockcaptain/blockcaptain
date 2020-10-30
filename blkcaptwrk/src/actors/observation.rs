@@ -1,3 +1,7 @@
+use crate::{
+    actorbase::unhandled_result,
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
 use anyhow::Result;
 use libblkcapt::{
     core::ObservableEventStage,
@@ -7,10 +11,10 @@ use libblkcapt::{
     model::entities::{HealthchecksObserverEntity, ObservableEvent},
     model::Entity,
 };
-use slog::{debug, error, o, trace, Logger};
+use slog::{o, Logger};
 use std::{fmt::Debug, future::Future};
 use uuid::Uuid;
-use xactor::{message, Actor, Broker, Context, Handler, Service};
+use xactor::{message, Broker, Context, Service};
 
 #[message()]
 #[derive(Clone, Debug)]
@@ -24,41 +28,41 @@ pub struct ObservableEventMessage {
 #[derive(Clone)]
 struct HeartbeatMessage();
 
-pub async fn observable_func<F, T, E, R>(source: Uuid, event: ObservableEvent, func: F) -> core::result::Result<T, E>
+pub async fn observable_func<F, T, E, R>(source: Uuid, event: ObservableEvent, func: F) -> std::result::Result<T, E>
 where
     F: FnOnce() -> R,
-    R: Future<Output = core::result::Result<T, E>>,
+    R: Future<Output = std::result::Result<T, E>>,
     E: Debug,
 {
-    let mut broker = Broker::from_registry().await.expect("Broker could not be retrieved.");
+    let mut broker = Broker::from_registry().await.expect("broker is always available");
     broker
         .publish(ObservableEventMessage {
             source,
             event,
             stage: ObservableEventStage::Starting,
         })
-        .expect("Publish failed.");
+        .expect("can always publish");
 
     let result = func().await;
 
-    if let core::result::Result::Err(ref e) = result {
-        //trace!(self.log, "Publishing fail event for source {:?} event {:?}.", source, event);
-        broker
-            .publish(ObservableEventMessage {
-                source,
-                event,
-                stage: ObservableEventStage::Failed(format!("{:?}", e)),
-            })
-            .expect("Publish failed.");
-    } else {
-        broker
-            .publish(ObservableEventMessage {
-                source,
-                event,
-                stage: ObservableEventStage::Succeeded,
-            })
-            .expect("Publish failed.");
-    }
+    let final_stage = match &result {
+        Ok(_) => {
+            slog_scope::trace!("observable func succeeded"; "entity_id" => %source, "observable_event" => %event);
+            ObservableEventStage::Succeeded
+        }
+        Err(e) => {
+            slog_scope::trace!("observable func failed"; "entity_id" => %source, "observable_event" => %event, "error" => ?e);
+            ObservableEventStage::Failed(format!("{:?}", e))
+        }
+    };
+
+    broker
+        .publish(ObservableEventMessage {
+            source,
+            event,
+            stage: final_stage,
+        })
+        .expect("can always publish");
 
     result
 }
@@ -67,26 +71,27 @@ pub struct HealthchecksActor {
     router: ObservationRouter,
     emitter: ObservationEmitter,
     heartbeat_config: Option<HealthchecksHeartbeat>,
-    log: Logger,
 }
 
 impl HealthchecksActor {
-    pub fn new(model: HealthchecksObserverEntity, log: &Logger) -> Self {
-        Self {
-            log: log.new(o!("actor" => "healthchecks", "observer_id" => model.id().to_string())),
-            router: ObservationRouter::new(model.observations),
-            emitter: model
-                .custom_url
-                .map_or_else(ObservationEmitter::default, ObservationEmitter::new),
-            heartbeat_config: model.heartbeat,
-        }
+    pub fn new(model: HealthchecksObserverEntity, log: &Logger) -> BcActor<Self> {
+        let observer_id = model.id().to_string();
+        BcActor::new(
+            Self {
+                router: ObservationRouter::new(model.observations),
+                emitter: model
+                    .custom_url
+                    .map_or_else(ObservationEmitter::default, ObservationEmitter::new),
+                heartbeat_config: model.heartbeat,
+            },
+            &log.new(o!("observer_id" => observer_id)),
+        )
     }
 }
 
 #[async_trait::async_trait]
-impl Actor for HealthchecksActor {
-    async fn started(&mut self, ctx: &mut Context<Self>) -> Result<()> {
-        debug!(self.log, "starting");
+impl BcActorCtrl for HealthchecksActor {
+    async fn started(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         ctx.subscribe::<ObservableEventMessage>().await?;
 
         if let Some(config) = &self.heartbeat_config {
@@ -94,50 +99,41 @@ impl Actor for HealthchecksActor {
             ctx.send_interval(HeartbeatMessage(), config.frequency);
         }
 
-        debug!(self.log, "started");
         Ok(())
     }
 
-    async fn stopped(&mut self, ctx: &mut Context<Self>) {
-        debug!(self.log, "stopping");
+    async fn stopped(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) {
         ctx.unsubscribe::<ObservableEventMessage>()
             .await
-            .expect("Failed to unsubscribe from ObservableEvents.");
-
-        debug!(self.log, "stopped");
+            .expect("can always unsubscribe");
     }
 }
 
 #[async_trait::async_trait]
-impl Handler<ObservableEventMessage> for HealthchecksActor {
-    async fn handle(&mut self, _ctx: &mut Context<Self>, msg: ObservableEventMessage) {
-        trace!(self.log, "received event {:?}", msg);
+impl BcHandler<ObservableEventMessage> for HealthchecksActor {
+    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: ObservableEventMessage) {
         let observers = self.router.route(msg.source, msg.event);
         for observer in observers {
             let result = self.emitter.emit(observer.healthcheck_id, msg.stage.clone()).await;
-            if let Err(e) = result {
-                error!(self.log, "Failed to send Healthchecks event {:?}: {}", msg, e);
-            }
+            unhandled_result(log, result);
         }
     }
 }
 
 #[async_trait::async_trait]
-impl Handler<HeartbeatMessage> for HealthchecksActor {
-    async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: HeartbeatMessage) {
-        trace!(self.log, "heartbeat");
+impl BcHandler<HeartbeatMessage> for HealthchecksActor {
+    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: HeartbeatMessage) {
         let result = self
             .emitter
             .emit(
                 self.heartbeat_config
                     .as_ref()
-                    .expect("Heartbeat config must exist.")
+                    .expect("heartbeat config exists if heartbeat messages are scheduled")
                     .healthcheck_id,
                 ObservableEventStage::Succeeded,
             )
             .await;
-        if let Err(e) = result {
-            error!(self.log, "Failed to send Healthchecks heartbeat: {}", e);
-        }
+
+        unhandled_result(log, result);
     }
 }

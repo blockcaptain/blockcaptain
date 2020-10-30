@@ -373,7 +373,7 @@ pub struct Observation {
     pub event: ObservableEvent,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, EnumString, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Display, Debug, EnumString, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum ObservableEvent {

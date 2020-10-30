@@ -7,5 +7,6 @@ pub mod actors {
     pub mod sync;
     pub mod transfer;
 }
+mod actorbase;
 pub mod slogext;
 mod xactorext;

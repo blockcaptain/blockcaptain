@@ -1,6 +1,6 @@
 use super::pool::PoolActor;
 use super::{observation::HealthchecksActor, sync::SyncActor};
-use crate::xactorext::{join_all_actors, stop_all_actors, GetChildActorMessage};
+use crate::xactorext::{join_all_actors, stop_all_actors, BcActor, GetChildActorMessage};
 use anyhow::{Context as AnyhowContext, Result};
 use futures_util::{
     future::ready,
@@ -13,7 +13,7 @@ use uuid::Uuid;
 use xactor::{Actor, Addr, Context};
 
 pub struct CaptainActor {
-    healthcheck_actors: Vec<Addr<HealthchecksActor>>,
+    healthcheck_actors: Vec<Addr<BcActor<HealthchecksActor>>>,
     sync_actors: Vec<Addr<SyncActor>>,
     pool_actors: HashMap<Uuid, Addr<PoolActor>>,
     log: Logger,

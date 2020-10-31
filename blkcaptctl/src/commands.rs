@@ -23,7 +23,7 @@ use libblkcapt::{
     model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
 };
 use log::*;
-use std::{num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use std::{num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc, time::Duration, convert::TryInto};
 use uuid::Uuid;
 
 use crate::ui::{
@@ -340,7 +340,7 @@ pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
     };
 
     if let Some(f) = options.snapshot_frequency {
-        dataset.snapshot_schedule = Some(*f);
+        dataset.snapshot_schedule = Some((*f).try_into().expect("FIXME"));
     }
 
     if options.pause_snapshotting || options.resume_snapshotting {

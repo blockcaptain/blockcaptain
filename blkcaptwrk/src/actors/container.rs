@@ -1,20 +1,11 @@
 use super::{observation::observable_func, pool::PoolActor};
-use crate::{
-    actorbase::unhandled_result,
-    snapshots::{prune_snapshots, PruneMessage},
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
-};
+use crate::{actorbase::{schedule_next_message, unhandled_result}, snapshots::{prune_snapshots, PruneMessage}, xactorext::{BcActor, BcActorCtrl, BcHandler}};
 use anyhow::Result;
+use cron::Schedule;
 use futures_util::future::ready;
-use libblkcapt::{
-    core::localsndrcv::SnapshotReceiver,
-    core::retention::evaluate_retention,
-    core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsContainerSnapshotHandle, BtrfsPool},
-    model::entities::{BtrfsContainerEntity, ObservableEvent},
-    model::Entity,
-};
+use libblkcapt::{model::entities::FeatureState, core::localsndrcv::SnapshotReceiver, core::retention::evaluate_retention, core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsContainerSnapshotHandle, BtrfsPool}, model::Entity, model::entities::{BtrfsContainerEntity, ObservableEvent}};
 use slog::{o, trace, Logger};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, convert::TryInto};
 use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler};
 
@@ -22,6 +13,7 @@ pub struct ContainerActor {
     pool: Addr<BcActor<PoolActor>>,
     container: Arc<BtrfsContainer>,
     snapshots: HashMap<Uuid, Vec<BtrfsContainerSnapshot>>,
+    prune_schedule: Option<Schedule>,
 }
 
 #[message(result = "ContainerSnapshotsResponse")]
@@ -58,22 +50,40 @@ impl ContainerActor {
                             .map(|&source_id| container.snapshots(source_id).map(|snapshots| (source_id, snapshots)))
                             .collect::<Result<_>>()?,
                         container,
+                        prune_schedule: None,
                     },
                     &log.new(o!("container_id" => id.to_string())),
                 ))
             })
     }
+
+    fn schedule_next_prune(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
+        schedule_next_message(self.prune_schedule.as_ref(), "prune", PruneMessage(), log, ctx);
+    }
 }
 
 #[async_trait::async_trait]
 impl BcActorCtrl for ContainerActor {
-    async fn started(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         trace!(
             log,
             "Starting container with {} snapshots from {} datasets.",
             self.snapshots.values().fold(0, |acc, v| acc + v.len()),
             self.snapshots.len()
         );
+
+        if self.container.model().pruning_state() == FeatureState::Enabled {
+            self.prune_schedule = self
+                .container
+                .model()
+                .snapshot_retention
+                .as_ref()
+                .map(|r| &r.evaluation_schedule)
+                .map_or(Ok(None), |s| s.try_into().map(Some))?;
+
+            self.schedule_next_prune(log, ctx);
+        }
+
         Ok(())
     }
 

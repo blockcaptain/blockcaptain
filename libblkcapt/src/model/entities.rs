@@ -149,6 +149,24 @@ impl TryFrom<&ScheduleModel> for Schedule {
     }
 }
 
+impl TryFrom<&Duration> for ScheduleModel {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &Duration) -> Result<Self, Self::Error> {
+        let duration = chrono::Duration::from_std(*value);
+        // todo
+        Ok(ScheduleModel(format!("0 0 * * * * *")))
+    }
+}
+
+impl TryFrom<Duration> for ScheduleModel {
+    type Error = anyhow::Error;
+
+    fn try_from(value: Duration) -> Result<Self, Self::Error> {
+        Self::try_from(&value)
+    }
+}
+
 impl BtrfsDatasetEntity {
     pub fn new(name: String, subvolume_path: FsPathBuf, subvolume_uuid: Uuid) -> Result<Self> {
         Ok(Self {
@@ -295,7 +313,7 @@ impl Default for RetentionRuleset {
         Self {
             interval: Default::default(),
             newest_count: NonZeroU32::new(1).unwrap(),
-            evaluation_schedule: ScheduleModel(String::from("FIXME")),
+            evaluation_schedule: ScheduleModel::try_from(Duration::from_secs(3600 * 24)).unwrap(),
         }
     }
 }

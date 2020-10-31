@@ -1,7 +1,5 @@
 use super::{observation::observable_func, pool::PoolActor};
-use crate::{
-    actorbase::unhandled_error, snapshots::prune_snapshots, snapshots::PruneMessage, xactorext::ActorContextExt,
-};
+use crate::{actorbase::unhandled_error, snapshots::PruneMessage, snapshots::prune_snapshots, xactorext::ActorContextExt, actorbase::schedule_next_message};
 use crate::{
     actorbase::unhandled_result,
     xactorext::{BcActor, BcActorCtrl, BcHandler},
@@ -76,46 +74,11 @@ impl DatasetActor {
     }
 
     fn schedule_next_snapshot(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
-        if let Some(schedule) = &self.snapshot_schedule {
-            if let Some(delay) = schedule_next_delay(Utc::now(), "snapshot", schedule, log) {
-                ctx.send_later(SnapshotMessage(), delay);
-            }
-        } else {
-            panic!("schedule_next_snapshot called when no schedule was configured")
-        }
+        schedule_next_message(self.snapshot_schedule.as_ref(), "snapshot", SnapshotMessage(), log, ctx);
     }
 
     fn schedule_next_prune(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
-        if let Some(schedule) = &self.prune_schedule {
-            if let Some(delay) = schedule_next_delay(Utc::now(), "prune", schedule, log) {
-                ctx.send_later(PruneMessage(), delay);
-            }
-        } else {
-            panic!("schedule_next_prune called when no schedule was configured")
-        }
-    }
-}
-
-fn schedule_next_delay(after: DateTime<Utc>, what: &str, schedule: &Schedule, log: &Logger) -> Option<Duration> {
-    match schedule.after(&after).next() {
-        Some(next_datetime) => {
-            let delay_to_next = (next_datetime - after)
-                .to_std()
-                .expect("time to next schedule can always fit in std duration");
-
-            debug!(
-                log,
-                "next {} scheduled at {} (in {})",
-                what,
-                next_datetime,
-                humantime::Duration::from(delay_to_next)
-            );
-            Some(delay_to_next)
-        }
-        None => {
-            debug!(log, "no next {} in schedule", what);
-            None
-        }
+        schedule_next_message(self.prune_schedule.as_ref(), "prune", PruneMessage(), log, ctx);
     }
 }
 

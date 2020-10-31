@@ -8,6 +8,7 @@ use crate::{
 };
 use anyhow::{Context as AnyhowContext, Result};
 use chrono::{DateTime, Local, Timelike, Utc};
+use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
     core::localsndrcv::SnapshotSender,
@@ -21,8 +22,8 @@ use libblkcapt::{
     model::Entity,
 };
 use slog::{debug, error, info, o, trace, Logger};
-use std::sync::Arc;
 use std::time::Duration;
+use std::{convert::TryInto, sync::Arc};
 use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler};
 
@@ -30,6 +31,8 @@ pub struct DatasetActor {
     pool: Addr<BcActor<PoolActor>>,
     dataset: Arc<BtrfsDataset>,
     snapshots: Vec<BtrfsDatasetSnapshot>,
+    snapshot_schedule: Option<Schedule>,
+    prune_schedule: Option<Schedule>,
 }
 
 #[message()]
@@ -50,25 +53,6 @@ pub struct GetSnapshotSenderMessage {
     pub parent_snapshot_uuid: Option<Uuid>,
 }
 
-// #[message()]
-// pub struct ConfigureSendSnapshotMessage {
-//     pub config: SnapshotSyncEntity,
-//     pub container_pool: Addr<PoolActor>,
-// }
-
-// #[message()]
-// #[derive(Clone)]
-// struct SendSnapshotMessage(Arc<ConfigureSendSnapshotMessage>);
-
-// #[message()]
-// struct SendSnapshotCompleteMessage();
-
-// #[message(result = "Option<DateTime<Utc>>")]
-// struct GetLatestSnapshot {
-//     dataset_id: Uuid,
-//     container_id: Uuid,
-// }
-
 impl DatasetActor {
     pub fn new(
         pool_actor: Addr<BcActor<PoolActor>>,
@@ -83,42 +67,55 @@ impl DatasetActor {
                     pool: pool_actor,
                     snapshots: dataset.snapshots()?,
                     dataset,
+                    snapshot_schedule: None,
+                    prune_schedule: None,
                 },
                 &log.new(o!("dataset_id" => id.to_string())),
             ))
         })
     }
 
-    fn next_scheduled_snapshot(&self, frequency: Duration, log: &Logger) -> Duration {
-        let latest = self.snapshots.last();
-        if let Some(latest_snapshot) = latest {
-            trace!(
-                log,
-                "Existing snapshot for {} at {}.",
-                self.dataset,
-                latest_snapshot.datetime()
-            );
-            let now = chrono::Utc::now();
-            let next_datetime = latest_snapshot.datetime() + chrono::Duration::from_std(frequency).unwrap();
-            if now < next_datetime {
-                return (next_datetime - now).to_std().unwrap();
+    fn schedule_next_snapshot(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
+        if let Some(schedule) = &self.snapshot_schedule {
+            if let Some(delay) = schedule_next_delay(Utc::now(), "snapshot", schedule, log) {
+                ctx.send_later(SnapshotMessage(), delay);
             }
         } else {
-            trace!(log, "No existing snapshot for {}.", self.dataset);
+            panic!("schedule_next_snapshot called when no schedule was configured")
         }
-        Duration::from_secs(0)
     }
 
-    fn next_scheduled_prune() -> Duration {
-        const WORK_HOUR: u32 = 2;
-        let now = Local::now();
-        let next = match now.hour() {
-            hour if hour < WORK_HOUR => now.date(),
-            _ => now.date() + chrono::Duration::days(1),
-        };
-        let next = next.and_hms(WORK_HOUR, 0, 0);
+    fn schedule_next_prune(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
+        if let Some(schedule) = &self.prune_schedule {
+            if let Some(delay) = schedule_next_delay(Utc::now(), "prune", schedule, log) {
+                ctx.send_later(PruneMessage(), delay);
+            }
+        } else {
+            panic!("schedule_next_prune called when no schedule was configured")
+        }
+    }
+}
 
-        (next - now).to_std().unwrap()
+fn schedule_next_delay(after: DateTime<Utc>, what: &str, schedule: &Schedule, log: &Logger) -> Option<Duration> {
+    match schedule.after(&after).next() {
+        Some(next_datetime) => {
+            let delay_to_next = (next_datetime - after)
+                .to_std()
+                .expect("time to next schedule can always fit in std duration");
+
+            debug!(
+                log,
+                "next {} scheduled at {} (in {})",
+                what,
+                next_datetime,
+                humantime::Duration::from(delay_to_next)
+            );
+            Some(delay_to_next)
+        }
+        None => {
+            debug!(log, "no next {} in schedule", what);
+            None
+        }
     }
 }
 
@@ -126,39 +123,26 @@ impl DatasetActor {
 impl BcActorCtrl for DatasetActor {
     async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         if self.dataset.model().snapshotting_state() == FeatureState::Enabled {
-            let frequency = self
+            self.snapshot_schedule = self
                 .dataset
                 .model()
-                .snapshot_frequency
-                .expect("INVARIANT: Frequency must exist for snapshotting to be enabled.");
-            let delay_next = self.next_scheduled_snapshot(frequency, log);
-            debug!(
-                log,
-                "First snapshot for {} in {}.",
-                self.dataset,
-                humantime::Duration::from(delay_next)
-            );
-            ctx.send_interval_later(SnapshotMessage(), frequency, delay_next);
+                .snapshot_schedule
+                .as_ref()
+                .map_or(Ok(None), |s| s.try_into().map(Some))?;
+
+            self.schedule_next_snapshot(log, ctx);
         }
 
         if self.dataset.model().pruning_state() == FeatureState::Enabled {
-            let delay_next = Self::next_scheduled_prune();
-            debug!(
-                log,
-                "First prune for {} in {}.",
-                self.dataset,
-                humantime::Duration::from(delay_next)
-            );
-            ctx.send_interval_later(
-                PruneMessage(),
-                self.dataset
-                    .model()
-                    .snapshot_retention
-                    .as_ref()
-                    .expect("INVARIANT: Retention must exist for pruning to be enabled.")
-                    .evaluation_frequency,
-                delay_next,
-            );
+            self.prune_schedule = self
+                .dataset
+                .model()
+                .snapshot_retention
+                .as_ref()
+                .map(|r| &r.evaluation_schedule)
+                .map_or(Ok(None), |s| s.try_into().map(Some))?;
+
+            self.schedule_next_prune(log, ctx);
         }
 
         Ok(())
@@ -293,25 +277,5 @@ impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
 //         self.queued_syncs.extend(ready_snapsots);
 
 //         self.process_send_queue();
-//     }
-// }
-
-// #[async_trait::async_trait]
-// impl BcHandler<SendSnapshotCompleteMessage> for PoolActor {
-//     async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: SendSnapshotCompleteMessage) {
-//         trace!("Pool actor send complete message.");
-//         self.active_sync = None;
-//         self.process_send_queue();
-//     }
-// }
-
-// #[async_trait::async_trait]
-// impl BcHandler<GetLatestSnapshot> for PoolActor {
-//     async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetLatestSnapshot) -> Option<DateTime<Utc>> {
-//         trace!("Pool actor send message.");
-//         let container = self.container(msg.container_id).expect("FIXME");
-
-//         let container_snapshots = container.snapshots(msg.dataset_id).expect("FIXME");
-//         container_snapshots.last().map(|s| s.datetime())
 //     }
 // }

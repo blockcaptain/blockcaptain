@@ -28,6 +28,7 @@ hyper-timeout = "0.3"
 tokio = { version = "0.2", features = ["full"] }
 slog = { version = "2.5.2", features = ["max_level_trace", "release_max_level_warn"] }
 slog-scope = "4.3.0"
+cron = "0.6.1"
 
 [dev-dependencies]
 mockall = "0.7"

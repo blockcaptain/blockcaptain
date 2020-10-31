@@ -340,7 +340,7 @@ pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
     };
 
     if let Some(f) = options.snapshot_frequency {
-        dataset.snapshot_frequency = Some(*f);
+        dataset.snapshot_schedule = Some(*f);
     }
 
     if options.pause_snapshotting || options.resume_snapshotting {

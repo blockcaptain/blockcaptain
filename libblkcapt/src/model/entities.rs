@@ -1,8 +1,9 @@
 use super::{Entity, EntityType};
 use crate::sys::fs::FsPathBuf;
 use anyhow::{anyhow, Result};
+use cron::Schedule;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{convert::TryFrom, path::PathBuf, str::FromStr};
 use std::{default::Default, num::NonZeroU32, time::Duration};
 use strum_macros::Display;
 use strum_macros::EnumString;
@@ -110,8 +111,7 @@ pub struct BtrfsDatasetEntity {
     name: String,
     pub path: FsPathBuf,
     pub uuid: Uuid,
-    #[serde(with = "humantime_serde")]
-    pub snapshot_frequency: Option<Duration>,
+    pub snapshot_schedule: Option<ScheduleModel>,
     pub pause_snapshotting: bool,
     pub snapshot_retention: Option<RetentionRuleset>,
     pub pause_pruning: bool,
@@ -138,6 +138,17 @@ impl Entity for BtrfsDatasetEntity {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ScheduleModel(String);
+
+impl TryFrom<&ScheduleModel> for Schedule {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &ScheduleModel) -> Result<Self, Self::Error> {
+        Schedule::from_str(&value.0).map_err(|e| anyhow!(e.to_string()))
+    }
+}
+
 impl BtrfsDatasetEntity {
     pub fn new(name: String, subvolume_path: FsPathBuf, subvolume_uuid: Uuid) -> Result<Self> {
         Ok(Self {
@@ -145,7 +156,7 @@ impl BtrfsDatasetEntity {
             name,
             path: subvolume_path,
             uuid: subvolume_uuid,
-            snapshot_frequency: None,
+            snapshot_schedule: None,
             snapshot_retention: None,
             pause_pruning: false,
             pause_snapshotting: false,
@@ -153,7 +164,7 @@ impl BtrfsDatasetEntity {
     }
 
     pub fn snapshotting_state(&self) -> FeatureState {
-        if self.snapshot_frequency.is_some() {
+        if self.snapshot_schedule.is_some() {
             if self.pause_snapshotting {
                 FeatureState::Paused
             } else {
@@ -245,9 +256,10 @@ pub struct SnapshotSyncEntity {
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum SnapshotSyncMode {
-    SyncAll,
-    SyncLatest,
-    SyncImmediate,
+    AllScheduled,
+    LatestScheduled,
+    AllImmediate,
+    LatestImmediate,
 }
 
 impl SnapshotSyncEntity {
@@ -275,8 +287,7 @@ impl Entity for SnapshotSyncEntity {
 pub struct RetentionRuleset {
     pub interval: Vec<IntervalSpec>,
     pub newest_count: NonZeroU32,
-    #[serde(with = "humantime_serde")]
-    pub evaluation_frequency: Duration,
+    pub evaluation_schedule: ScheduleModel,
 }
 
 impl Default for RetentionRuleset {
@@ -284,7 +295,7 @@ impl Default for RetentionRuleset {
         Self {
             interval: Default::default(),
             newest_count: NonZeroU32::new(1).unwrap(),
-            evaluation_frequency: Duration::from_secs(3600 * 24),
+            evaluation_schedule: ScheduleModel(String::from("FIXME")),
         }
     }
 }

@@ -53,8 +53,9 @@ impl SyncActor {
                 dataset,
                 container,
                 state_mode: match model.sync_mode {
-                    SnapshotSyncMode::SyncLatest => ModeState::SendLatest(VecDeque::<_>::default()),
-                    SnapshotSyncMode::SyncAll | SnapshotSyncMode::SyncImmediate => ModeState::SendAll(None),
+                    SnapshotSyncMode::LatestScheduled => ModeState::SendLatest(VecDeque::<_>::default()),
+                    SnapshotSyncMode::AllScheduled | SnapshotSyncMode::AllImmediate => ModeState::SendAll(None),
+                    SnapshotSyncMode::LatestImmediate => todo!(),
                 },
                 state_active_send: None,
                 model,
@@ -130,7 +131,7 @@ impl SyncActor {
 #[async_trait::async_trait]
 impl BcActorCtrl for SyncActor {
     async fn started(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
-        if self.model.sync_mode == SnapshotSyncMode::SyncImmediate {
+        if self.model.sync_mode == SnapshotSyncMode::AllImmediate {
             ctx.subscribe::<ObservableEventMessage>().await?;
         }
         ctx.send_later(StartSnapshotSyncCycleMessage(), Duration::from_secs(3)); // TEMPORARY
@@ -138,7 +139,7 @@ impl BcActorCtrl for SyncActor {
     }
 
     async fn stopped(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) {
-        if self.model.sync_mode == SnapshotSyncMode::SyncImmediate {
+        if self.model.sync_mode == SnapshotSyncMode::AllImmediate {
             ctx.unsubscribe::<ObservableEventMessage>().await.expect("FIXME");
         }
     }

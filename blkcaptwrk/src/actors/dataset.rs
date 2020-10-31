@@ -1,5 +1,7 @@
 use super::{observation::observable_func, pool::PoolActor};
-use crate::{actorbase::unhandled_error, xactorext::ActorContextExt};
+use crate::{
+    actorbase::unhandled_error, snapshots::prune_snapshots, snapshots::PruneMessage, xactorext::ActorContextExt,
+};
 use crate::{
     actorbase::unhandled_result,
     xactorext::{BcActor, BcActorCtrl, BcHandler},
@@ -33,10 +35,6 @@ pub struct DatasetActor {
 #[message()]
 #[derive(Clone)]
 struct SnapshotMessage();
-
-#[message()]
-#[derive(Clone)]
-struct PruneMessage();
 
 #[message(result = "DatasetSnapshotsResponse")]
 pub struct GetDatasetSnapshotsMessage();
@@ -196,7 +194,7 @@ impl BcHandler<PruneMessage> for DatasetActor {
             .model()
             .snapshot_retention
             .as_ref()
-            .expect("INVARIANT: Retention exist based on message scheduling in started.");
+            .expect("retention exist based on message scheduling in started");
 
         let result = observable_func(self.dataset.model().id(), ObservableEvent::DatasetPrune, || {
             let result = self
@@ -251,26 +249,6 @@ impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
         };
         Ok(send_snapshot.send(parent_snapshot))
     }
-}
-
-fn prune_snapshots<T: BtrfsSnapshot>(evaluation: RetentionEvaluation<T>, log: &Logger) -> Result<()> {
-    for snapshot in evaluation.keep_interval_buckets.iter().flat_map(|b| b.snapshots.iter()) {
-        trace!(log, "Keeping snapshot {} reason: in retention interval.", snapshot);
-    }
-
-    for snapshot in evaluation.keep_minimum_snapshots.iter() {
-        trace!(log, "Keeping snapshot {} reason: keep minimum newest.", snapshot);
-    }
-
-    for snapshot in evaluation.drop_snapshots {
-        info!(
-            log,
-            "Snapshot {} is being pruned because it did not meet any retention criteria.", snapshot
-        );
-        snapshot.delete()?;
-    }
-
-    Ok(())
 }
 
 // #[async_trait::async_trait]

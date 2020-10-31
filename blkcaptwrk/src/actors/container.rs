@@ -1,13 +1,16 @@
-use super::pool::PoolActor;
+use super::{observation::observable_func, pool::PoolActor};
 use crate::{
     actorbase::unhandled_result,
+    snapshots::{prune_snapshots, PruneMessage},
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
 use anyhow::Result;
+use futures_util::future::ready;
 use libblkcapt::{
     core::localsndrcv::SnapshotReceiver,
+    core::retention::evaluate_retention,
     core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsContainerSnapshotHandle, BtrfsPool},
-    model::entities::BtrfsContainerEntity,
+    model::entities::{BtrfsContainerEntity, ObservableEvent},
     model::Entity,
 };
 use slog::{o, trace, Logger};
@@ -106,24 +109,32 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
     }
 }
 
-// else if let Ok(container) = self.container(msg.dataset_or_container_id) {
-//     let rules = container
-//         .model()
-//         .snapshot_retention
-//         .as_ref()
-//         .expect("Exists based on actor start.");
-//     observable_func(container.model().id(), ObservableEvent::ContainerPrune, move || {
-//         let result = container.source_dataset_ids().and_then(|ids| {
-//             ids.iter()
-//                 .map(|id| {
-//                     trace!("Running prune for dataset id {} in container {}.", id, container);
-//                     container
-//                         .snapshots(*id)
-//                         .and_then(|snapshots| evaluate_retention(snapshots, rules))
-//                         .and_then(prune_snapshots)
-//                 })
-//                 .collect::<Result<()>>()
-//         });
-//         ready(result)
-//     })
-//     .await
+#[async_trait::async_trait]
+impl BcHandler<PruneMessage> for ContainerActor {
+    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: PruneMessage) {
+        let rules = self
+            .container
+            .model()
+            .snapshot_retention
+            .as_ref()
+            .expect("retention exist based on message scheduling in started");
+
+        let result = observable_func(self.container.model().id(), ObservableEvent::ContainerPrune, || {
+            let result = self.container.source_dataset_ids().and_then(|ids| {
+                ids.iter()
+                    .map(|id| {
+                        trace!(log, "prune container"; "dataset_id" => %id);
+                        self.container
+                            .snapshots(*id)
+                            .and_then(|snapshots| evaluate_retention(snapshots, rules))
+                            .and_then(|eval| prune_snapshots(eval, &log))
+                    })
+                    .collect::<Result<()>>()
+            });
+            ready(result)
+        })
+        .await;
+
+        unhandled_result(log, result);
+    }
+}

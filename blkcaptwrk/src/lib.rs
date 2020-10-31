@@ -9,4 +9,5 @@ pub mod actors {
 }
 mod actorbase;
 pub mod slogext;
+mod snapshots;
 mod xactorext;

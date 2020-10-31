@@ -149,6 +149,7 @@ impl StartedSnapshotReceiver {
     }
 }
 
+// change this back and wrap these up in actor owned classes.
 pub struct FinishedSnapshotReceiver {
     pub received_snapshot: BtrfsContainerSnapshot,
 }

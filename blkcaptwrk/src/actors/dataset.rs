@@ -1,5 +1,9 @@
 use super::{observation::observable_func, pool::PoolActor};
-use crate::xactorext::ActorContextExt;
+use crate::{actorbase::unhandled_error, xactorext::ActorContextExt};
+use crate::{
+    actorbase::unhandled_result,
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
 use anyhow::{Context as AnyhowContext, Result};
 use chrono::{DateTime, Local, Timelike, Utc};
 use futures_util::future::ready;
@@ -19,10 +23,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler};
-use crate::{
-    actorbase::unhandled_result,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
-};
 
 pub struct DatasetActor {
     pool: Addr<BcActor<PoolActor>>,
@@ -80,11 +80,14 @@ impl DatasetActor {
     ) -> Result<BcActor<DatasetActor>> {
         let id = model.id();
         BtrfsDataset::validate(pool, model).map(Arc::new).and_then(|dataset| {
-            Ok(BcActor::new(DatasetActor {
-                pool: pool_actor,
-                snapshots: dataset.snapshots()?,
-                dataset,
-            }, &log.new(o!("dataset_id" => id.to_string()))))
+            Ok(BcActor::new(
+                DatasetActor {
+                    pool: pool_actor,
+                    snapshots: dataset.snapshots()?,
+                    dataset,
+                },
+                &log.new(o!("dataset_id" => id.to_string())),
+            ))
         })
     }
 
@@ -163,20 +166,24 @@ impl BcActorCtrl for DatasetActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
-    }
+    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {}
 }
 
 #[async_trait::async_trait]
 impl BcHandler<SnapshotMessage> for DatasetActor {
     async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: SnapshotMessage) {
-        trace!(log, "Dataset actor snapshot message.");
         let result = observable_func(self.dataset.model().id(), ObservableEvent::DatasetSnapshot, || {
             ready(self.dataset.create_local_snapshot())
         })
         .await;
-        if let Err(e) = result {
-            error!(log, "Failed to create snapshot: {}", e);
+        match result {
+            Ok(snapshot) => {
+                info!(log, "snapshot created"; "time" => %snapshot.datetime());
+                self.snapshots.push(snapshot);
+            }
+            Err(e) => {
+                unhandled_error(log, e);
+            }
         }
     }
 }
@@ -207,7 +214,12 @@ impl BcHandler<PruneMessage> for DatasetActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetDatasetSnapshotsMessage> for DatasetActor {
-    async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetDatasetSnapshotsMessage) -> DatasetSnapshotsResponse {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetDatasetSnapshotsMessage,
+    ) -> DatasetSnapshotsResponse {
         DatasetSnapshotsResponse {
             dataset: self.dataset.as_ref().into(),
             snapshots: self.snapshots.iter().map(|s| s.into()).collect(),
@@ -217,7 +229,12 @@ impl BcHandler<GetDatasetSnapshotsMessage> for DatasetActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
-    async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetSnapshotSenderMessage) -> Result<SnapshotSender> {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        msg: GetSnapshotSenderMessage,
+    ) -> Result<SnapshotSender> {
         let send_snapshot = self
             .snapshots
             .iter()

@@ -1,20 +1,17 @@
 use super::pool::PoolActor;
 use super::{observation::HealthchecksActor, sync::SyncActor};
 use crate::xactorext::{join_all_actors, stop_all_actors, GetChildActorMessage};
+use crate::xactorext::{BcActor, BcActorCtrl};
 use anyhow::{Context as AnyhowContext, Result};
 use futures_util::{
     future::ready,
     stream::{self, FuturesUnordered, StreamExt},
 };
 use libblkcapt::model::{entities::SnapshotSyncEntity, storage, Entities, Entity};
-use slog::{debug, error, o, trace, Logger};
+use slog::{error, trace, Logger};
 use std::{collections::HashMap, mem};
 use uuid::Uuid;
 use xactor::{Actor, Addr, Context};
-use crate::{
-    actorbase::unhandled_result,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
-};
 
 pub struct CaptainActor {
     healthcheck_actors: Vec<Addr<BcActor<HealthchecksActor>>>,
@@ -24,14 +21,22 @@ pub struct CaptainActor {
 
 impl CaptainActor {
     pub fn new(log: &Logger) -> BcActor<Self> {
-        BcActor::new(Self {
-            healthcheck_actors: Default::default(),
-            sync_actors: Default::default(),
-            pool_actors: Default::default(),
-        }, log)
+        BcActor::new(
+            Self {
+                healthcheck_actors: Default::default(),
+                sync_actors: Default::default(),
+                pool_actors: Default::default(),
+            },
+            log,
+        )
     }
 
-    async fn new_sync_actor(&self, entities: &Entities, model: SnapshotSyncEntity, log: &Logger) -> Result<BcActor<SyncActor>> {
+    async fn new_sync_actor(
+        &self,
+        entities: &Entities,
+        model: SnapshotSyncEntity,
+        log: &Logger,
+    ) -> Result<BcActor<SyncActor>> {
         let dataset_pool_id = entities
             .dataset(model.dataset_id())
             .map(|p| p.parent.id())

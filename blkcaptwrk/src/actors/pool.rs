@@ -14,11 +14,11 @@ use xactor::{message, Actor, Addr, Context, Handler};
 
 use super::{container::ContainerActor, dataset::DatasetActor};
 use crate::xactorext::GetChildActorMessage;
-use futures_util::stream::StreamExt;
 use crate::{
     actorbase::unhandled_result,
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
+use futures_util::stream::StreamExt;
 
 pub struct PoolActor {
     pool: PoolState,
@@ -38,12 +38,15 @@ struct ScrubMessage();
 
 impl PoolActor {
     pub fn new(model: BtrfsPoolEntity, log: &Logger) -> BcActor<Self> {
-        BcActor::new(Self {
-            log: log.new(o!("actor" => "pool", "pool_id" => model.id().to_string())),
-            pool: PoolState::Pending(model),
-            datasets: HashMap::<_, _>::default(),
-            containers: HashMap::<_, _>::default(),
-        }, log)
+        BcActor::new(
+            Self {
+                log: log.new(o!("actor" => "pool", "pool_id" => model.id().to_string())),
+                pool: PoolState::Pending(model),
+                datasets: HashMap::<_, _>::default(),
+                containers: HashMap::<_, _>::default(),
+            },
+            log,
+        )
     }
 
     fn pool(&self) -> &Arc<BtrfsPool> {
@@ -88,8 +91,6 @@ impl PoolActor {
 #[async_trait::async_trait]
 impl BcActorCtrl for PoolActor {
     async fn started(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
-        debug!(self.log, "starting");
-
         if let PoolState::Pending(model) = &self.pool {
             self.pool = PoolState::Started(BtrfsPool::validate(model.clone()).map(Arc::new)?);
         } else {
@@ -101,7 +102,12 @@ impl BcActorCtrl for PoolActor {
             .model()
             .datasets
             .iter()
-            .map(|m| (m.id(), DatasetActor::new(ctx.address(), self.pool(), m.clone(), &self.log)))
+            .map(|m| {
+                (
+                    m.id(),
+                    DatasetActor::new(ctx.address(), self.pool(), m.clone(), &self.log),
+                )
+            })
             .filter_map(|(id, actor)| match actor {
                 Ok(dataset_actor) => Some((id, dataset_actor)),
                 Err(error) => {
@@ -132,7 +138,12 @@ impl BcActorCtrl for PoolActor {
             .model()
             .containers
             .iter()
-            .map(|m| (m.id(), ContainerActor::new(ctx.address(), self.pool(), m.clone(), &self.log)))
+            .map(|m| {
+                (
+                    m.id(),
+                    ContainerActor::new(ctx.address(), self.pool(), m.clone(), &self.log),
+                )
+            })
             .filter_map(|(id, actor)| match actor {
                 Ok(container_actor) => Some((id, container_actor)),
                 Err(error) => {
@@ -159,14 +170,10 @@ impl BcActorCtrl for PoolActor {
 
         // init scrubbing here
         // trace!("pool scrub {}", self.pool());
-
-        debug!(self.log, "started");
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
-        debug!(self.log, "stopped");
-    }
+    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {}
 }
 
 #[async_trait::async_trait]

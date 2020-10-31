@@ -1,4 +1,8 @@
 use super::pool::PoolActor;
+use crate::{
+    actorbase::unhandled_result,
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
 use anyhow::Result;
 use libblkcapt::{
     core::localsndrcv::SnapshotReceiver,
@@ -6,14 +10,10 @@ use libblkcapt::{
     model::entities::BtrfsContainerEntity,
     model::Entity,
 };
+use slog::{o, trace, Logger};
 use std::{collections::HashMap, sync::Arc};
 use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler};
-use crate::{
-    actorbase::unhandled_result,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
-};
-use slog::{Logger, trace};
 
 pub struct ContainerActor {
     pool: Addr<BcActor<PoolActor>>,
@@ -36,19 +36,28 @@ pub struct GetSnapshotReceiverMessage {
 }
 
 impl ContainerActor {
-    pub fn new(pool_actor: Addr<BcActor<PoolActor>>, pool: &Arc<BtrfsPool>, model: BtrfsContainerEntity, log: &Logger) -> Result<BcActor<Self>> {
+    pub fn new(
+        pool_actor: Addr<BcActor<PoolActor>>,
+        pool: &Arc<BtrfsPool>,
+        model: BtrfsContainerEntity,
+        log: &Logger,
+    ) -> Result<BcActor<Self>> {
+        let id = model.id();
         BtrfsContainer::validate(pool, model)
             .map(Arc::new)
             .and_then(|container| {
                 let source_ids = container.source_dataset_ids()?;
-                Ok(BcActor::new(Self {
-                    pool: pool_actor,
-                    snapshots: source_ids
-                        .iter()
-                        .map(|&source_id| container.snapshots(source_id).map(|snapshots| (source_id, snapshots)))
-                        .collect::<Result<_>>()?,
-                    container,
-                }, log))
+                Ok(BcActor::new(
+                    Self {
+                        pool: pool_actor,
+                        snapshots: source_ids
+                            .iter()
+                            .map(|&source_id| container.snapshots(source_id).map(|snapshots| (source_id, snapshots)))
+                            .collect::<Result<_>>()?,
+                        container,
+                    },
+                    &log.new(o!("container_id" => id.to_string())),
+                ))
             })
     }
 }
@@ -56,7 +65,8 @@ impl ContainerActor {
 #[async_trait::async_trait]
 impl BcActorCtrl for ContainerActor {
     async fn started(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> Result<()> {
-        trace!(log,
+        trace!(
+            log,
             "Starting container with {} snapshots from {} datasets.",
             self.snapshots.values().fold(0, |acc, v| acc + v.len()),
             self.snapshots.len()
@@ -86,7 +96,12 @@ impl BcHandler<GetContainerSnapshotsMessage> for ContainerActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
-    async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetSnapshotReceiverMessage) -> Result<SnapshotReceiver> {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        msg: GetSnapshotReceiverMessage,
+    ) -> Result<SnapshotReceiver> {
         Ok(self.container.receive(msg.source_dataset_id))
     }
 }

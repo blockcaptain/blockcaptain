@@ -1,8 +1,6 @@
-use std::collections::HashSet;
-
-use chrono::{DateTime, Utc};
-
 use super::{BtrfsContainerSnapshotHandle, BtrfsDatasetSnapshotHandle};
+use chrono::{DateTime, Utc};
+use std::collections::HashSet;
 
 pub fn find_ready<'a>(
     dataset_snapshots: &'a [BtrfsDatasetSnapshotHandle],
@@ -10,7 +8,6 @@ pub fn find_ready<'a>(
     find_mode: FindMode,
 ) -> Option<&'a BtrfsDatasetSnapshotHandle> {
     if dataset_snapshots.is_empty() {
-        slog_scope::trace!("No snapshots in the dataset.");
         return None;
     }
 
@@ -27,7 +24,6 @@ pub fn find_ready<'a>(
     };
 
     if to_send.is_empty() {
-        slog_scope::trace!("No new snapshots are ready to send.");
         return None;
     }
 
@@ -50,12 +46,10 @@ pub fn find_parent<'a>(
     container_snapshots: &[BtrfsContainerSnapshotHandle],
 ) -> Option<&'a BtrfsDatasetSnapshotHandle> {
     if dataset_snapshots.is_empty() {
-        slog_scope::trace!("No snapshots in the dataset.");
         return None;
     }
 
     if container_snapshots.is_empty() {
-        slog_scope::trace!("No snapshots in the container.");
         return None;
     }
 

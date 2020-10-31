@@ -1,4 +1,7 @@
-use std::mem;
+use crate::{
+    actorbase::unhandled_result,
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
 use anyhow::{bail, Result};
 use bytes::BytesMut;
 use libblkcapt::{
@@ -8,16 +11,13 @@ use libblkcapt::{
     core::{localsndrcv::FinishedSnapshotReceiver, sync::find_ready},
     model::entities::{SnapshotSyncEntity, SnapshotSyncMode},
 };
+use slog::Logger;
+use std::mem;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     task::JoinHandle,
 };
 use xactor::{message, Actor, Context, Handler, Sender};
-use crate::{
-    actorbase::unhandled_result,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
-};
-use slog::Logger;
 
 pub struct TransferActor {
     state: State,
@@ -33,11 +33,19 @@ enum State {
 }
 
 impl TransferActor {
-    pub fn new(parent: Sender<TransferComplete>, sender: SnapshotSender, receiver: SnapshotReceiver, log: &Logger) -> BcActor<Self> {
-        BcActor::new(Self {
-            state: State::PreStart(sender, receiver),
-            parent,
-        }, log)
+    pub fn new(
+        parent: Sender<TransferComplete>,
+        sender: SnapshotSender,
+        receiver: SnapshotReceiver,
+        log: &Logger,
+    ) -> BcActor<Self> {
+        BcActor::new(
+            Self {
+                state: State::PreStart(sender, receiver),
+                parent,
+            },
+            log,
+        )
     }
 }
 

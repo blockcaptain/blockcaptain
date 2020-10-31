@@ -132,14 +132,20 @@ impl BtrfsDataset {
         Ok(dataset)
     }
 
-    pub fn create_local_snapshot(&self) -> Result<()> {
+    pub fn create_local_snapshot(self: &Arc<Self>) -> Result<BtrfsDatasetSnapshot> {
         let now = Utc::now();
         let snapshot_path = self
             .snapshot_container_path()
             .join(now.format("%FT%H-%M-%SZ").to_string());
         self.pool.filesystem.create_snapshot(&self.subvolume, &snapshot_path)?;
-        // TODO: return the new snapshot.
-        Ok(())
+
+        self.pool.filesystem.subvolume_by_path(&snapshot_path).and_then(|s| {
+            Ok(BtrfsDatasetSnapshot {
+                subvolume: s,
+                datetime: now,
+                dataset: Arc::clone(self),
+            })
+        })
     }
 
     pub fn snapshots(self: &Arc<Self>) -> Result<Vec<BtrfsDatasetSnapshot>> {

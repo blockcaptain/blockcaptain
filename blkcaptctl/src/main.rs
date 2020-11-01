@@ -1,39 +1,14 @@
 use anyhow::Result;
+use blkcaptapp::blkcaptapp_run;
 use clap::{crate_version, Clap};
-use human_panic::setup_panic;
 mod commands;
 mod ui;
 use commands::*;
-use log::*;
 
-#[tokio::main]
-async fn main() {
-    setup_panic!();
-
+fn main() {
     let options: CliOptions = CliOptions::parse();
-    let (blkcapt_level, all_level) = match options.verbose {
-        0 => (LevelFilter::Info, LevelFilter::Info),
-        1 => (LevelFilter::Debug, LevelFilter::Info),
-        2 => (LevelFilter::Trace, LevelFilter::Info),
-        3 => (LevelFilter::Trace, LevelFilter::Debug),
-        _ => (LevelFilter::Trace, LevelFilter::Trace),
-    };
-    pretty_env_logger::formatted_builder()
-        .filter_level(all_level)
-        .filter_module("blkcaptctl", blkcapt_level)
-        .filter_module("libblkcapt", blkcapt_level)
-        .init();
-
-    debug!("Debug verbosity enabled.");
-    trace!("Trace verbosity enabled.");
-
-    let result = command_dispath(options);
-    if let Err(e) = result.await {
-        error!("{}", e);
-        for cause in e.chain().skip(1) {
-            debug!("Caused by: {}", cause);
-        }
-    }
+    let vcount = options.verbose as usize;
+    blkcaptapp_run(|_| command_dispath(options), vcount);
 }
 
 async fn command_dispath(options: CliOptions) -> Result<()> {

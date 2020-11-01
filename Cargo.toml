@@ -1,5 +1,5 @@
 [workspace]
-members = ["blkcaptctl", "blkcaptwrk", "libblkcapt"]
+members = ["blkcaptctl", "blkcaptwrk", "blkcaptapp", "libblkcapt"]
 
 [profile.release]
 opt-level = 1

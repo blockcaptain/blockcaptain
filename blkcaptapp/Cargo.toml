@@ -1,24 +1,18 @@
 [package]
-name = "blkcaptctl"
+name = "blkcaptapp"
 version = "0.1.0"
 authors = ["opensource@rebeagle.com"]
 edition = "2018"
 
 [dependencies]
-libblkcapt = { path = "../libblkcapt" }
-blkcaptapp = { path = "../blkcaptapp" }
-clap = "3.0.0-beta.1"
 anyhow = "1.0.31"
-thiserror = "1.0.20"
 human-panic = "1.0"
-comfy-table = "1.1"
-uuid = { version = "0.8", features = ["serde", "v4"] }
-humantime = "2.0"
-hyper = "0.13"
 tokio = { version = "0.2", features = ["full"] }
-futures-util = "0.3"
+log = { version = "0.4", features = ["std"] }
 slog = { version = "2.5.2", features = ["max_level_trace", "release_max_level_warn"] }
+slog-term = "2.6.0"
+slog-async = "2.5.0"
 slog-scope = "4.3.0"
+slog-atomic = "3.0.0"
 
 [dev-dependencies]
-

@@ -1,5 +1,8 @@
 use super::{observation::observable_func, pool::PoolActor};
-use crate::{actorbase::unhandled_error, snapshots::PruneMessage, snapshots::prune_snapshots, xactorext::ActorContextExt, actorbase::schedule_next_message};
+use crate::{
+    actorbase::schedule_next_message, actorbase::unhandled_error, snapshots::prune_snapshots, snapshots::PruneMessage,
+    xactorext::ActorContextExt,
+};
 use crate::{
     actorbase::unhandled_result,
     xactorext::{BcActor, BcActorCtrl, BcHandler},

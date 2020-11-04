@@ -23,7 +23,7 @@ use libblkcapt::{
     model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
 };
 use slog_scope::*;
-use std::{num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc, time::Duration, convert::TryInto};
+use std::{convert::TryInto, num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 use uuid::Uuid;
 
 use crate::ui::{

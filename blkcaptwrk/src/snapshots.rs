@@ -26,4 +26,3 @@ pub fn prune_snapshots<T: BtrfsSnapshot>(evaluation: RetentionEvaluation<T>, log
 
     Ok(())
 }
-

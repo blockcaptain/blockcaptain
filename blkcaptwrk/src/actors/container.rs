@@ -1,11 +1,24 @@
 use super::{observation::observable_func, pool::PoolActor};
-use crate::{actorbase::{schedule_next_message, unhandled_result}, snapshots::{prune_snapshots, PruneMessage}, xactorext::{BcActor, BcActorCtrl, BcHandler}};
+use crate::{
+    actorbase::{schedule_next_message, unhandled_result},
+    snapshots::{prune_snapshots, PruneMessage},
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
 use anyhow::Result;
 use cron::Schedule;
 use futures_util::future::ready;
-use libblkcapt::{model::entities::FeatureState, core::localsndrcv::SnapshotReceiver, core::retention::evaluate_retention, core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsContainerSnapshotHandle, BtrfsPool}, model::Entity, model::entities::{BtrfsContainerEntity, ObservableEvent}};
+use libblkcapt::{
+    core::localsndrcv::SnapshotReceiver,
+    core::retention::evaluate_retention,
+    core::{
+        BtrfsContainer, BtrfsContainerSnapshot, BtrfsContainerSnapshotHandle, BtrfsDatasetSnapshotHandle, BtrfsPool,
+    },
+    model::entities::FeatureState,
+    model::entities::{BtrfsContainerEntity, ObservableEvent},
+    model::Entity,
+};
 use slog::{o, trace, Logger};
-use std::{collections::HashMap, sync::Arc, convert::TryInto};
+use std::{collections::HashMap, convert::TryInto, sync::Arc};
 use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler};
 
@@ -28,6 +41,7 @@ pub struct ContainerSnapshotsResponse {
 #[message(result = "Result<SnapshotReceiver>")]
 pub struct GetSnapshotReceiverMessage {
     pub source_dataset_id: Uuid,
+    pub source_snapshot_handle: BtrfsDatasetSnapshotHandle,
 }
 
 impl ContainerActor {
@@ -115,6 +129,13 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
         _ctx: &mut Context<BcActor<Self>>,
         msg: GetSnapshotReceiverMessage,
     ) -> Result<SnapshotReceiver> {
+        if self
+            .container
+            .corresponding_snapshot(msg.source_dataset_id, msg.source_snapshot_handle)
+            .is_ok()
+        {
+            anyhow::bail!("FIXME: already exists")
+        }
         Ok(self.container.receive(msg.source_dataset_id))
     }
 }

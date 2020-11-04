@@ -327,7 +327,7 @@ pub enum BtrfsDatasetState {
     Original,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BtrfsDatasetSnapshotHandle {
     pub datetime: DateTime<Utc>,
     pub uuid: Uuid,
@@ -358,7 +358,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BtrfsDatasetSnapshotState {
     Restored {
         source_snapshot: Uuid,
@@ -442,6 +442,15 @@ impl BtrfsContainer {
             .collect::<Vec<_>>();
         snapshots.sort_unstable_by_key(|s| s.datetime);
         Ok(snapshots)
+    }
+
+    pub fn corresponding_snapshot(
+        self: &Arc<Self>,
+        dataset_id: Uuid,
+        handle: BtrfsDatasetSnapshotHandle,
+    ) -> Result<BtrfsContainerSnapshot> {
+        let name = handle.datetime.format("%FT%H-%M-%SZ.bcrcv").to_string();
+        self.snapshot_by_name(dataset_id, &name)
     }
 
     pub fn snapshot_container_path(&self, dataset_id: Uuid) -> FsPathBuf {

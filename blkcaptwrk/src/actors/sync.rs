@@ -110,6 +110,7 @@ impl SyncActor {
             .container
             .call(GetSnapshotReceiverMessage {
                 source_dataset_id: self.model.dataset_id(),
+                source_snapshot_handle: to_send.clone(),
             })
             .await
             .expect("can call")

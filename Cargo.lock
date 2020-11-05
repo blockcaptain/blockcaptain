@@ -1974,9 +1974,8 @@ dependencies = [
 
 [[package]]
 name = "xactor"
-version = "0.7.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86ef49f231e27f551d72bfba34a0b7e54c28fa84049cdaf5d7ca85e4e23fc8fb"
+version = "0.7.8"
+source = "git+https://github.com/sunli829/xactor?rev=0d2537f647f195ae79c53d2c1107602e054c96d3#0d2537f647f195ae79c53d2c1107602e054c96d3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1991,8 +1990,7 @@ dependencies = [
 [[package]]
 name = "xactor-derive"
 version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce65a6e78fedf06f36b8e7b3154175226fad605971f535062339c05f5caecbed"
+source = "git+https://github.com/sunli829/xactor?rev=0d2537f647f195ae79c53d2c1107602e054c96d3#0d2537f647f195ae79c53d2c1107602e054c96d3"
 dependencies = [
  "proc-macro2",
  "quote",

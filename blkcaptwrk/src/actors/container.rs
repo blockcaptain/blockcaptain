@@ -1,4 +1,8 @@
-use super::{observation::observable_func, pool::PoolActor};
+use super::{
+    localreceiver::{LocalReceiverActor, LocalReceiverFinishedMessage},
+    observation::observable_func,
+    pool::PoolActor,
+};
 use crate::{
     actorbase::{schedule_next_message, unhandled_result},
     snapshots::{prune_snapshots, PruneMessage},
@@ -20,7 +24,7 @@ use libblkcapt::{
 use slog::{o, trace, Logger};
 use std::{collections::HashMap, convert::TryInto, sync::Arc};
 use uuid::Uuid;
-use xactor::{message, Actor, Addr, Context, Handler};
+use xactor::{message, Actor, Addr, Context, Handler, Sender};
 
 pub struct ContainerActor {
     pool: Addr<BcActor<PoolActor>>,
@@ -38,11 +42,16 @@ pub struct ContainerSnapshotsResponse {
     pub snapshots: Vec<BtrfsContainerSnapshotHandle>,
 }
 
-#[message(result = "Result<SnapshotReceiver>")]
+#[message(result = "Result<()>")]
 pub struct GetSnapshotReceiverMessage {
     pub source_dataset_id: Uuid,
     pub source_snapshot_handle: BtrfsDatasetSnapshotHandle,
+    pub target_ready: Sender<ReceiverReadyMessage>,
+    pub target_finished: Sender<LocalReceiverFinishedMessage>,
 }
+
+#[message()]
+pub struct ReceiverReadyMessage(pub Result<Addr<BcActor<LocalReceiverActor>>>);
 
 impl ContainerActor {
     pub fn new(
@@ -125,10 +134,10 @@ impl BcHandler<GetContainerSnapshotsMessage> for ContainerActor {
 impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
     async fn handle(
         &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
+        log: &Logger,
+        ctx: &mut Context<BcActor<Self>>,
         msg: GetSnapshotReceiverMessage,
-    ) -> Result<SnapshotReceiver> {
+    ) -> Result<()> {
         if self
             .container
             .corresponding_snapshot(msg.source_dataset_id, msg.source_snapshot_handle)
@@ -136,8 +145,25 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
         {
             anyhow::bail!("FIXME: already exists")
         }
-        Ok(self.container.receive(msg.source_dataset_id))
+
+        let snapshot_receiver = self.container.receive(msg.source_dataset_id);
+        let started_receiver_actor = LocalReceiverActor::new(
+            ctx.address().sender(),
+            msg.target_finished,
+            snapshot_receiver,
+            &log.new(o!("message" => ())),
+        )
+        .start()
+        .await;
+        msg.target_ready.send(ReceiverReadyMessage(started_receiver_actor));
+
+        Ok(())
     }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<LocalReceiverFinishedMessage> for ContainerActor {
+    async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: LocalReceiverFinishedMessage) {}
 }
 
 #[async_trait::async_trait]

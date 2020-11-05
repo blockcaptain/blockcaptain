@@ -118,7 +118,7 @@ impl StartedSnapshotReceiver {
             .expect("child did not have a handle to stdout")
     }
 
-    pub async fn wait(self) -> Result<FinishedSnapshotReceiver> {
+    pub async fn wait(self) -> Result<BtrfsContainerSnapshot> {
         let exit_code = self.process.await.unwrap();
         if !exit_code.success() {
             bail!("FIXME failed yo, {}.", exit_code);
@@ -145,11 +145,5 @@ impl StartedSnapshotReceiver {
 
         self.receiving_container
             .snapshot_by_name(self.sending_dataset_id, &final_snapshot_name)
-            .map(|received_snapshot| FinishedSnapshotReceiver { received_snapshot })
     }
-}
-
-// change this back and wrap these up in actor owned classes.
-pub struct FinishedSnapshotReceiver {
-    pub received_snapshot: BtrfsContainerSnapshot,
 }

@@ -64,7 +64,7 @@ impl SyncActor {
         )
     }
 
-    async fn run_cycle(&mut self, ctx: &Context<BcActor<Self>>, log: &Logger) -> Result<()> {
+    async fn run_cycle<'a>(&'a mut self, ctx: &Context<BcActor<Self>>, log: &Logger) -> Result<()> {
         let dataset = self.dataset.call(GetDatasetSnapshotsMessage()).await.unwrap();
         let container = self
             .container
@@ -96,33 +96,37 @@ impl SyncActor {
 
         let parent = find_parent(to_send, &dataset.snapshots, &container.snapshots);
 
-        let sender: SnapshotSender = self
-            .dataset
+        let transfer_actor = TransferActor::new(
+            ctx.address().sender::<TransferComplete>(),
+            &log.new(o!("message" => ())),
+        );
+
+        let transfer_actor = transfer_actor.start().await.unwrap();
+        let sender_ready_sender = transfer_actor.sender();
+        let sender_finished_sender = transfer_actor.sender();
+        let receiver_ready_sender = transfer_actor.sender();
+        let receiver_finished_sender = transfer_actor.sender();
+
+        self.dataset
             .call(GetSnapshotSenderMessage {
-                send_snapshot_uuid: to_send.uuid,
-                parent_snapshot_uuid: parent.map(|s| s.uuid),
+                send_snapshot_handle: to_send.clone(),
+                parent_snapshot_handle: parent.cloned(),
+                target_ready: sender_ready_sender,
+                target_finished: sender_finished_sender,
             })
             .await
-            .unwrap()
-            .unwrap();
+            .unwrap()?;
 
-        let receiver: SnapshotReceiver = self
-            .container
+        self.container
             .call(GetSnapshotReceiverMessage {
                 source_dataset_id: self.model.dataset_id(),
                 source_snapshot_handle: to_send.clone(),
+                target_ready: receiver_ready_sender,
+                target_finished: receiver_finished_sender,
             })
             .await
-            .expect("can call")
-            .expect("valid receiver");
+            .unwrap()?;
 
-        let transfer_actor = TransferActor::new(
-            ctx.address().sender::<TransferComplete>(),
-            sender,
-            receiver,
-            &log.new(o!("message" => ())),
-        );
-        let transfer_actor = transfer_actor.start().await.unwrap();
         self.state_active_send = Some(transfer_actor);
 
         Ok(())
@@ -187,12 +191,14 @@ impl BcHandler<StartSnapshotSyncCycleMessage> for SyncActor {
 impl BcHandler<TransferComplete> for SyncActor {
     async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: TransferComplete) {
         self.state_active_send = None;
-        let TransferComplete(finished_receiver) = msg;
-        info!(
-            log,
-            "received: {:?}",
-            finished_receiver.expect("FIXME").received_snapshot
-        );
+        unhandled_result(log, msg.0);
+
+        //let TransferComplete(finished_receiver) = msg;
+        // info!(
+        //     log,
+        //     "received: {:?}",
+        //     finished_receiver.expect("FIXME").received_snapshot
+        // );
 
         let result = self.run_cycle(ctx, log).await;
         unhandled_result(log, result);

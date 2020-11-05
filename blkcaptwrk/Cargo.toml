@@ -14,7 +14,7 @@ tokio = { version = "0.2", features = ["full"] }
 futures-util = "0.3"
 humantime = "2.0"
 async-trait = "0.1"
-xactor = { version = "0.7", features = ["runtime-tokio"], default-features = false }
+xactor = { git = "https://github.com/sunli829/xactor", rev = "0d2537f647f195ae79c53d2c1107602e054c96d3", features = ["runtime-tokio"], default-features = false }
 uuid = { version = "0.8", features = ["serde", "v4"] }
 bytes = "0.5"
 heck = "0.3.1"

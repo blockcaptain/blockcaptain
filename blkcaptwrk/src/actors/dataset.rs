@@ -1,7 +1,10 @@
-use super::{observation::observable_func, pool::PoolActor};
+use super::{
+    localsender::{LocalSenderActor, LocalSenderFinishedMessage},
+    observation::observable_func,
+    pool::PoolActor,
+};
 use crate::{
     actorbase::schedule_next_message, actorbase::unhandled_error, snapshots::prune_snapshots, snapshots::PruneMessage,
-    xactorext::ActorContextExt,
 };
 use crate::{
     actorbase::unhandled_result,
@@ -26,7 +29,7 @@ use slog::{debug, error, info, o, trace, Logger};
 use std::time::Duration;
 use std::{convert::TryInto, sync::Arc};
 use uuid::Uuid;
-use xactor::{message, Actor, Addr, Context, Handler};
+use xactor::{message, Actor, Addr, Context, Handler, Sender};
 
 pub struct DatasetActor {
     pool: Addr<BcActor<PoolActor>>,
@@ -48,11 +51,16 @@ pub struct DatasetSnapshotsResponse {
     pub snapshots: Vec<BtrfsDatasetSnapshotHandle>,
 }
 
-#[message(result = "Result<SnapshotSender>")]
+#[message(result = "Result<()>")]
 pub struct GetSnapshotSenderMessage {
-    pub send_snapshot_uuid: Uuid,
-    pub parent_snapshot_uuid: Option<Uuid>,
+    pub send_snapshot_handle: BtrfsDatasetSnapshotHandle,
+    pub parent_snapshot_handle: Option<BtrfsDatasetSnapshotHandle>,
+    pub target_ready: Sender<SenderReadyMessage>,
+    pub target_finished: Sender<LocalSenderFinishedMessage>,
 }
+
+#[message()]
+pub struct SenderReadyMessage(pub Result<Addr<BcActor<LocalSenderActor>>>);
 
 impl DatasetActor {
     pub fn new(
@@ -179,26 +187,43 @@ impl BcHandler<GetDatasetSnapshotsMessage> for DatasetActor {
 impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
     async fn handle(
         &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
+        log: &Logger,
+        ctx: &mut Context<BcActor<Self>>,
         msg: GetSnapshotSenderMessage,
-    ) -> Result<SnapshotSender> {
+    ) -> Result<()> {
         let send_snapshot = self
             .snapshots
             .iter()
-            .find(|s| s.uuid() == msg.send_snapshot_uuid)
+            .find(|s| s.uuid() == msg.send_snapshot_handle.uuid)
             .context("Snapshot not found.")?;
-        let parent_snapshot = match msg.parent_snapshot_uuid {
-            Some(uuid) => Some(
+        let parent_snapshot = match msg.parent_snapshot_handle {
+            Some(handle) => Some(
                 self.snapshots
                     .iter()
-                    .find(|s| s.uuid() == uuid)
+                    .find(|s| s.uuid() == handle.uuid)
                     .context("Parent not found")?,
             ),
             None => None,
         };
-        Ok(send_snapshot.send(parent_snapshot))
+
+        let snapshot_sender = send_snapshot.send(parent_snapshot);
+        let started_sender_actor = LocalSenderActor::new(
+            ctx.address().sender(),
+            msg.target_finished,
+            snapshot_sender,
+            &log.new(o!("message" => ())),
+        )
+        .start()
+        .await;
+        msg.target_ready.send(SenderReadyMessage(started_sender_actor))?;
+
+        Ok(())
     }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<LocalSenderFinishedMessage> for DatasetActor {
+    async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: LocalSenderFinishedMessage) {}
 }
 
 // #[async_trait::async_trait]

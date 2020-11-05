@@ -181,7 +181,8 @@ impl<'a> slog::Serializer for DedupSerializer<'a> {
             return Ok(());
         }
         self.seen_keys.insert(key.clone());
-        self.inner.emit_unit(key)
+        //self.inner.emit_unit(key)
+        Ok(())
     }
 
     fn emit_none(&mut self, key: slog::Key) -> slog::Result {

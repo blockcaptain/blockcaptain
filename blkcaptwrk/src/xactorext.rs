@@ -92,6 +92,7 @@ where
     A: BcActorCtrl,
 {
     async fn started(&mut self, ctx: &mut Context<Self>) -> Result<()> {
+        self.log = self.log.new(o!("actor_id" => ctx.actor_id()));
         trace!(self.log, "actor starting");
         let result = self.inner.started(&self.log, ctx).await;
         if let Err(e) = &result {

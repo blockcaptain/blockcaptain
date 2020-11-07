@@ -127,7 +127,7 @@ impl BcActorCtrl for DatasetActor {
 
 #[async_trait::async_trait]
 impl BcHandler<SnapshotMessage> for DatasetActor {
-    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: SnapshotMessage) {
+    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: SnapshotMessage) {
         let result = observable_func(self.dataset.model().id(), ObservableEvent::DatasetSnapshot, || {
             ready(self.dataset.create_local_snapshot())
         })
@@ -141,6 +141,8 @@ impl BcHandler<SnapshotMessage> for DatasetActor {
                 unhandled_error(log, e);
             }
         }
+
+        self.schedule_next_snapshot(log, ctx);
     }
 }
 

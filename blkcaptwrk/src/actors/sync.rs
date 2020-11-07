@@ -4,11 +4,12 @@ use super::{
     observation::ObservableEventMessage, transfer::TransferActor, transfer::TransferComplete,
 };
 use crate::{
-    actorbase::unhandled_result,
+    actorbase::{schedule_next_message, unhandled_result},
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use cron::Schedule;
 use libblkcapt::{
     core::localsndrcv::{SnapshotReceiver, SnapshotSender},
     core::sync::find_parent,
@@ -18,7 +19,7 @@ use libblkcapt::{
     model::entities::{ObservableEvent, SnapshotSyncEntity, SnapshotSyncMode},
 };
 use slog::{debug, error, info, o, trace, Logger};
-use std::{collections::VecDeque, time::Duration};
+use std::{collections::VecDeque, convert::TryInto, time::Duration};
 use xactor::{message, Actor, Addr, Context, Handler};
 
 pub struct SyncActor {
@@ -26,18 +27,36 @@ pub struct SyncActor {
     container: Addr<BcActor<ContainerActor>>,
     model: SnapshotSyncEntity,
 
-    state_mode: ModeState,
-    state_active_send: Option<Addr<BcActor<TransferActor>>>,
+    state_mode: SyncModeState,
+    state_active_send: Option<(Addr<BcActor<TransferActor>>, DateTime<Utc>)>,
+    last_sent: Option<DateTime<Utc>>,
+    sync_cycle_schedule: Option<Schedule>,
 }
 
-enum ModeState {
-    SendLatest(VecDeque<DateTime<Utc>>),
-    SendAll(Option<DateTime<Utc>>),
+enum SyncModeState {
+    LatestScheduled(VecDeque<DateTime<Utc>>),
+    AllScheduled(Option<DateTime<Utc>>),
+    AllImmediate,
+    LatestImmediate(VecDeque<DateTime<Utc>>, Duration),
+}
+
+fn is_immediate(mode: &SnapshotSyncMode) -> bool {
+    match mode {
+        SnapshotSyncMode::AllImmediate | SnapshotSyncMode::IntervalImmediate(..) => true,
+        _ => false,
+    }
+}
+
+fn get_schedule(mode: &SnapshotSyncMode) -> Option<Result<Schedule>> {
+    match mode {
+        SnapshotSyncMode::AllScheduled(model) | SnapshotSyncMode::LatestScheduled(model) => Some(model.try_into()),
+        _ => None,
+    }
 }
 
 #[message()]
 #[derive(Clone)]
-struct StartSnapshotSyncCycleMessage();
+struct StartSnapshotSyncCycleMessage;
 
 impl SyncActor {
     pub fn new(
@@ -53,11 +72,16 @@ impl SyncActor {
                 dataset,
                 container,
                 state_mode: match model.sync_mode {
-                    SnapshotSyncMode::LatestScheduled => ModeState::SendLatest(VecDeque::<_>::default()),
-                    SnapshotSyncMode::AllScheduled | SnapshotSyncMode::AllImmediate => ModeState::SendAll(None),
-                    SnapshotSyncMode::LatestImmediate => todo!(),
+                    SnapshotSyncMode::AllScheduled(..) => SyncModeState::AllScheduled(None),
+                    SnapshotSyncMode::LatestScheduled(..) => SyncModeState::LatestScheduled(Default::default()),
+                    SnapshotSyncMode::AllImmediate => SyncModeState::AllImmediate,
+                    SnapshotSyncMode::IntervalImmediate(interval) => {
+                        SyncModeState::LatestImmediate(Default::default(), interval)
+                    }
                 },
                 state_active_send: None,
+                sync_cycle_schedule: None,
+                last_sent: None,
                 model,
             },
             &log.new(o!("dataset_id" => dataset_id.to_string(), "container_id" => container_id.to_string())),
@@ -74,17 +98,23 @@ impl SyncActor {
             .await
             .unwrap();
 
+        // trace!(log, "CONTAINER CONTENT");
+        // for snapshot in &container.snapshots {
+        //     trace!(log, "SNAPSHOT IN CONTAINER: {:?}", snapshot);
+        // }
+
         let to_send = match &mut self.state_mode {
-            ModeState::SendLatest(queue) => queue
+            SyncModeState::LatestScheduled(queue) | SyncModeState::LatestImmediate(queue, _) => queue
                 .pop_front()
                 .and_then(|limit| find_ready(&dataset.snapshots, &container.snapshots, FindMode::LatestBefore(limit))),
-            ModeState::SendAll(limit) => limit.and_then(|limit| {
+            SyncModeState::AllScheduled(limit) => limit.and_then(|limit| {
                 find_ready(
                     &dataset.snapshots,
                     &container.snapshots,
                     FindMode::EarliestBefore(limit),
                 )
             }),
+            SyncModeState::AllImmediate => find_ready(&dataset.snapshots, &container.snapshots, FindMode::Earliest),
         };
 
         let to_send = if let Some(handle) = to_send {
@@ -104,8 +134,6 @@ impl SyncActor {
         let transfer_actor = transfer_actor.start().await.unwrap();
         let sender_ready_sender = transfer_actor.sender();
         let sender_finished_sender = transfer_actor.sender();
-        let receiver_ready_sender = transfer_actor.sender();
-        let receiver_finished_sender = transfer_actor.sender();
 
         self.dataset
             .call(GetSnapshotSenderMessage {
@@ -118,33 +146,59 @@ impl SyncActor {
             .unwrap()?;
 
         self.container
-            .call(GetSnapshotReceiverMessage {
-                source_dataset_id: self.model.dataset_id(),
-                source_snapshot_handle: to_send.clone(),
-                target_ready: receiver_ready_sender,
-                target_finished: receiver_finished_sender,
-            })
+            .call(GetSnapshotReceiverMessage::new(
+                &transfer_actor,
+                self.model.dataset_id(),
+                to_send.clone(),
+            ))
             .await
             .unwrap()?;
 
-        self.state_active_send = Some(transfer_actor);
+        self.state_active_send = Some((transfer_actor, to_send.datetime));
 
         Ok(())
+    }
+
+    fn schedule_next_cycle(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
+        if self.sync_cycle_schedule.is_some() {
+            schedule_next_message(
+                self.sync_cycle_schedule.as_ref(),
+                "sync_cycle",
+                StartSnapshotSyncCycleMessage,
+                log,
+                ctx,
+            );
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl BcActorCtrl for SyncActor {
-    async fn started(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
-        if self.model.sync_mode == SnapshotSyncMode::AllImmediate {
+    async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+        if is_immediate(&self.model.sync_mode) {
             ctx.subscribe::<ObservableEventMessage>().await?;
         }
-        ctx.send_later(StartSnapshotSyncCycleMessage(), Duration::from_secs(3)); // TEMPORARY
+
+        self.sync_cycle_schedule = get_schedule(&self.model.sync_mode).map_or(Ok(None), |result| result.map(Some))?;
+        self.schedule_next_cycle(log, ctx);
+
+        if matches!(self.model.sync_mode, SnapshotSyncMode::IntervalImmediate(..)) {
+            self.last_sent = self
+                .container
+                .call(GetContainerSnapshotsMessage {
+                    source_dataset_id: self.model.dataset_id(),
+                })
+                .await?
+                .snapshots
+                .last()
+                .map(|s| s.datetime);
+        }
+
         Ok(())
     }
 
     async fn stopped(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) {
-        if self.model.sync_mode == SnapshotSyncMode::AllImmediate {
+        if is_immediate(&self.model.sync_mode) {
             ctx.unsubscribe::<ObservableEventMessage>().await.expect("FIXME");
         }
     }
@@ -157,7 +211,7 @@ impl BcHandler<ObservableEventMessage> for SyncActor {
             && msg.event == ObservableEvent::DatasetSnapshot
             && msg.stage == ObservableEventStage::Succeeded
         {
-            ctx.address().send(StartSnapshotSyncCycleMessage()).expect("FIXME");
+            ctx.address().send(StartSnapshotSyncCycleMessage).expect("FIXME");
         }
     }
 }
@@ -167,13 +221,26 @@ impl BcHandler<StartSnapshotSyncCycleMessage> for SyncActor {
     async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: StartSnapshotSyncCycleMessage) {
         let new_limit_time = Utc::now();
         match &mut self.state_mode {
-            ModeState::SendLatest(queue) => {
+            SyncModeState::LatestScheduled(queue) => {
                 trace!(log, "adding sync time {} to queue", new_limit_time);
                 queue.push_back(new_limit_time);
             }
-            ModeState::SendAll(limit) => {
+            SyncModeState::AllScheduled(limit) => {
                 trace!(log, "moving limit sync forward to {}", new_limit_time);
                 limit.replace(new_limit_time);
+            }
+            SyncModeState::AllImmediate => {
+                trace!(log, "syncing all immediately");
+            }
+            SyncModeState::LatestImmediate(queue, interval) => {
+                if self.last_sent.is_none()
+                    || new_limit_time - self.last_sent.unwrap() > chrono::Duration::from_std(*interval).unwrap()
+                {
+                    trace!(log, "adding sync time {} to queue", new_limit_time);
+                    queue.push_back(new_limit_time);
+                } else {
+                    trace!(log, "sync interval not yet elapsed");
+                }
             }
         }
 
@@ -190,7 +257,10 @@ impl BcHandler<StartSnapshotSyncCycleMessage> for SyncActor {
 #[async_trait::async_trait]
 impl BcHandler<TransferComplete> for SyncActor {
     async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: TransferComplete) {
-        self.state_active_send = None;
+        if let Some((_, sent_snapshot_datetime)) = self.state_active_send {
+            self.last_sent = Some(sent_snapshot_datetime);
+            self.state_active_send = None;
+        }
         unhandled_result(log, msg.0);
 
         //let TransferComplete(finished_receiver) = msg;

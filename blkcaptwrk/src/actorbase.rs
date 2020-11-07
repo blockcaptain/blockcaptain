@@ -26,12 +26,14 @@ fn schedule_next_delay(after: DateTime<Utc>, what: &str, schedule: &Schedule, lo
                 .to_std()
                 .expect("time to next schedule can always fit in std duration");
 
+            let display_delay = Duration::from_secs(delay_to_next.as_secs());
+
             debug!(
                 log,
                 "next {} scheduled at {} (in {})",
                 what,
                 next_datetime,
-                humantime::Duration::from(delay_to_next)
+                humantime::Duration::from(display_delay)
             );
             Some(delay_to_next)
         }

@@ -271,13 +271,13 @@ pub struct SnapshotSyncEntity {
     pub sync_mode: SnapshotSyncMode,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum SnapshotSyncMode {
-    AllScheduled,
-    LatestScheduled,
+    AllScheduled(ScheduleModel),
+    LatestScheduled(ScheduleModel),
     AllImmediate,
-    LatestImmediate,
+    IntervalImmediate(#[serde(with = "humantime_serde")] Duration),
 }
 
 impl SnapshotSyncEntity {

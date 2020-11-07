@@ -1975,7 +1975,7 @@ dependencies = [
 [[package]]
 name = "xactor"
 version = "0.7.8"
-source = "git+https://github.com/sunli829/xactor?rev=0d2537f647f195ae79c53d2c1107602e054c96d3#0d2537f647f195ae79c53d2c1107602e054c96d3"
+source = "git+https://github.com/wpbrown/xactor?branch=callerfix#f0994c9c8f2898a376ab4d99990b95c9da9e464c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1990,7 +1990,7 @@ dependencies = [
 [[package]]
 name = "xactor-derive"
 version = "0.7.1"
-source = "git+https://github.com/sunli829/xactor?rev=0d2537f647f195ae79c53d2c1107602e054c96d3#0d2537f647f195ae79c53d2c1107602e054c96d3"
+source = "git+https://github.com/wpbrown/xactor?branch=callerfix#f0994c9c8f2898a376ab4d99990b95c9da9e464c"
 dependencies = [
  "proc-macro2",
  "quote",

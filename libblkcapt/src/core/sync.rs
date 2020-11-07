@@ -28,6 +28,7 @@ pub fn find_ready<'a>(
     }
 
     match find_mode {
+        FindMode::Earliest => to_send.first(),
         FindMode::Latest => to_send.last(),
         FindMode::LatestBefore(end_cycle) => to_send.iter().rev().find(|s| s.datetime < end_cycle),
         FindMode::EarliestBefore(end_cycle) => to_send.iter().find(|s| s.datetime < end_cycle),
@@ -35,6 +36,7 @@ pub fn find_ready<'a>(
 }
 
 pub enum FindMode {
+    Earliest,
     Latest,
     LatestBefore(DateTime<Utc>),
     EarliestBefore(DateTime<Utc>),

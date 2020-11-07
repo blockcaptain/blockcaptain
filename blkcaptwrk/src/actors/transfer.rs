@@ -24,7 +24,7 @@ use super::{
     dataset::SenderReadyMessage,
     localreceiver::GetWriterMessage,
     localreceiver::LocalReceiverActor,
-    localreceiver::LocalReceiverFinishedMessage,
+    localreceiver::ReceiverFinishedMessage,
     localsender::GetReaderMessage,
     localsender::{LocalSenderActor, LocalSenderFinishedMessage},
 };
@@ -205,8 +205,8 @@ impl BcHandler<LocalSenderFinishedMessage> for TransferActor {
 }
 
 #[async_trait::async_trait]
-impl BcHandler<LocalReceiverFinishedMessage> for TransferActor {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: LocalReceiverFinishedMessage) {
+impl BcHandler<ReceiverFinishedMessage> for TransferActor {
+    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: ReceiverFinishedMessage) {
         match mem::replace(&mut self.state, State::Faulted) {
             State::Transferring(transfer, completions, actors) => {
                 self.state = State::Transferring(

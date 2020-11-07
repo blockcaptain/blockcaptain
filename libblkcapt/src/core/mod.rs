@@ -12,7 +12,7 @@ use crate::{
     sys::net::HttpsClient,
 };
 use anyhow::{anyhow, bail, Context, Result};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 use derivative::Derivative;
 use hyper::Uri;
 use std::path::PathBuf;
@@ -142,7 +142,7 @@ impl BtrfsDataset {
         self.pool.filesystem.subvolume_by_path(&snapshot_path).and_then(|s| {
             Ok(BtrfsDatasetSnapshot {
                 subvolume: s,
-                datetime: now,
+                datetime: now.date().and_hms(now.hour(), now.minute(), now.second()),
                 dataset: Arc::clone(self),
             })
         })
@@ -369,6 +369,7 @@ pub enum BtrfsDatasetSnapshotState {
     },
 }
 
+#[derive(Debug)]
 pub struct BtrfsContainerSnapshotHandle {
     pub datetime: DateTime<Utc>,
     pub uuid: Uuid,
@@ -447,7 +448,7 @@ impl BtrfsContainer {
     pub fn corresponding_snapshot(
         self: &Arc<Self>,
         dataset_id: Uuid,
-        handle: BtrfsDatasetSnapshotHandle,
+        handle: &BtrfsDatasetSnapshotHandle,
     ) -> Result<BtrfsContainerSnapshot> {
         let name = handle.datetime.format("%FT%H-%M-%SZ.bcrcv").to_string();
         self.snapshot_by_name(dataset_id, &name)

@@ -9,6 +9,7 @@ use slog::{error, o, trace, Logger};
 use std::{future::Future, marker::PhantomData};
 use uuid::Uuid;
 use xactor::{Actor, Addr, Context, Handler, Message};
+use paste::paste;
 
 // pub trait ActorAddrExt<T: Actor> {
 //     fn get_child_actor<U, O>(&self, id: Uuid) -> U
@@ -71,6 +72,21 @@ pub struct BcActor<T> {
     log: Logger,
 }
 
+// Replace with specialization when available?
+macro_rules! notify_impl {
+    ($f:ident, $t:ty) => {
+        paste! {
+            fn [<intel_notify_ $f>](&self, message: $t) {
+                let intel_addr = IntelActor::addr();
+                unhandled_result(
+                    &self.log,
+                    intel_addr.send(message).context("failed to notify intel actor"),
+                )
+            }
+        }
+    };
+}
+
 impl<T> BcActor<T> {
     pub fn new(inner: T, log: &Logger) -> Self {
         let log = log.new(o!("actor" => snek_type_name::<T>()));
@@ -81,13 +97,12 @@ impl<T> BcActor<T> {
         }
     }
 
-    fn intel_notify<M: Message<Result = ()>, I: Handler<M>>(&self, intel_addr: Addr<I>, message: M) {
-        unhandled_result(
-            &self.log,
-            intel_addr.send(message).context("failed to notify intel actor"),
-        )
-    }
+    notify_impl!(start, ActorStartMessage);
+    notify_impl!(stop, ActorStopMessage);
+    notify_impl!(drop, ActorDropMessage);
 }
+
+trait IntelMessage {}
 
 #[async_trait::async_trait]
 impl<A, M> Handler<M> for BcActor<A>
@@ -116,10 +131,7 @@ where
         } else {
             trace!(self.log, "actor started");
             self.actor_id = ctx.actor_id();
-            self.intel_notify(
-                IntelActor::addr(),
-                ActorStartMessage::new(ctx.actor_id(), ctx.address()),
-            );
+            self.intel_notify_start(ActorStartMessage::new(ctx.actor_id(), ctx.address()));
         }
         result
     }
@@ -127,14 +139,14 @@ where
     async fn stopped(&mut self, ctx: &mut Context<Self>) {
         trace!(self.log, "actor stopping");
         self.inner.stopped(&self.log, ctx).await;
-        self.intel_notify(IntelActor::addr(), ActorStopMessage::new(self.actor_id));
+        self.intel_notify_stop(ActorStopMessage::new(self.actor_id));
         trace!(self.log, "actor stopped");
     }
 }
 
 impl<A> Drop for BcActor<A> {
     fn drop(&mut self) {
-        self.intel_notify(IntelActor::addr(), ActorDropMessage::new(self.actor_id));
+        self.intel_notify_drop(ActorDropMessage::new(self.actor_id));
     }
 }
 

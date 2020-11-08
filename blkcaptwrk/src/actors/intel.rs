@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
-
+use strum_macros::Display;
 use anyhow::Result;
 use once_cell::sync::OnceCell;
 use slog::{debug, error, trace, warn, Logger};
@@ -74,6 +74,7 @@ struct Tractor {
     changed: Instant,
 }
 
+#[derive(Display)]
 enum ActorState {
     Started,
     Stopped,
@@ -84,6 +85,9 @@ enum ActorState {
 #[message]
 #[derive(Clone)]
 struct Update;
+
+#[message]
+struct DebugNow;
 
 #[async_trait::async_trait]
 impl Actor for IntelActor {
@@ -136,22 +140,32 @@ impl Handler<ActorDropMessage> for IntelActor {
 
 #[async_trait::async_trait]
 impl Handler<Update> for IntelActor {
-    async fn handle(&mut self, _ctx: &mut Context<Self>, msg: Update) {
+    async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: Update) {
         const CHECK_AFTER: Duration = Duration::from_secs(30);
         let now = Instant::now();
         let mut remove = vec![];
         for (id, tractor) in self.actors.iter_mut() {
             match tractor.state {
-                ActorState::Stopped if tractor.changed - now > CHECK_AFTER => {
+                ActorState::Stopped if now - tractor.changed > CHECK_AFTER => {
                     tractor.state = ActorState::Zombie;
+                    tractor.changed = now;
                     warn!(self.log, "zombie detected"; "actor_id" => id)
                 }
-                ActorState::Dropped if tractor.changed - now > CHECK_AFTER => remove.push(*id),
+                ActorState::Dropped if now - tractor.changed > CHECK_AFTER => remove.push(*id),
                 _ => {}
             }
         }
         for id in remove {
             self.actors.remove(&id);
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Handler<DebugNow> for IntelActor {
+    async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: DebugNow) {
+        for (id, tractor) in self.actors.iter() {
+            println!("ACTOR DEBUG [{:04}][{}]", id, tractor.state);
         }
     }
 }

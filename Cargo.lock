@@ -166,6 +166,7 @@ dependencies = [
  "paste",
  "slog",
  "slog-scope",
+ "strum_macros",
  "thiserror",
  "tokio",
  "uuid",

@@ -1,10 +1,14 @@
-use anyhow::Result;
+use crate::{
+    actorbase::unhandled_result,
+    actors::intel::{ActorDropMessage, ActorStartMessage, ActorStopMessage, IntelActor},
+};
+use anyhow::{Context as AnyhowContext, Result};
 use futures_util::future::join_all;
 use heck::SnakeCase;
 use slog::{error, o, trace, Logger};
-use std::{future::Future, marker::PhantomData, time::Duration};
+use std::{future::Future, marker::PhantomData};
 use uuid::Uuid;
-use xactor::{sleep, spawn, Actor, Addr, Context, Handler, Message};
+use xactor::{Actor, Addr, Context, Handler, Message};
 
 // pub trait ActorAddrExt<T: Actor> {
 //     fn get_child_actor<U, O>(&self, id: Uuid) -> U
@@ -63,13 +67,25 @@ pub trait BcActorCtrl: Sized + Send + 'static {
 
 pub struct BcActor<T> {
     inner: T,
+    actor_id: u64,
     log: Logger,
 }
 
 impl<T> BcActor<T> {
     pub fn new(inner: T, log: &Logger) -> Self {
         let log = log.new(o!("actor" => snek_type_name::<T>()));
-        Self { inner, log }
+        Self {
+            inner,
+            actor_id: 0,
+            log,
+        }
+    }
+
+    fn intel_notify<M: Message<Result = ()>, I: Handler<M>>(&self, intel_addr: Addr<I>, message: M) {
+        unhandled_result(
+            &self.log,
+            intel_addr.send(message).context("failed to notify intel actor"),
+        )
     }
 }
 
@@ -99,6 +115,11 @@ where
             error!(self.log, "actor start failed"; "error" => %e);
         } else {
             trace!(self.log, "actor started");
+            self.actor_id = ctx.actor_id();
+            self.intel_notify(
+                IntelActor::addr(),
+                ActorStartMessage::new(ctx.actor_id(), ctx.address()),
+            );
         }
         result
     }
@@ -106,7 +127,14 @@ where
     async fn stopped(&mut self, ctx: &mut Context<Self>) {
         trace!(self.log, "actor stopping");
         self.inner.stopped(&self.log, ctx).await;
+        self.intel_notify(IntelActor::addr(), ActorStopMessage::new(self.actor_id));
         trace!(self.log, "actor stopped");
+    }
+}
+
+impl<A> Drop for BcActor<A> {
+    fn drop(&mut self) {
+        self.intel_notify(IntelActor::addr(), ActorDropMessage::new(self.actor_id));
     }
 }
 

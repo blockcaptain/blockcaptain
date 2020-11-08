@@ -162,6 +162,7 @@ dependencies = [
  "heck",
  "humantime",
  "libblkcapt",
+ "once_cell",
  "slog",
  "slog-scope",
  "thiserror",

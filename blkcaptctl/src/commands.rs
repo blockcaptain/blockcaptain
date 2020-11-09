@@ -3,7 +3,7 @@ use clap::Clap;
 use comfy_table::Cell;
 use libblkcapt::{
     core::ObservableEventStage,
-    model::entity_by_name,
+    model::{entities::ScheduleModel, entity_by_name},
     sys::fs::{find_mountentry, DevicePathBuf},
 };
 use libblkcapt::{
@@ -250,7 +250,7 @@ pub fn list_dataset(options: DatasetListOptions) -> Result<()> {
     Ok(())
 }
 
-const AFTER_HELP: &str = r"RETENTION:
+const AFTER_HELP: &str = r"RETENTION
 
 The retention interval format is [<Repeat>x]<Duration>[:<Count>]. The default Repeat and Count values are 1.
 ";
@@ -259,9 +259,13 @@ The retention interval format is [<Repeat>x]<Duration>[:<Count>]. The default Re
 #[derive(Clap, Debug)]
 #[clap(after_help(AFTER_HELP))]
 pub struct DatasetUpdateOptions {
-    /// Set the frequency at which snapshots are taken (e.g. 1hour, 2days)
-    #[clap(short("f"), long, value_name("duration"))]
+    /// Set the snapshots schedule using a simple frequency (e.g. 1hour, 2days)
+    #[clap(short("f"), long, value_name("duration"), conflicts_with("snapshot-schedule"))]
     snapshot_frequency: Option<humantime::Duration>,
+
+    /// Set the schedule for taking snapshots of this dataset
+    #[clap(short("s"), long, value_name("cron"))]
+    snapshot_schedule: Option<ScheduleModel>,
 
     /// Prevent starting new snapshot creation jobs on this dataset
     #[clap(long, conflicts_with("resume-snapshotting"))]
@@ -340,7 +344,12 @@ pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
     };
 
     if let Some(f) = options.snapshot_frequency {
-        dataset.snapshot_schedule = Some((*f).try_into().expect("FIXME"));
+        let std_duration = *f;
+        dataset.snapshot_schedule = Some(std_duration.try_into().context(
+            "The specified frequency can't be converted into a schedule. \
+            For more advanced schedule creation use the -s option. \
+            See --help for more details.",
+        )?);
     }
 
     if options.pause_snapshotting || options.resume_snapshotting {

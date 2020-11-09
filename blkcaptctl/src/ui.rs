@@ -2,6 +2,7 @@ use comfy_table::presets::UTF8_FULL;
 use comfy_table::*;
 use libblkcapt::model::entities::FeatureState;
 use presets::ASCII_NO_BORDERS;
+use slog_scope::info;
 use uuid::Uuid;
 
 pub fn print_comfy_table(header: Vec<Cell>, rows: impl Iterator<Item = Vec<Cell>>) {
@@ -15,7 +16,7 @@ pub fn print_comfy_table(header: Vec<Cell>, rows: impl Iterator<Item = Vec<Cell>
         table.add_row(r);
     });
 
-    println!("{}", table);
+    info!(#"bc_raw", "{}", table);
 }
 
 pub fn comfy_feature_state_cell(state: FeatureState) -> Cell {

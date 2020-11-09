@@ -1,12 +1,12 @@
 mod slogext;
 use anyhow::Result;
 use human_panic::setup_panic;
-use slog::{debug, error, info, o, trace, Drain, Level, Logger};
+use slog::{b, debug, error, info, o, record_static, trace, Drain, Level, Logger, Record};
 use slogext::{CustomFullFormat, DedupDrain, SlogLogLogger};
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::runtime::Runtime;
 
-pub fn blkcaptapp_run<M, F>(main: M, verbose_flag_count: usize)
+pub fn blkcaptapp_run<M, F>(main: M, verbose_flag_count: usize, interactive: bool)
 where
     M: FnOnce(Logger) -> F,
     F: Future<Output = Result<()>>,
@@ -26,7 +26,8 @@ where
     {
         let (slog_drain, slog_drain_ctrl) = {
             let decorator = slog_term::TermDecorator::new().build();
-            let drain = CustomFullFormat::new(decorator).fuse();
+            let show_timestamp = !interactive;
+            let drain = CustomFullFormat::new(decorator, show_timestamp).fuse();
             let drain = slog_async::Async::new(drain).build().fuse();
             let drain = slog_atomic::AtomicSwitch::new(drain);
             let ctrl = drain.ctrl();
@@ -48,9 +49,18 @@ where
             slog_scope::set_global_logger(slog_internal_logger.clone()).cancel_reset();
             SlogLogLogger::install(slog_external_logger, external_level);
 
+            let process_msg_level = match interactive {
+                true => Level::Debug,
+                false => Level::Info,
+            };
+
             debug!(slog_internal_logger, "debug messages enabled");
             trace!(slog_internal_logger, "trace messages enabled");
-            info!(slog_internal_logger, "process starting"; "blkcapt_version" => "0.1.0_a1");
+            slog_internal_logger.log(&Record::new(
+                &record_static!(process_msg_level, ""),
+                &format_args!("process starting"),
+                b!("blkcapt_version" => env!("CARGO_PKG_VERSION")),
+            ));
 
             {
                 let mut runtime = Runtime::new().expect("can create runtime");
@@ -64,7 +74,11 @@ where
                 runtime.shutdown_timeout(Duration::from_secs(0));
             }
 
-            info!(slog_internal_logger, "process exiting");
+            slog_internal_logger.log(&Record::new(
+                &record_static!(process_msg_level, ""),
+                &format_args!("process exiting"),
+                b!(),
+            ));
 
             slog_scope::set_global_logger(Logger::root(slog::Discard, o!())).cancel_reset();
         }

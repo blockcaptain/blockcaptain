@@ -14,7 +14,7 @@ fn main() {
         }
     });
 
-    blkcaptapp_run(async_main, vcount);
+    blkcaptapp_run(async_main, vcount, false);
 }
 
 async fn async_main(log: Logger) -> Result<()> {

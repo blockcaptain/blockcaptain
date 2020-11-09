@@ -1,6 +1,6 @@
 use super::{Entity, EntityType};
 use crate::sys::fs::FsPathBuf;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use cron::Schedule;
 use serde::{Deserialize, Serialize};
 use std::{convert::TryFrom, path::PathBuf, str::FromStr};
@@ -149,13 +149,55 @@ impl TryFrom<&ScheduleModel> for Schedule {
     }
 }
 
+impl FromStr for ScheduleModel {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Schedule::from_str(s)
+            .map(|_| ScheduleModel(s.to_owned()))
+            .map_err(|e| match e.kind() {
+                cron::error::ErrorKind::Msg(s) | cron::error::ErrorKind::Expression(s) => anyhow!(s.to_owned()),
+            })
+    }
+}
+
 impl TryFrom<&Duration> for ScheduleModel {
     type Error = anyhow::Error;
 
     fn try_from(value: &Duration) -> Result<Self, Self::Error> {
-        let duration = chrono::Duration::from_std(*value);
-        // todo
-        Ok(ScheduleModel(format!("0 0 * * * * *")))
+        let duration = chrono::Duration::from_std(*value)?;
+        if duration.num_seconds() == 0 {
+            bail!("minimum frequency for schedule is 1 second");
+        }
+        if duration.num_minutes() == 0 {
+            if 60 % duration.num_seconds() != 0 {
+                bail!("frequency in seconds must divide evenly in to a minute");
+            }
+            return Ok(ScheduleModel(format!("0/{} * * * * * *", duration.num_seconds())));
+        }
+        if duration.num_hours() == 0 {
+            if 60 % duration.num_minutes() != 0 {
+                bail!("frequency in minutes must divide evenly in to an hour");
+            }
+            if duration.num_seconds() % 60 != 0 {
+                bail!("frequency in minutes must be in whole minutes");
+            }
+            return Ok(ScheduleModel(format!("0 0/{} * * * * *", duration.num_minutes())));
+        }
+        if duration.num_days() == 0 {
+            if 24 % duration.num_hours() != 0 {
+                bail!("frequency in hours must divide evenly in to a day");
+            }
+            if duration.num_minutes() % 60 != 0 || duration.num_seconds() % 60 != 0 {
+                bail!("frequency in hours must be in whole hours");
+            }
+            return Ok(ScheduleModel(format!("0 0 0/{} * * * *", duration.num_hours())));
+        }
+        if duration == chrono::Duration::days(1) {
+            return Ok(ScheduleModel(String::from("0 0 0 * * * *")));
+        }
+
+        bail!("frequency greater than 1 day can not be converted to a schedule");
     }
 }
 

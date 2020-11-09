@@ -2,9 +2,11 @@ use slog::{b, kv, o, Discard, Drain, Level, Logger, OwnedKVList, Record, KV};
 use slog_term::{timestamp_local, CountingWriter, Decorator, RecordDecorator, Serializer};
 use std::{fmt, io, io::Write, result};
 
-fn print_msg_header(mut rd: &mut dyn RecordDecorator, record: &Record) -> io::Result<bool> {
-    rd.start_timestamp()?;
-    timestamp_local(&mut rd)?;
+fn print_msg_header(mut rd: &mut dyn RecordDecorator, record: &Record, timestamp: bool) -> io::Result<bool> {
+    if timestamp {
+        rd.start_timestamp()?;
+        timestamp_local(&mut rd)?;
+    }
 
     rd.start_whitespace()?;
     write!(rd, " ")?;
@@ -45,6 +47,7 @@ where
     D: Decorator,
 {
     decorator: D,
+    timestamp: bool,
 }
 
 impl<D> Drain for CustomFullFormat<D>
@@ -63,21 +66,25 @@ impl<D> CustomFullFormat<D>
 where
     D: Decorator,
 {
-    pub fn new(decorator: D) -> Self {
-        Self { decorator }
+    pub fn new(decorator: D, timestamp: bool) -> Self {
+        Self { decorator, timestamp }
     }
 
     fn format_full(&self, record: &Record, values: &OwnedKVList) -> io::Result<()> {
         self.decorator.with_record(record, values, |decorator| {
-            let comma_needed = print_msg_header(decorator, record)?;
-            {
-                let mut serializer = Serializer::new(decorator, comma_needed, false);
+            if record.tag() != "bc_raw" {
+                let comma_needed = print_msg_header(decorator, record, self.timestamp)?;
+                {
+                    let mut serializer = Serializer::new(decorator, comma_needed, false);
 
-                record.kv().serialize(record, &mut serializer)?;
+                    record.kv().serialize(record, &mut serializer)?;
 
-                values.serialize(record, &mut serializer)?;
+                    values.serialize(record, &mut serializer)?;
 
-                serializer.finish()?;
+                    serializer.finish()?;
+                }
+            } else {
+                write!(decorator, "{}", record.msg())?;
             }
 
             decorator.start_whitespace()?;

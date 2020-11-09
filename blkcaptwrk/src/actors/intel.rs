@@ -1,11 +1,11 @@
+use anyhow::Result;
+use once_cell::sync::OnceCell;
+use slog::{debug, error, trace, warn, Logger};
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
 use strum_macros::Display;
-use anyhow::Result;
-use once_cell::sync::OnceCell;
-use slog::{debug, error, trace, warn, Logger};
 use xactor::{message, Actor, Addr, Context, Handler, Service, WeakAddr};
 
 pub struct IntelActor {

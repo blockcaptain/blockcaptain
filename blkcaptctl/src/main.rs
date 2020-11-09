@@ -6,9 +6,17 @@ mod ui;
 use commands::*;
 
 fn main() {
-    let options: CliOptions = CliOptions::parse();
-    let vcount = options.verbose as usize;
-    blkcaptapp_run(|_| command_dispath(options), vcount);
+    match CliOptions::try_parse() {
+        Ok(options) => {
+            let vcount = options.verbose as usize;
+            blkcaptapp_run(|_| command_dispath(options), vcount, true);
+        }
+        Err(e) => {
+            let message = e.to_string();
+            println!("{}", message.replace("error:", "ERRO:"));
+            println!();
+        }
+    }
 }
 
 async fn command_dispath(options: CliOptions) -> Result<()> {

@@ -5,11 +5,11 @@ use crate::{
 use anyhow::{Context as AnyhowContext, Result};
 use futures_util::future::join_all;
 use heck::SnakeCase;
+use paste::paste;
 use slog::{error, o, trace, Logger};
 use std::{future::Future, marker::PhantomData};
 use uuid::Uuid;
 use xactor::{Actor, Addr, Context, Handler, Message};
-use paste::paste;
 
 // pub trait ActorAddrExt<T: Actor> {
 //     fn get_child_actor<U, O>(&self, id: Uuid) -> U

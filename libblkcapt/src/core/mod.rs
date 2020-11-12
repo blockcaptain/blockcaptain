@@ -139,13 +139,14 @@ impl BtrfsDataset {
             .join(now.format("%FT%H-%M-%SZ").to_string());
         self.pool.filesystem.create_snapshot(&self.subvolume, &snapshot_path)?;
 
-        self.pool.filesystem.subvolume_by_path(&snapshot_path).map(|s| {
-            BtrfsDatasetSnapshot {
+        self.pool
+            .filesystem
+            .subvolume_by_path(&snapshot_path)
+            .map(|s| BtrfsDatasetSnapshot {
                 subvolume: s,
                 datetime: now.date().and_hms(now.hour(), now.minute(), now.second()),
                 dataset: Arc::clone(self),
-            }
-        })
+            })
     }
 
     pub fn snapshots(self: &Arc<Self>) -> Result<Vec<BtrfsDatasetSnapshot>> {

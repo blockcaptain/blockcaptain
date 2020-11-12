@@ -1,4 +1,4 @@
-use slog::{b, kv, o, Discard, Drain, Level, Logger, OwnedKVList, Record, KV};
+use slog::{b, Drain, Level, Logger, OwnedKVList, Record, KV};
 use slog_term::{timestamp_local, CountingWriter, Decorator, RecordDecorator, Serializer};
 use std::{fmt, io, io::Write, result};
 
@@ -187,7 +187,7 @@ impl<'a> slog::Serializer for DedupSerializer<'a> {
         if self.seen_keys.contains(&key) {
             return Ok(());
         }
-        self.seen_keys.insert(key.clone());
+        self.seen_keys.insert(key);
         //self.inner.emit_unit(key)
         Ok(())
     }
@@ -196,7 +196,7 @@ impl<'a> slog::Serializer for DedupSerializer<'a> {
         if self.seen_keys.contains(&key) {
             return Ok(());
         }
-        self.seen_keys.insert(key.clone());
+        self.seen_keys.insert(key);
         self.inner.emit_none(key)
     }
 }

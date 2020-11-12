@@ -69,31 +69,39 @@ impl Entities {
         entity_by_id(self.btrfs_pools.iter(), id)
     }
 
-    pub fn datasets(&self) -> impl Iterator<Item = EntityPath<BtrfsDatasetEntity, BtrfsPoolEntity>> {
+    pub fn observer(&self, id: Uuid) -> Option<&HealthchecksObserverEntity> {
+        entity_by_id(self.observers.iter(), id)
+    }
+
+    pub fn snapshot_sync(&self, id: Uuid) -> Option<&SnapshotSyncEntity> {
+        entity_by_id(self.snapshot_syncs.iter(), id)
+    }
+
+    pub fn datasets(&self) -> impl Iterator<Item = EntityPath2<BtrfsDatasetEntity, BtrfsPoolEntity>> {
         self.btrfs_pools
             .iter()
             .flat_map(|p| p.datasets.iter().zip(repeat(p)))
-            .map(|t| EntityPath {
+            .map(|t| EntityPath2 {
                 entity: t.0,
                 parent: t.1,
             })
     }
 
-    pub fn dataset(&self, id: Uuid) -> Option<EntityPath<BtrfsDatasetEntity, BtrfsPoolEntity>> {
+    pub fn dataset(&self, id: Uuid) -> Option<EntityPath2<BtrfsDatasetEntity, BtrfsPoolEntity>> {
         entity_by_id(self.datasets(), id)
     }
 
-    pub fn containers(&self) -> impl Iterator<Item = EntityPath<BtrfsContainerEntity, BtrfsPoolEntity>> {
+    pub fn containers(&self) -> impl Iterator<Item = EntityPath2<BtrfsContainerEntity, BtrfsPoolEntity>> {
         self.btrfs_pools
             .iter()
             .flat_map(|p| p.containers.iter().zip(repeat(p)))
-            .map(|t| EntityPath {
+            .map(|t| EntityPath2 {
                 entity: t.0,
                 parent: t.1,
             })
     }
 
-    pub fn container(&self, id: Uuid) -> Option<EntityPath<BtrfsContainerEntity, BtrfsPoolEntity>> {
+    pub fn container(&self, id: Uuid) -> Option<EntityPath2<BtrfsContainerEntity, BtrfsPoolEntity>> {
         entity_by_id(self.containers(), id)
     }
 
@@ -103,21 +111,26 @@ impl Entities {
 }
 
 #[derive(Debug)]
-pub struct EntityPath<'a, T: Entity, U: Entity> {
+pub struct EntityPath1<'a, T: Entity> {
+    pub entity: &'a T,
+}
+
+#[derive(Debug)]
+pub struct EntityPath2<'a, T: Entity, U: Entity> {
     pub entity: &'a T,
     pub parent: &'a U,
 }
 
-impl<'a, T: Entity, U: Entity> EntityPath<'a, T, U> {
-    pub fn into_id_path(self) -> EntityIdPath {
-        EntityIdPath {
+impl<'a, T: Entity, U: Entity> EntityPath2<'a, T, U> {
+    pub fn into_id_path(self) -> EntityIdPath2 {
+        EntityIdPath2 {
             entity: self.entity.id(),
             parent: self.parent.id(),
         }
     }
 }
 
-impl<'a, T: Entity, U: Entity> Entity for EntityPath<'a, T, U> {
+impl<'a, T: Entity> Entity for EntityPath1<'a, T> {
     fn name(&self) -> &str {
         self.entity.name()
     }
@@ -131,18 +144,67 @@ impl<'a, T: Entity, U: Entity> Entity for EntityPath<'a, T, U> {
     }
 }
 
-impl<'a, T: Entity, U: Entity> AsRef<dyn Entity + 'a> for EntityPath<'a, T, U> {
+impl<'a, T: Entity> AsRef<dyn Entity + 'a> for EntityPath1<'a, T> {
     fn as_ref(&self) -> &(dyn Entity + 'a) {
         self
     }
 }
 
-pub struct EntityIdPath {
+impl<'a, T: Entity, U: Entity> Entity for EntityPath2<'a, T, U> {
+    fn name(&self) -> &str {
+        self.entity.name()
+    }
+
+    fn id(&self) -> Uuid {
+        self.entity.id()
+    }
+
+    fn entity_type(&self) -> EntityType {
+        self.entity.entity_type()
+    }
+}
+
+impl<'a, T: Entity, U: Entity> AsRef<dyn Entity + 'a> for EntityPath2<'a, T, U> {
+    fn as_ref(&self) -> &(dyn Entity + 'a) {
+        self
+    }
+}
+
+pub trait EntityPath: Entity {
+    fn path(&self) -> String;
+}
+
+pub struct EntityIdPath2 {
     pub entity: Uuid,
     pub parent: Uuid,
 }
 
+impl<'a, T: Entity> EntityPath for EntityPath1<'a, T> {
+    fn path(&self) -> String {
+        self.entity.name().to_owned()
+    }
+}
+
+impl<'a, T: Entity, U: Entity> EntityPath for EntityPath2<'a, T, U> {
+    fn path(&self) -> String {
+        format!("{}/{}", self.parent.name(), self.entity.name())
+    }
+}
+
+impl<'a, T: Entity + EntityStatic, U: Entity> EntityStatic for EntityPath2<'a, T, U> {
+    fn entity_type_static() -> EntityType {
+        T::entity_type_static()
+    }
+}
+
+impl<T: Entity + EntityStatic> EntityStatic for &T {
+    fn entity_type_static() -> EntityType {
+        T::entity_type_static()
+    }
+}
+
 #[derive(Display)]
+#[strum(serialize_all = "snake_case")]
 pub enum EntityType {
     Pool,
     Dataset,
@@ -155,6 +217,10 @@ pub trait Entity: Debug {
     fn name(&self) -> &str;
     fn id(&self) -> Uuid;
     fn entity_type(&self) -> EntityType;
+}
+
+pub trait EntityStatic {
+    fn entity_type_static() -> EntityType;
 }
 
 pub fn entity_by_name<'a, T: Entity>(vec: &'a [T], name: &str) -> Option<&'a T> {
@@ -173,16 +239,20 @@ pub fn entity_by_id<'a, T: AsRef<dyn Entity + 'a>>(mut iter: impl Iterator<Item 
     iter.find(|e| e.as_ref().id() == id)
 }
 
-pub fn entity_by_name_or_id<'a, T: AsRef<dyn Entity + 'a>>(
+pub fn entity_by_name_or_id<'a, T: AsRef<dyn Entity + 'a> + EntityStatic>(
     iter: impl Iterator<Item = T>,
     name_or_id: &str,
-) -> Result<Option<T>> {
+) -> Result<T> {
     let mut matches = iter
         .filter(|e| e.as_ref().id().to_string().starts_with(name_or_id) || e.as_ref().name() == name_or_id)
         .collect::<Vec<_>>();
     match matches.len() {
-        0 => Ok(None),
-        1 => Ok(Some(matches.remove(0))),
-        _ => Err(anyhow!("multiple matches")),
+        0 => Err(anyhow!("{} '{}' not found", T::entity_type_static(), name_or_id)),
+        1 => Ok(matches.pop().unwrap()),
+        _ => Err(anyhow!(
+            "'{}' identifies multiple {}s",
+            T::entity_type_static(),
+            name_or_id
+        )),
     }
 }

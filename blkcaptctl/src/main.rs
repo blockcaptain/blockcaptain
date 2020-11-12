@@ -1,20 +1,32 @@
-use anyhow::Result;
-use blkcaptapp::blkcaptapp_run;
+use std::{
+    error::Error,
+    fmt::{Debug, Display},
+};
+
+use anyhow::{anyhow, Result};
+use blkcaptapp::{blkcaptapp_run, slog_println};
 use clap::{crate_version, Clap};
 mod commands;
 mod ui;
-use commands::*;
+use commands::observer::*;
+use commands::pool::*;
 
 fn main() {
-    match CliOptions::try_parse() {
-        Ok(options) => {
-            let vcount = options.verbose as usize;
-            blkcaptapp_run(|_| command_dispath(options), vcount, true);
-        }
+    let maybe_options = CliOptions::try_parse();
+    let vcount = maybe_options.as_ref().map(|o| o.verbose as usize).unwrap_or_default();
+    blkcaptapp_run(|_| async_main(maybe_options), vcount, true);
+}
+
+async fn async_main(options: clap::Result<CliOptions>) -> Result<()> {
+    match options {
+        Ok(options) => command_dispath(options).await,
         Err(e) => {
-            let message = e.to_string();
-            println!("{}", message.replace("error:", "ERRO:"));
-            println!();
+            if e.use_stderr() {
+                Err(anyhow!(ClapErrorWrapper(e)))
+            } else {
+                slog_println!("{}", e);
+                Ok(())
+            }
         }
     }
 }
@@ -38,6 +50,9 @@ async fn command_dispath(options: CliOptions) -> Result<()> {
         },
         TopCommands::Observer(top_options) => match top_options.subcmd {
             ObserverSubCommands::Create(options) => create_observer(options)?,
+            ObserverSubCommands::Update(options) => update_observer(options)?,
+            ObserverSubCommands::Delete(options) => delete_observer(options)?,
+            ObserverSubCommands::Show(options) => show_observer(options)?,
             ObserverSubCommands::Test(options) => test_observer(options).await?,
             ObserverSubCommands::List(options) => list_observer(options)?,
         },
@@ -113,6 +128,37 @@ struct ObserverCommands {
 #[derive(Clap)]
 enum ObserverSubCommands {
     Create(ObserverCreateOptions),
+    Update(ObserverUpdateOptions),
+    Delete(ObserverDeleteOptions),
+    Show(ObserverShowOptions),
     Test(ObserverTestOptions),
     List(ObserverListOptions),
+}
+
+struct ClapErrorWrapper(clap::Error);
+
+impl Error for ClapErrorWrapper {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.0.source().and_then(|e| e.source())
+    }
+}
+
+impl Display for ClapErrorWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let inner = self.0.to_string();
+        write!(
+            f,
+            "{}",
+            inner
+                .replace("error: ", "")
+                .replace("For more information try --help", "")
+                .trim()
+        )
+    }
+}
+
+impl Debug for ClapErrorWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&self.0, f)
+    }
 }

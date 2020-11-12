@@ -1,8 +1,10 @@
+use anyhow::{anyhow, Context as AnyhowContext, Result};
 use comfy_table::presets::UTF8_FULL;
 use comfy_table::*;
 use libblkcapt::model::entities::FeatureState;
 use presets::ASCII_NO_BORDERS;
 use slog_scope::info;
+use std::{error::Error, str::FromStr};
 use uuid::Uuid;
 
 pub fn print_comfy_table(header: Vec<Cell>, rows: impl Iterator<Item = Vec<Cell>>) {
@@ -28,7 +30,15 @@ pub fn comfy_feature_state_cell(state: FeatureState) -> Cell {
 }
 
 pub fn comfy_id_header() -> Cell {
-    Cell::new("ID").add_attribute(Attribute::Bold)
+    comfy_identifier_header("ID")
+}
+
+pub fn comfy_index_header() -> Cell {
+    comfy_identifier_header("Index")
+}
+
+pub fn comfy_identifier_header(name: &str) -> Cell {
+    Cell::new(name).add_attribute(Attribute::Bold)
 }
 
 pub fn comfy_id_value(uuid: Uuid) -> Cell {
@@ -43,7 +53,7 @@ pub fn comfy_id_value_full(uuid: Uuid) -> Cell {
         .add_attribute(Attribute::Bold)
 }
 
-pub fn comfy_name_value(name: &str) -> Cell {
+pub fn comfy_name_value<T: ToString>(name: T) -> Cell {
     Cell::new(name).fg(Color::Blue)
 }
 
@@ -88,5 +98,29 @@ pub fn print_comfy_info(rows: Vec<(Cell, CellOrCells)>) {
         }
     }
 
-    println!("{}", table);
+    info!(#"bc_raw", "{}", table);
+}
+
+#[derive(Debug)]
+pub struct UuidArg(Uuid);
+
+impl UuidArg {
+    pub fn uuid(&self) -> Uuid {
+        self.0
+    }
+
+    pub fn parse(s: &str) -> Result<Uuid> {
+        Self::from_str(s).map(|arg| arg.uuid())
+    }
+}
+
+impl FromStr for UuidArg {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(s)
+            .map(|u| UuidArg(u))
+            .map_err(|e| e.source().map(|e| anyhow!(e.to_string())).unwrap_or(anyhow!(e)))
+            .context(format!("'{}' is not a valid GUID", s))
+    }
 }

@@ -3,7 +3,11 @@ use clap::Clap;
 use comfy_table::Cell;
 use libblkcapt::{
     core::ObservableEventStage,
-    model::{entities::ScheduleModel, entity_by_name},
+    model::{
+        entities::BtrfsDatasetEntity,
+        entities::{BtrfsContainerEntity, ScheduleModel},
+        entity_by_name, EntityPath, EntityPath2, EntityStatic,
+    },
     sys::fs::{find_mountentry, DevicePathBuf},
 };
 use libblkcapt::{
@@ -30,6 +34,8 @@ use crate::ui::{
     comfy_feature_state_cell, comfy_id_header, comfy_id_value, comfy_id_value_full, comfy_name_value, print_comfy_info,
     print_comfy_table,
 };
+
+use super::dataset_search;
 
 // #[derive(Clap, Debug)]
 // struct PoolAttachOptions {
@@ -197,15 +203,7 @@ pub fn show_dataset(options: DatasetShowOptions) -> Result<()> {
     debug!("Command 'show_dataset': {:?}", options);
 
     let entities = storage::load_entity_state();
-    let parts = options.dataset.splitn(2, '/').collect::<Vec<_>>();
-    let dataset = if parts.len() == 2 {
-        let filesystem = entity_by_name(&entities.btrfs_pools, parts[0]).context("Filesystem not found.")?;
-        entity_by_name(&filesystem.datasets, parts[1]).context("Dataset not found in filesystem.")?
-    } else {
-        entity_by_name_or_id(entities.datasets(), parts[0])?
-            .context("Dataset not found.")?
-            .entity
-    };
+    let dataset = dataset_search(&entities, &options.dataset)?;
 
     print_comfy_info(vec![
         (comfy_id_header(), comfy_id_value_full(dataset.id()).into()),
@@ -260,11 +258,11 @@ The retention interval format is [<Repeat>x]<Duration>[:<Count>]. The default Re
 #[clap(after_help(AFTER_HELP))]
 pub struct DatasetUpdateOptions {
     /// Set the snapshots schedule using a simple frequency (e.g. 1hour, 2days)
-    #[clap(short("f"), long, value_name("duration"), conflicts_with("snapshot-schedule"))]
+    #[clap(short('f'), long, value_name("duration"), conflicts_with("snapshot-schedule"))]
     snapshot_frequency: Option<humantime::Duration>,
 
     /// Set the schedule for taking snapshots of this dataset
-    #[clap(short("s"), long, value_name("cron"))]
+    #[clap(short('s'), long, value_name("cron"))]
     snapshot_schedule: Option<ScheduleModel>,
 
     /// Prevent starting new snapshot creation jobs on this dataset
@@ -275,11 +273,11 @@ pub struct DatasetUpdateOptions {
     resume_snapshotting: bool,
 
     /// Specify one or more snapshot retention time intervals
-    #[clap(short("i"), long, value_name("interval"))]
+    #[clap(short('i'), long, value_name("interval"))]
     retention_intervals: Option<Vec<IntervalSpecArg>>,
 
     /// Specify the minimum number of snapshots to retains
-    #[clap(short("m"), long, value_name("count"))]
+    #[clap(short('m'), long, value_name("count"))]
     retain_minimum: Option<NonZeroU32>,
 
     /// Prevent starting new snapshot pruning jobs on this dataset
@@ -336,7 +334,7 @@ pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
         let filesystem = entity_by_name_mut(&mut entities.btrfs_pools, parts[0]).context("Filesystem not found.")?;
         entity_by_name_mut(&mut filesystem.datasets, parts[1]).context("Dataset not found in filesystem.")?
     } else {
-        let dataset_path = entity_by_name_or_id(entities.datasets(), parts[0])?
+        let dataset_path = entity_by_name_or_id(entities.datasets(), parts[0])
             .map(|e| e.into_id_path())
             .context("Dataset not found.")?;
         let filesystem = entity_by_id_mut(&mut entities.btrfs_pools, dataset_path.parent).unwrap();
@@ -438,184 +436,6 @@ pub fn list_container(options: ContainerListOptions) -> Result<()> {
                 comfy_name_value(c.parent.name()),
                 comfy_name_value(c.entity.name()),
                 comfy_feature_state_cell(c.entity.pruning_state()),
-            ]
-        }),
-    );
-
-    Ok(())
-}
-
-#[derive(Clap, Debug)]
-pub struct ObserverCreateOptions {
-    /// Name of the observer.
-    #[clap(short, long, default_value = "default")]
-    name: String,
-
-    /// Type of observer (must be "healthchecks").
-    #[clap(short("t"), long("type"), required(true))]
-    observer_type: String,
-
-    /// Observations specifications.
-    #[clap()]
-    observations: Vec<ObservationArg>,
-}
-
-#[derive(Debug)]
-pub struct ObservationArg {
-    healthcheck_id: Uuid,
-    entity_id: Uuid,
-    event: ObservableEvent,
-}
-
-impl FromStr for ObservationArg {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let outter = s.split('=').collect::<Vec<_>>();
-        let inner = outter[0].split(':').collect::<Vec<_>>();
-        if inner.len() != 2 || outter.len() != 2 {
-            bail!("Interval format is <EntityID>:<Event>=<HealthcheckID>.");
-        };
-        Ok(Self {
-            entity_id: Uuid::parse_str(inner[0])?,
-            healthcheck_id: Uuid::parse_str(outter[1])?,
-            event: ObservableEvent::from_str(inner[1])?,
-        })
-    }
-}
-
-pub fn create_observer(options: ObserverCreateOptions) -> Result<()> {
-    debug!("Command 'create_observer': {:?}", options);
-
-    let mut entities = storage::load_entity_state();
-
-    if options.observer_type != "healthchecks" {
-        bail!("Only healthchecks is supported.");
-    }
-
-    let observations = options
-        .observations
-        .iter()
-        .map(|o| HealthchecksObservation {
-            healthcheck_id: o.healthcheck_id,
-            observation: Observation {
-                entity_id: o.entity_id,
-                event: o.event,
-            },
-        })
-        .collect::<Vec<_>>();
-
-    for observation in observations.iter() {
-        let entity = find_entity(&entities, observation.observation.entity_id).context("Id not found.")?;
-        info!("Found {:?}.", entity);
-    }
-
-    let observer = HealthchecksObserverEntity::new(options.name, observations);
-
-    entities.attach_observer(observer)?;
-
-    storage::store_entity_state(entities);
-
-    Ok(())
-}
-
-fn any_entity<T: Entity>(entity: &T) -> &dyn Entity {
-    entity as &dyn Entity
-}
-
-fn find_entity(entities: &Entities, id: Uuid) -> Option<&dyn Entity> {
-    entities
-        .pool(id)
-        .map(any_entity)
-        .or_else(|| entities.dataset(id).map(|e| any_entity(e.entity)))
-        .or_else(|| entities.container(id).map(|e| any_entity(e.entity)))
-}
-
-#[derive(Clap, Debug)]
-pub struct ObserverTestOptions {
-    /// Fail instead of pass.
-    #[clap(short, long)]
-    fail: bool,
-
-    /// The dataset to update
-    #[clap(value_name("observer|id"))]
-    observer: String,
-
-    /// Id of the source entity.
-    #[clap()]
-    entity: Uuid,
-
-    /// Event to emit.
-    #[clap()]
-    event: ObservableEvent,
-}
-
-pub async fn test_observer(options: ObserverTestOptions) -> Result<()> {
-    debug!("Command 'create_observer': {:?}", options);
-
-    let entities = storage::load_entity_state();
-
-    let observer =
-        entity_by_name_or_id(entities.observers.iter(), &options.observer)?.context("Observer not found.")?;
-
-    let entity = find_entity(&entities, options.entity).context("Id not found.")?;
-    info!("Found {:?}.", entity);
-
-    let emitter = observer
-        .custom_url
-        .clone()
-        .map_or_else(ObservationEmitter::default, ObservationEmitter::new);
-    if let Some(heartbeat_config) = &observer.heartbeat {
-        info!("Testing heartbeat...");
-        emitter
-            .emit(heartbeat_config.healthcheck_id, ObservableEventStage::Succeeded)
-            .await?;
-    }
-    let router = ObservationRouter::new(observer.observations.clone());
-    let matches = router.route(options.entity, options.event);
-    if matches.is_empty() {
-        bail!("No matching observations found.");
-    }
-
-    for observation_match in matches {
-        info!("Testing match: {:?}", observation_match);
-        emitter
-            .emit(observation_match.healthcheck_id, ObservableEventStage::Starting)
-            .await?;
-        tokio::time::delay_for(Duration::from_millis(300)).await;
-
-        let end_stage = match options.fail {
-            true => ObservableEventStage::Failed(String::from("This is a test failure.")),
-            false => ObservableEventStage::Succeeded,
-        };
-        emitter.emit(observation_match.healthcheck_id, end_stage).await?;
-        info!("Test succeeded.");
-    }
-
-    Ok(())
-}
-
-#[derive(Clap, Debug)]
-pub struct ObserverListOptions {}
-
-pub fn list_observer(options: ObserverListOptions) -> Result<()> {
-    debug!("Command 'list_pool': {:?}", options);
-
-    let entities = storage::load_entity_state();
-
-    print_comfy_table(
-        vec![
-            comfy_id_header(),
-            Cell::new("Observer Name"),
-            Cell::new("Observations"),
-            Cell::new("Heartbeat"),
-        ],
-        entities.observers.iter().map(|p| {
-            vec![
-                comfy_id_value(p.id()),
-                comfy_name_value(p.name()),
-                Cell::new(p.observations.len()),
-                comfy_feature_state_cell(p.heartbeat_state()),
             ]
         }),
     );

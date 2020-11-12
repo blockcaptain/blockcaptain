@@ -88,3 +88,8 @@ where
 
     println!();
 }
+
+#[macro_export]
+macro_rules! slog_println( ($($args:tt)+) => {
+    slog_scope::info!(#"bc_raw", $($args)+)
+};);

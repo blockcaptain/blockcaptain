@@ -1,9 +1,9 @@
-use super::{Entity, EntityType};
+use super::{Entity, EntityStatic, EntityType};
 use crate::sys::fs::FsPathBuf;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
 use cron::Schedule;
 use serde::{Deserialize, Serialize};
-use std::{convert::TryFrom, path::PathBuf, str::FromStr};
+use std::{convert::TryFrom, convert::TryInto, path::PathBuf, str::FromStr};
 use std::{default::Default, num::NonZeroU32, time::Duration};
 use strum_macros::Display;
 use strum_macros::EnumString;
@@ -85,6 +85,12 @@ impl Entity for BtrfsPoolEntity {
     }
 }
 
+impl EntityStatic for BtrfsPoolEntity {
+    fn entity_type_static() -> EntityType {
+        EntityType::Pool
+    }
+}
+
 // Why can't i make this generic over T?? I don't understand relationship
 // of sized and generic trait bounds on references.
 impl<'a> AsRef<dyn Entity + 'a> for BtrfsPoolEntity {
@@ -134,6 +140,12 @@ impl Entity for BtrfsDatasetEntity {
         self.id
     }
     fn entity_type(&self) -> EntityType {
+        EntityType::Dataset
+    }
+}
+
+impl EntityStatic for BtrfsDatasetEntity {
+    fn entity_type_static() -> EntityType {
         EntityType::Dataset
     }
 }
@@ -304,6 +316,12 @@ impl Entity for BtrfsContainerEntity {
     }
 }
 
+impl EntityStatic for BtrfsContainerEntity {
+    fn entity_type_static() -> EntityType {
+        EntityType::Container
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SnapshotSyncEntity {
     id: Uuid,
@@ -311,6 +329,12 @@ pub struct SnapshotSyncEntity {
     dataset: Uuid,
     container: Uuid,
     pub sync_mode: SnapshotSyncMode,
+}
+
+impl<'a> AsRef<dyn Entity + 'a> for SnapshotSyncEntity {
+    fn as_ref(&self) -> &(dyn Entity + 'a) {
+        self
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -339,6 +363,12 @@ impl Entity for SnapshotSyncEntity {
         self.id
     }
     fn entity_type(&self) -> EntityType {
+        EntityType::SnapshotSync
+    }
+}
+
+impl EntityStatic for SnapshotSyncEntity {
+    fn entity_type_static() -> EntityType {
         EntityType::SnapshotSync
     }
 }
@@ -393,6 +423,24 @@ pub struct HealthchecksHeartbeat {
     pub healthcheck_id: Uuid,
 }
 
+impl HealthchecksHeartbeat {
+    pub fn new(healthcheck_id: Uuid) -> Self {
+        Self {
+            frequency: Duration::from_secs(5 * 60),
+            healthcheck_id,
+        }
+    }
+
+    pub fn set_frequency(&mut self, duration: Duration) -> Result<()> {
+        let _: ScheduleModel = duration
+            .try_into()
+            .context("heartbeat frequency must be trivially convertible to a cron schedule")?;
+
+        self.frequency = duration;
+        Ok(())
+    }
+}
+
 impl HealthchecksObserverEntity {
     pub fn new(name: String, observations: Vec<HealthchecksObservation>) -> Self {
         Self {
@@ -432,6 +480,12 @@ impl Entity for HealthchecksObserverEntity {
     }
 }
 
+impl EntityStatic for HealthchecksObserverEntity {
+    fn entity_type_static() -> EntityType {
+        EntityType::Observer
+    }
+}
+
 impl<'a> AsRef<dyn Entity + 'a> for HealthchecksObserverEntity {
     fn as_ref(&self) -> &(dyn Entity + 'a) {
         self
@@ -453,4 +507,16 @@ pub enum ObservableEvent {
     ContainerPrune,
     SnapshotSync,
     PoolScrub,
+}
+
+impl ObservableEvent {
+    pub fn entity_type(&self) -> EntityType {
+        match self {
+            ObservableEvent::DatasetSnapshot => EntityType::Dataset,
+            ObservableEvent::DatasetPrune => EntityType::Dataset,
+            ObservableEvent::ContainerPrune => EntityType::Container,
+            ObservableEvent::SnapshotSync => EntityType::SnapshotSync,
+            ObservableEvent::PoolScrub => EntityType::Pool,
+        }
+    }
 }

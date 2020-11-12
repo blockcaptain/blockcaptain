@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 libblkcapt = { path = "../libblkcapt" }
 blkcaptapp = { path = "../blkcaptapp" }
-clap = "3.0.0-beta.1"
+clap = { git = "https://github.com/clap-rs/clap", rev = "022f18278e67cccff53b73fd96ed45abcda028c3" }
 anyhow = "1.0.31"
 thiserror = "1.0.20"
 human-panic = "1.0"

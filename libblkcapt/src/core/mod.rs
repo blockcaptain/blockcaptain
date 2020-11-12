@@ -606,6 +606,8 @@ pub struct ObservationEmitter {
 }
 
 impl ObservationEmitter {
+    pub const DEFAULT_URL: &'static str = "https://hc-ping.com/";
+
     pub fn new(custom_url: String) -> Self {
         Self {
             http_client: HttpsClient::default(),
@@ -638,7 +640,7 @@ impl Default for ObservationEmitter {
     fn default() -> Self {
         Self {
             http_client: HttpsClient::default(),
-            url: String::from("https://hc-ping.com/"),
+            url: String::from(Self::DEFAULT_URL),
         }
     }
 }

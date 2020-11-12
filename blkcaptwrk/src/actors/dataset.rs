@@ -11,24 +11,20 @@ use crate::{
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
 use anyhow::{Context as AnyhowContext, Result};
-
 use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
-    core::localsndrcv::SnapshotSender,
     core::{
-        retention::{evaluate_retention, RetentionEvaluation},
-        BtrfsDataset, BtrfsDatasetHandle, BtrfsDatasetSnapshot, BtrfsDatasetSnapshotHandle, BtrfsPool, BtrfsSnapshot,
+        retention::evaluate_retention, BtrfsDataset, BtrfsDatasetHandle, BtrfsDatasetSnapshot,
+        BtrfsDatasetSnapshotHandle, BtrfsPool, BtrfsSnapshot,
     },
     model::entities::BtrfsDatasetEntity,
     model::entities::FeatureState,
     model::entities::ObservableEvent,
     model::Entity,
 };
-use slog::{debug, error, info, o, trace, Logger};
-
+use slog::{info, o, Logger};
 use std::{convert::TryInto, sync::Arc};
-
 use xactor::{message, Actor, Addr, Context, Sender};
 
 pub struct DatasetActor {

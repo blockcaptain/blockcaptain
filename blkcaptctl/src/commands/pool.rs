@@ -2,12 +2,7 @@ use anyhow::{bail, Context, Result};
 use clap::Clap;
 use comfy_table::Cell;
 use libblkcapt::{
-    core::ObservableEventStage,
-    model::{
-        entities::BtrfsDatasetEntity,
-        entities::{BtrfsContainerEntity, ScheduleModel},
-        entity_by_name, EntityPath, EntityPath2, EntityStatic,
-    },
+    model::entities::ScheduleModel,
     sys::fs::{find_mountentry, DevicePathBuf},
 };
 

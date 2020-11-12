@@ -26,7 +26,7 @@ repos:
         name: clippy
         entry: cargo clippy
         language: system
-        args: ["--", "-D", "warnings"]
+        args: ["--", "-A", "dead-code", "-D", "warnings"]
         types: [rust]
         pass_filenames: false
         require_serial: true

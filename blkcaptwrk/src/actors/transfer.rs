@@ -1,18 +1,3 @@
-use crate::{
-    actorbase::unhandled_error,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
-};
-use anyhow::Result;
-use bytes::BytesMut;
-
-use slog::{error, Logger};
-use std::mem;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    task::JoinHandle,
-};
-use xactor::{message, Actor, Addr, Context, Handler, Sender};
-
 use super::{
     container::ReceiverReadyMessage,
     dataset::SenderReadyMessage,
@@ -22,6 +7,19 @@ use super::{
     localsender::GetReaderMessage,
     localsender::{LocalSenderActor, LocalSenderFinishedMessage},
 };
+use crate::{
+    actorbase::unhandled_error,
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
+use anyhow::Result;
+use bytes::BytesMut;
+use slog::{error, Logger};
+use std::mem;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    task::JoinHandle,
+};
+use xactor::{message, Addr, Context, Sender};
 
 pub struct TransferActor {
     state: State,
@@ -91,7 +89,7 @@ impl TransferActor {
         receiver_result: Result<()>,
     ) {
         let result = transfer_result.and(sender_result).and(receiver_result);
-        self.parent.send(TransferComplete(result));
+        let _ = self.parent.send(TransferComplete(result));
         ctx.stop(None);
     }
 }

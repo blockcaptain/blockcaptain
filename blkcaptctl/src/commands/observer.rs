@@ -5,14 +5,8 @@ use clap::Clap;
 use comfy_table::Cell;
 use hyper::Uri;
 use libblkcapt::core::ObservationRouter;
-use libblkcapt::{
-    core::ObservableEventStage,
-    model::{
-        entities::{HealthchecksHeartbeat, ScheduleModel},
-        entity_by_name, EntityPath, EntityType,
-    },
-    sys::fs::{find_mountentry, DevicePathBuf},
-};
+use libblkcapt::model::{entity_by_id_mut, entity_by_name_or_id, storage, Entity};
+use libblkcapt::{core::ObservableEventStage, model::entities::HealthchecksHeartbeat};
 use libblkcapt::{
     core::ObservationEmitter,
     model::{
@@ -20,10 +14,6 @@ use libblkcapt::{
         entities::{HealthchecksObservation, ObservableEvent, Observation},
         Entities,
     },
-};
-use libblkcapt::{
-    core::{BtrfsContainer, BtrfsDataset, BtrfsPool},
-    model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
 };
 use slog_scope::*;
 use std::{str::FromStr, time::Duration};
@@ -159,7 +149,7 @@ pub fn update_observer(options: ObserverUpdateOptions) -> Result<()> {
     let observer = entity_by_id_mut(entities.observers.as_mut_slice(), observer).context("FIXME")?;
 
     let mut removes = options.remove.clone();
-    removes.sort();
+    removes.sort_unstable();
     for index in removes.iter().rev() {
         observer.observations.remove(*index);
     }
@@ -359,7 +349,7 @@ pub fn show_observer(options: ObserverShowOptions) -> Result<()> {
                             s.healthcheck_id
                         )
                     })
-                    .unwrap_or("Disabled".to_owned()),
+                    .unwrap_or_else(|| "Disabled".to_owned()),
             )
             .into(),
         ),
@@ -408,7 +398,7 @@ impl FromStr for ObservationArg {
         };
         Ok(Self {
             entity: inner[0].to_owned(),
-            healthcheck_id: UuidArg::parse(outter[1]).context(format!("Healthcheck ID is invalid"))?,
+            healthcheck_id: UuidArg::parse(outter[1]).context("Healthcheck ID is invalid")?,
             event: ObservableEvent::from_str(inner[1]).context(format!("Event name '{}' is invalid", inner[1]))?,
         })
     }

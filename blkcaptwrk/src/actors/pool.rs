@@ -1,21 +1,14 @@
-use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
-
-use futures_util::stream::FuturesUnordered;
-use libblkcapt::{
-    core::retention::evaluate_retention, core::retention::RetentionEvaluation, core::BtrfsContainer,
-    core::BtrfsContainerSnapshot, core::BtrfsDataset, core::BtrfsDatasetSnapshot, core::BtrfsPool, core::BtrfsSnapshot,
-    model::entities::BtrfsPoolEntity, model::entities::FeatureState, model::entities::ObservableEvent,
-    model::entities::SnapshotSyncEntity, model::Entity,
-};
-use slog::{error, o, Logger};
-use std::{collections::HashMap, collections::VecDeque, fmt::Debug, fmt::Display, sync::Arc, time::Duration};
-use uuid::Uuid;
-use xactor::{message, Actor, Addr, Context};
-
 use super::{container::ContainerActor, dataset::DatasetActor};
 use crate::xactorext::GetChildActorMessage;
 use crate::xactorext::{BcActor, BcActorCtrl, BcHandler};
+use anyhow::{bail, Result};
+use futures_util::stream::FuturesUnordered;
 use futures_util::stream::StreamExt;
+use libblkcapt::{core::BtrfsPool, model::entities::BtrfsPoolEntity, model::Entity};
+use slog::{error, o, Logger};
+use std::{collections::HashMap, sync::Arc};
+use uuid::Uuid;
+use xactor::{message, Actor, Addr, Context};
 
 pub struct PoolActor {
     pool: PoolState,
@@ -181,7 +174,7 @@ impl BcHandler<GetChildActorMessage<BcActor<DatasetActor>>> for PoolActor {
         _ctx: &mut Context<BcActor<Self>>,
         msg: GetChildActorMessage<BcActor<DatasetActor>>,
     ) -> Option<Addr<BcActor<DatasetActor>>> {
-        self.datasets.get(&msg.0).map(|d| d.clone())
+        self.datasets.get(&msg.0).cloned()
     }
 }
 
@@ -193,6 +186,6 @@ impl BcHandler<GetChildActorMessage<BcActor<ContainerActor>>> for PoolActor {
         _ctx: &mut Context<BcActor<Self>>,
         msg: GetChildActorMessage<BcActor<ContainerActor>>,
     ) -> Option<Addr<BcActor<ContainerActor>>> {
-        self.containers.get(&msg.0).map(|d| d.clone())
+        self.containers.get(&msg.0).cloned()
     }
 }

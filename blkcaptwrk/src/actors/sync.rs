@@ -40,10 +40,10 @@ enum SyncModeState {
 }
 
 fn is_immediate(mode: &SnapshotSyncMode) -> bool {
-    match mode {
-        SnapshotSyncMode::AllImmediate | SnapshotSyncMode::IntervalImmediate(..) => true,
-        _ => false,
-    }
+    matches!(
+        mode,
+        SnapshotSyncMode::AllImmediate | SnapshotSyncMode::IntervalImmediate(..)
+    )
 }
 
 fn get_schedule(mode: &SnapshotSyncMode) -> Option<Result<Schedule>> {

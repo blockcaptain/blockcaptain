@@ -62,7 +62,7 @@ impl BcActorCtrl for LocalReceiverActor {
             tokio::spawn(async move {
                 // TODO cancellation. tokio 0.3 has better process api.
                 let result = receiver.wait().await;
-                internal_callback.send(InternalReceiverFinished(result));
+                let _ = internal_callback.send(InternalReceiverFinished(result));
             });
             self.state = State::Started(Some(Box::new(reader)));
         } else {

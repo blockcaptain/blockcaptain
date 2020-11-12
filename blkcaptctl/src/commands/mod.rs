@@ -1,25 +1,15 @@
 use anyhow::{Context, Result};
-use libblkcapt::{
-    core::ObservableEventStage,
-    model::{
-        entities::BtrfsDatasetEntity,
-        entities::BtrfsPoolEntity,
-        entities::{BtrfsContainerEntity, ScheduleModel, SnapshotSyncEntity},
-        entity_by_name, EntityPath, EntityPath1, EntityPath2, EntityStatic, EntityType,
-    },
-    sys::fs::{find_mountentry, DevicePathBuf},
+use libblkcapt::model::{
+    entities::BtrfsDatasetEntity,
+    entities::BtrfsPoolEntity,
+    entities::{BtrfsContainerEntity, SnapshotSyncEntity},
+    entity_by_name, EntityPath, EntityPath1, EntityPath2, EntityStatic, EntityType,
 };
 use libblkcapt::{
-    core::ObservationEmitter,
-    model::{
-        entities::HealthchecksObserverEntity,
-        entities::{HealthchecksObservation, ObservableEvent, Observation},
-        Entities,
-    },
-    model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, Entity},
+    model::{entities::HealthchecksObserverEntity, Entities},
+    model::{entity_by_name_or_id, Entity},
 };
 use uuid::Uuid;
-
 pub mod observer;
 pub mod pool;
 
@@ -89,7 +79,7 @@ pub fn entity_by_type_search<'a>(
     }
 }
 
-fn entity_search1<'a, 'b, T1, I1>(all_entities: I1, query: &str) -> Result<&'a T1>
+fn entity_search1<'a, T1, I1>(all_entities: I1, query: &str) -> Result<&'a T1>
 where
     T1: Entity + EntityStatic + AsRef<dyn Entity + 'a> + 'a,
     I1: Iterator<Item = &'a T1>,

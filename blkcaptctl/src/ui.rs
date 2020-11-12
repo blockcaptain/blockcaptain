@@ -119,7 +119,7 @@ impl FromStr for UuidArg {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Uuid::parse_str(s)
-            .map(|u| UuidArg(u))
+            .map(UuidArg)
             .map_err(|e| e.source().map(|e| anyhow!(e.to_string())).unwrap_or(anyhow!(e)))
             .context(format!("'{}' is not a valid GUID", s))
     }

@@ -10,25 +10,14 @@ use libblkcapt::{
     },
     sys::fs::{find_mountentry, DevicePathBuf},
 };
-use libblkcapt::{
-    core::ObservationEmitter,
-    model::{
-        entities::HealthchecksObserverEntity,
-        entities::{HealthchecksObservation, ObservableEvent, Observation},
-        Entities,
-    },
-};
-use libblkcapt::{
-    core::ObservationRouter,
-    model::entities::{IntervalSpec, KeepSpec},
-};
+
+use libblkcapt::model::entities::{IntervalSpec, KeepSpec};
 use libblkcapt::{
     core::{BtrfsContainer, BtrfsDataset, BtrfsPool},
     model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
 };
 use slog_scope::*;
-use std::{convert::TryInto, num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
-use uuid::Uuid;
+use std::{convert::TryInto, num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc};
 
 use crate::ui::{
     comfy_feature_state_cell, comfy_id_header, comfy_id_value, comfy_id_value_full, comfy_name_value, print_comfy_info,

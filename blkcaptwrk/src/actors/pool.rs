@@ -7,17 +7,14 @@ use libblkcapt::{
     model::entities::BtrfsPoolEntity, model::entities::FeatureState, model::entities::ObservableEvent,
     model::entities::SnapshotSyncEntity, model::Entity,
 };
-use slog::{debug, error, o, Logger};
+use slog::{error, o, Logger};
 use std::{collections::HashMap, collections::VecDeque, fmt::Debug, fmt::Display, sync::Arc, time::Duration};
 use uuid::Uuid;
-use xactor::{message, Actor, Addr, Context, Handler};
+use xactor::{message, Actor, Addr, Context};
 
 use super::{container::ContainerActor, dataset::DatasetActor};
 use crate::xactorext::GetChildActorMessage;
-use crate::{
-    actorbase::unhandled_result,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
-};
+use crate::xactorext::{BcActor, BcActorCtrl, BcHandler};
 use futures_util::stream::StreamExt;
 
 pub struct PoolActor {

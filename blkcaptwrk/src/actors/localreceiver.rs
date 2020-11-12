@@ -3,14 +3,11 @@ use crate::{
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
 use anyhow::Result;
-use libblkcapt::core::{
-    localsndrcv::{SnapshotReceiver, StartedSnapshotReceiver},
-    BtrfsContainerSnapshot,
-};
+use libblkcapt::core::{localsndrcv::SnapshotReceiver, BtrfsContainerSnapshot};
 use slog::Logger;
 use std::mem;
 use tokio::io::AsyncWrite;
-use xactor::{message, Addr, Caller, Context, Sender};
+use xactor::{message, Caller, Context, Sender};
 
 #[message()]
 pub struct ReceiverFinishedMessage(pub Result<()>);
@@ -82,8 +79,8 @@ impl BcHandler<GetWriterMessage> for LocalReceiverActor {
     async fn handle(
         &mut self,
         _log: &Logger,
-        ctx: &mut Context<BcActor<Self>>,
-        msg: GetWriterMessage,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetWriterMessage,
     ) -> Box<dyn AsyncWrite + Send + Unpin> {
         if let State::Started(Some(reader)) = mem::replace(&mut self.state, State::Faulted) {
             self.state = State::Started(None);

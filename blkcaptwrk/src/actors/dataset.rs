@@ -11,7 +11,7 @@ use crate::{
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
 use anyhow::{Context as AnyhowContext, Result};
-use chrono::{DateTime, Local, Timelike, Utc};
+
 use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
@@ -26,10 +26,10 @@ use libblkcapt::{
     model::Entity,
 };
 use slog::{debug, error, info, o, trace, Logger};
-use std::time::Duration;
+
 use std::{convert::TryInto, sync::Arc};
-use uuid::Uuid;
-use xactor::{message, Actor, Addr, Context, Handler, Sender};
+
+use xactor::{message, Actor, Addr, Context, Sender};
 
 pub struct DatasetActor {
     pool: Addr<BcActor<PoolActor>>,
@@ -225,7 +225,7 @@ impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
 
 #[async_trait::async_trait]
 impl BcHandler<LocalSenderFinishedMessage> for DatasetActor {
-    async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: LocalSenderFinishedMessage) {}
+    async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: LocalSenderFinishedMessage) {}
 }
 
 // #[async_trait::async_trait]

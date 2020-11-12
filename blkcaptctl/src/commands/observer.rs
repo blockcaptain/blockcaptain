@@ -1,9 +1,10 @@
 use super::{entity_by_type_lookup, entity_by_type_search, observer_search};
 use crate::ui::*;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Clap;
 use comfy_table::Cell;
 use hyper::Uri;
+use libblkcapt::core::ObservationRouter;
 use libblkcapt::{
     core::ObservableEventStage,
     model::{
@@ -19,10 +20,6 @@ use libblkcapt::{
         entities::{HealthchecksObservation, ObservableEvent, Observation},
         Entities,
     },
-};
-use libblkcapt::{
-    core::ObservationRouter,
-    model::entities::{IntervalSpec, KeepSpec},
 };
 use libblkcapt::{
     core::{BtrfsContainer, BtrfsDataset, BtrfsPool},

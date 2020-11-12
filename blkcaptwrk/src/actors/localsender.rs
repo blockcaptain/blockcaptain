@@ -1,6 +1,6 @@
 use crate::xactorext::{BcActor, BcActorCtrl, BcHandler};
 use anyhow::Result;
-use libblkcapt::core::localsndrcv::{SnapshotSender, StartedSnapshotSender};
+use libblkcapt::core::localsndrcv::SnapshotSender;
 use slog::Logger;
 use std::mem;
 use tokio::io::AsyncRead;
@@ -73,8 +73,8 @@ impl BcHandler<GetReaderMessage> for LocalSenderActor {
     async fn handle(
         &mut self,
         _log: &Logger,
-        ctx: &mut Context<BcActor<Self>>,
-        msg: GetReaderMessage,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetReaderMessage,
     ) -> Box<dyn AsyncRead + Send + Unpin> {
         if let State::Started(Some(reader)) = mem::replace(&mut self.state, State::Faulted) {
             self.state = State::Started(None);

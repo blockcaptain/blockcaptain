@@ -1,17 +1,11 @@
 use crate::{
-    actorbase::{unhandled_error, unhandled_result},
+    actorbase::unhandled_error,
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
-use anyhow::{bail, Result};
+use anyhow::Result;
 use bytes::BytesMut;
-use libblkcapt::{
-    core::localsndrcv::{SnapshotReceiver, SnapshotSender, StartedSnapshotReceiver, StartedSnapshotSender},
-    core::sync::find_parent,
-    core::sync::find_ready,
-    core::sync::FindMode,
-    model::entities::{SnapshotSyncEntity, SnapshotSyncMode},
-};
-use slog::{debug, error, Logger};
+
+use slog::{error, Logger};
 use std::mem;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -110,7 +104,7 @@ struct InternalTransferComplete(Result<()>);
 
 #[async_trait::async_trait]
 impl BcActorCtrl for TransferActor {
-    async fn started(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         Ok(())
     }
 
@@ -134,7 +128,7 @@ impl BcHandler<SenderReadyMessage> for TransferActor {
                     }
                 }
             }
-            (State::WaitingForActors(_, _), Err(e)) => {
+            (State::WaitingForActors(_, _), Err(_e)) => {
                 // deal with error
             }
             _ => error!(log, "cant handle message in current state"),
@@ -159,7 +153,7 @@ impl BcHandler<ReceiverReadyMessage> for TransferActor {
                     }
                 }
             }
-            (State::WaitingForActors(_, _), Err(e)) => {
+            (State::WaitingForActors(_, _), Err(_e)) => {
                 // deal with error
             }
             _ => error!(log, "cant handle message in current state"),

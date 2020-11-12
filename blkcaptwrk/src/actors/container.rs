@@ -12,7 +12,6 @@ use anyhow::Result;
 use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
-    core::localsndrcv::SnapshotReceiver,
     core::retention::evaluate_retention,
     core::{
         BtrfsContainer, BtrfsContainerSnapshot, BtrfsContainerSnapshotHandle, BtrfsDatasetSnapshotHandle, BtrfsPool,

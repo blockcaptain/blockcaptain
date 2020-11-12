@@ -11,16 +11,15 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use cron::Schedule;
 use libblkcapt::{
-    core::localsndrcv::{SnapshotReceiver, SnapshotSender},
     core::sync::find_parent,
     core::sync::find_ready,
     core::sync::FindMode,
     core::ObservableEventStage,
     model::entities::{ObservableEvent, SnapshotSyncEntity, SnapshotSyncMode},
 };
-use slog::{debug, error, info, o, trace, Logger};
+use slog::{debug, o, trace, Logger};
 use std::{collections::VecDeque, convert::TryInto, time::Duration};
-use xactor::{message, Actor, Addr, Context, Handler};
+use xactor::{message, Actor, Addr, Context};
 
 pub struct SyncActor {
     dataset: Addr<BcActor<DatasetActor>>,

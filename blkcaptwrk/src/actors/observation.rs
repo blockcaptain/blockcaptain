@@ -1,18 +1,19 @@
 use crate::{
-    actorbase::unhandled_result,
+    actorbase::{schedule_next_message, unhandled_result},
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
 use anyhow::Result;
+use cron::Schedule;
 use libblkcapt::{
     core::ObservableEventStage,
     core::ObservationEmitter,
     core::ObservationRouter,
     model::entities::HealthchecksHeartbeat,
-    model::entities::{HealthchecksObserverEntity, ObservableEvent},
+    model::entities::{HealthchecksObserverEntity, ObservableEvent, ScheduleModel},
     model::Entity,
 };
 use slog::{o, Logger};
-use std::{fmt::Debug, future::Future};
+use std::{convert::TryFrom, convert::TryInto, fmt::Debug, future::Future};
 use uuid::Uuid;
 use xactor::{message, Broker, Context, Service};
 
@@ -26,7 +27,7 @@ pub struct ObservableEventMessage {
 
 #[message()]
 #[derive(Clone)]
-struct HeartbeatMessage();
+struct HeartbeatMessage;
 
 pub async fn observable_func<F, T, E, R>(source: Uuid, event: ObservableEvent, func: F) -> std::result::Result<T, E>
 where
@@ -71,6 +72,7 @@ pub struct HealthchecksActor {
     router: ObservationRouter,
     emitter: ObservationEmitter,
     heartbeat_config: Option<HealthchecksHeartbeat>,
+    heartbeat_schedule: Option<Schedule>,
 }
 
 impl HealthchecksActor {
@@ -83,20 +85,31 @@ impl HealthchecksActor {
                     .custom_url
                     .map_or_else(ObservationEmitter::default, ObservationEmitter::new),
                 heartbeat_config: model.heartbeat,
+                heartbeat_schedule: None,
             },
             &log.new(o!("observer_id" => observer_id)),
         )
+    }
+
+    fn schedule_next_heartbeat(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
+        schedule_next_message(
+            self.heartbeat_schedule.as_ref(),
+            "heartbeat",
+            HeartbeatMessage,
+            log,
+            ctx,
+        );
     }
 }
 
 #[async_trait::async_trait]
 impl BcActorCtrl for HealthchecksActor {
-    async fn started(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         ctx.subscribe::<ObservableEventMessage>().await?;
 
         if let Some(config) = &self.heartbeat_config {
-            ctx.address().send(HeartbeatMessage())?;
-            ctx.send_interval(HeartbeatMessage(), config.frequency);
+            self.heartbeat_schedule = Some(ScheduleModel::try_from(config.frequency)?.try_into()?);
+            self.schedule_next_heartbeat(log, ctx);
         }
 
         Ok(())
@@ -122,7 +135,7 @@ impl BcHandler<ObservableEventMessage> for HealthchecksActor {
 
 #[async_trait::async_trait]
 impl BcHandler<HeartbeatMessage> for HealthchecksActor {
-    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: HeartbeatMessage) {
+    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: HeartbeatMessage) {
         let result = self
             .emitter
             .emit(
@@ -135,5 +148,6 @@ impl BcHandler<HeartbeatMessage> for HealthchecksActor {
             .await;
 
         unhandled_result(log, result);
+        self.schedule_next_heartbeat(log, ctx);
     }
 }

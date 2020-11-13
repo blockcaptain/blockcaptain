@@ -161,6 +161,14 @@ impl TryFrom<&ScheduleModel> for Schedule {
     }
 }
 
+impl TryFrom<ScheduleModel> for Schedule {
+    type Error = anyhow::Error;
+
+    fn try_from(value: ScheduleModel) -> Result<Self, Self::Error> {
+        Self::try_from(&value)
+    }
+}
+
 impl FromStr for ScheduleModel {
     type Err = anyhow::Error;
 

@@ -1,6 +1,6 @@
 use super::{parse_snapshot_label, SnapshotHandle};
 use crate::{
-    model::entities::ResticContainerEntity,
+    model::{entities::ResticContainerEntity, Entity},
     sys::fs::{bind_mount, unmount},
 };
 use anyhow::{anyhow, bail, Context, Error, Result};
@@ -86,7 +86,7 @@ impl ResticRepository {
         let mut command = self.new_command();
         command.args(&["snapshots", "--json"]);
         let output = command.output().await?;
-        Self::parse_snapshots(&output.stdout)
+        Self::parse_snapshots(&output.stdout, self.model().id())
     }
 
     pub fn model(&self) -> &ResticContainerEntity {
@@ -105,7 +105,7 @@ impl ResticRepository {
         command
     }
 
-    fn parse_snapshots(output: &[u8]) -> Result<Vec<ResticContainerSnapshot>> {
+    fn parse_snapshots(output: &[u8], expected_container_id: Uuid) -> Result<Vec<ResticContainerSnapshot>> {
         const UUID_TAG: &str = "uuid=";
         const TS_TAG: &str = "ts=";
 
@@ -114,9 +114,18 @@ impl ResticRepository {
             .map(|v| {
                 v.into_iter()
                     .filter_map(|r| {
-                        let dataset_id = r
-                            .paths
-                            .get(0)
+                        let path = r.paths.get(0);
+
+                        let container_id = path
+                            .and_then(|p| p.parent().and_then(|p| p.file_name()))
+                            .and_then(|f| f.to_str())
+                            .and_then(|s| s.parse::<Uuid>().ok());
+
+                        if container_id.unwrap_or_default() != expected_container_id {
+                            return None;
+                        }
+
+                        let dataset_id = path
                             .and_then(|p| p.file_name())
                             .and_then(|f| f.to_str())
                             .and_then(|s| s.parse().ok());

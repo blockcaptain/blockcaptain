@@ -3,7 +3,8 @@ pub mod storage;
 
 use anyhow::{anyhow, Result};
 use entities::{
-    BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObserverEntity, SnapshotSyncEntity,
+    BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObserverEntity, ResticContainerEntity,
+    SnapshotSyncEntity,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -16,6 +17,7 @@ pub struct Entities {
     pub btrfs_pools: Vec<BtrfsPoolEntity>,
     pub snapshot_syncs: Vec<SnapshotSyncEntity>,
     pub observers: Vec<HealthchecksObserverEntity>,
+    pub restic_containers: Vec<ResticContainerEntity>,
 }
 
 impl Entities {
@@ -103,6 +105,10 @@ impl Entities {
 
     pub fn container(&self, id: Uuid) -> Option<EntityPath2<BtrfsContainerEntity, BtrfsPoolEntity>> {
         entity_by_id(self.containers(), id)
+    }
+
+    pub fn restic_container(&self, id: Uuid) -> Option<&ResticContainerEntity> {
+        entity_by_id(self.restic_containers.iter(), id)
     }
 
     pub fn pool_by_mountpoint_mut(&mut self, path: &Path) -> Option<&mut BtrfsPoolEntity> {
@@ -211,6 +217,7 @@ pub enum EntityType {
     Container,
     SnapshotSync,
     Observer,
+    //ResticContainer,
 }
 
 pub trait Entity: Debug {

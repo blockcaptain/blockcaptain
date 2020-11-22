@@ -1,6 +1,7 @@
 use crate::parsing::{parse_key_value_data, StringPair};
 use anyhow::{anyhow, Context, Error, Result};
 use mnt::{MountEntry, MountIter};
+use nix::mount::{mount, MsFlags};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -123,6 +124,14 @@ pub fn find_mountentry(target: &Path) -> Option<MountEntry> {
     mnt::get_mount(target).expect(MOUNT_EXPECTATION)
 }
 
+pub fn bind_mount(from: &Path, to: &Path) -> Result<()> {
+    let none: Option<&str> = None;
+    mount(Some(from), to, none, MsFlags::MS_BIND, none).context("bind mount syscall failed")
+}
+
+pub fn unmount(path: &Path) -> Result<()> {
+    nix::mount::umount(path).context("unmount syscall failed")
+}
 #[derive(Debug)]
 pub struct BtrfsMountEntry(MountEntry);
 

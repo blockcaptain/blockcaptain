@@ -1,6 +1,6 @@
 pub mod localsndrcv;
+pub mod restic;
 pub mod retention;
-pub mod sync;
 use crate::model::Entity;
 use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
@@ -209,6 +209,13 @@ impl BtrfsDataset {
         })
     }
 
+    pub fn state(&self) -> BtrfsDatasetState {
+        match self.parent_uuid() {
+            Some(parent_snapshot) => BtrfsDatasetState::Restored { parent_snapshot },
+            None => BtrfsDatasetState::Original,
+        }
+    }
+
     pub fn model(&self) -> &BtrfsDatasetEntity {
         &self.model
     }
@@ -250,6 +257,10 @@ impl BtrfsDatasetSnapshot {
         &self.subvolume.path
     }
 
+    pub fn canonical_path(&self) -> PathBuf {
+        self.path().as_pathbuf(&self.dataset.pool.filesystem.fstree_mountpoint)
+    }
+
     pub fn parent_uuid(&self) -> Option<Uuid> {
         self.subvolume.parent_uuid
     }
@@ -265,6 +276,20 @@ impl BtrfsDatasetSnapshot {
                 .filesystem
                 .send_subvolume(self.path(), parent.map(|s| s.path())),
         )
+    }
+
+    pub fn state(&self) -> BtrfsDatasetSnapshotState {
+        match self.received_uuid() {
+            Some(source_snapshot) => BtrfsDatasetSnapshotState::Restored {
+                source_snapshot,
+                parent_snapshot: self.parent_uuid(),
+            },
+            None => BtrfsDatasetSnapshotState::Original {
+                parent_dataset: self
+                    .parent_uuid()
+                    .expect("INVARIANT: Local snapshots always have a parent."),
+            },
+        }
     }
 }
 
@@ -302,61 +327,9 @@ impl AsRef<BtrfsDatasetSnapshot> for BtrfsDatasetSnapshot {
     }
 }
 
-pub struct BtrfsDatasetHandle {
-    pub uuid: Uuid,
-    pub state: BtrfsDatasetState,
-}
-
-impl<T> From<T> for BtrfsDatasetHandle
-where
-    T: AsRef<BtrfsDataset>,
-{
-    fn from(dataset: T) -> Self {
-        let dataset = dataset.as_ref();
-        Self {
-            uuid: dataset.uuid(),
-            state: match dataset.parent_uuid() {
-                Some(parent_snapshot) => BtrfsDatasetState::Restored { parent_snapshot },
-                None => BtrfsDatasetState::Original,
-            },
-        }
-    }
-}
-
 pub enum BtrfsDatasetState {
     Restored { parent_snapshot: Uuid },
     Original,
-}
-
-#[derive(Debug, Clone)]
-pub struct BtrfsDatasetSnapshotHandle {
-    pub datetime: DateTime<Utc>,
-    pub uuid: Uuid,
-    pub state: BtrfsDatasetSnapshotState,
-}
-
-impl<T> From<T> for BtrfsDatasetSnapshotHandle
-where
-    T: AsRef<BtrfsDatasetSnapshot>,
-{
-    fn from(snapshot: T) -> Self {
-        let snapshot = snapshot.as_ref();
-        Self {
-            datetime: snapshot.datetime(),
-            uuid: snapshot.uuid(),
-            state: match snapshot.received_uuid() {
-                Some(source_snapshot) => BtrfsDatasetSnapshotState::Restored {
-                    source_snapshot,
-                    parent_snapshot: snapshot.parent_uuid(),
-                },
-                None => BtrfsDatasetSnapshotState::Original {
-                    parent_dataset: snapshot
-                        .parent_uuid()
-                        .expect("INVARIANT: Local snapshots always have a parent."),
-                },
-            },
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -370,29 +343,6 @@ pub enum BtrfsDatasetSnapshotState {
     },
 }
 
-#[derive(Debug)]
-pub struct BtrfsContainerSnapshotHandle {
-    pub datetime: DateTime<Utc>,
-    pub uuid: Uuid,
-    pub source_snapshot: Uuid,
-    pub parent_snapshot: Option<Uuid>,
-}
-
-impl<T> From<T> for BtrfsContainerSnapshotHandle
-where
-    T: AsRef<BtrfsContainerSnapshot>,
-{
-    fn from(snapshot: T) -> Self {
-        let snapshot = snapshot.as_ref();
-        Self {
-            datetime: snapshot.datetime(),
-            uuid: snapshot.uuid(),
-            source_snapshot: snapshot.received_uuid(),
-            parent_snapshot: snapshot.parent_uuid(),
-        }
-    }
-}
-
 // #[derive(Error, Debug)]
 // #[error("{source}")]
 // pub struct SnapshotDeleteError<T: BtrfsSnapshot> {
@@ -400,6 +350,24 @@ where
 //     pub source: anyhow::Error,
 //     pub snapshot: T,
 // }
+
+#[derive(Debug, Clone)]
+pub struct SnapshotHandle {
+    pub datetime: DateTime<Utc>,
+    pub uuid: Uuid,
+}
+
+impl<T> From<&T> for SnapshotHandle
+where
+    T: BtrfsSnapshot,
+{
+    fn from(snapshot: &T) -> Self {
+        Self {
+            datetime: snapshot.datetime(),
+            uuid: snapshot.uuid(),
+        }
+    }
+}
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -446,12 +414,12 @@ impl BtrfsContainer {
         Ok(snapshots)
     }
 
-    pub fn corresponding_snapshot(
+    pub fn snapshot_by_datetime(
         self: &Arc<Self>,
         dataset_id: Uuid,
-        handle: &BtrfsDatasetSnapshotHandle,
+        datetime: DateTime<Utc>,
     ) -> Result<BtrfsContainerSnapshot> {
-        let name = handle.datetime.format("%FT%H-%M-%SZ.bcrcv").to_string();
+        let name = datetime.format("%FT%H-%M-%SZ.bcrcv").to_string();
         self.snapshot_by_name(dataset_id, &name)
     }
 
@@ -494,24 +462,29 @@ impl BtrfsContainer {
         self.pool
             .filesystem
             .subvolume_by_path(&self.snapshot_container_path(dataset_id).join(name))
-            .and_then(|s| self.new_child_snapshot(s).map_err(|e| anyhow!(e)))
+            .and_then(|s| self.new_child_snapshot(s))
     }
 
-    fn new_child_snapshot(self: &Arc<Self>, subvolume: Subvolume) -> chrono::ParseResult<BtrfsContainerSnapshot> {
-        NaiveDateTime::parse_from_str(
+    fn new_child_snapshot(self: &Arc<Self>, subvolume: Subvolume) -> Result<BtrfsContainerSnapshot> {
+        parse_snapshot_label(
             &subvolume
                 .path
                 .file_stem()
                 .expect("Snapshot path always has filename.")
                 .to_string_lossy(),
-            "%FT%H-%M-%SZ",
         )
-        .map(|naive_datetime| BtrfsContainerSnapshot {
+        .map(|datetime| BtrfsContainerSnapshot {
             subvolume,
-            datetime: DateTime::<Utc>::from_utc(naive_datetime, Utc),
+            datetime,
             container: Arc::clone(self),
         })
     }
+}
+
+fn parse_snapshot_label(value: &str) -> Result<DateTime<Utc>> {
+    NaiveDateTime::parse_from_str(value, "%FT%H-%M-%SZ")
+        .map(|naive_datetime| DateTime::<Utc>::from_utc(naive_datetime, Utc))
+        .context("unable to parse snapshot label")
 }
 
 impl Display for BtrfsContainer {

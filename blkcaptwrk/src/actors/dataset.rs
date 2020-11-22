@@ -14,18 +14,16 @@ use anyhow::{Context as AnyhowContext, Result};
 use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
-    core::{
-        retention::evaluate_retention, BtrfsDataset, BtrfsDatasetHandle, BtrfsDatasetSnapshot,
-        BtrfsDatasetSnapshotHandle, BtrfsPool, BtrfsSnapshot,
-    },
+    core::SnapshotHandle,
+    core::{retention::evaluate_retention, BtrfsDataset, BtrfsDatasetSnapshot, BtrfsPool, BtrfsSnapshot},
     model::entities::BtrfsDatasetEntity,
     model::entities::FeatureState,
     model::entities::ObservableEvent,
     model::Entity,
 };
 use slog::{info, o, Logger};
-use std::{convert::TryInto, sync::Arc};
-use xactor::{message, Actor, Addr, Context, Sender};
+use std::{convert::TryInto, path::PathBuf, sync::Arc};
+use xactor::{message, Actor, Addr, Context, Handler, Sender};
 
 pub struct DatasetActor {
     pool: Addr<BcActor<PoolActor>>,
@@ -40,23 +38,77 @@ pub struct DatasetActor {
 struct SnapshotMessage();
 
 #[message(result = "DatasetSnapshotsResponse")]
-pub struct GetDatasetSnapshotsMessage();
+pub struct GetDatasetSnapshotsMessage;
 
 pub struct DatasetSnapshotsResponse {
-    pub dataset: BtrfsDatasetHandle,
-    pub snapshots: Vec<BtrfsDatasetSnapshotHandle>,
+    pub snapshots: Vec<SnapshotHandle>,
 }
 
 #[message(result = "Result<()>")]
 pub struct GetSnapshotSenderMessage {
-    pub send_snapshot_handle: BtrfsDatasetSnapshotHandle,
-    pub parent_snapshot_handle: Option<BtrfsDatasetSnapshotHandle>,
+    pub send_snapshot_handle: SnapshotHandle,
+    pub parent_snapshot_handle: Option<SnapshotHandle>,
     pub target_ready: Sender<SenderReadyMessage>,
     pub target_finished: Sender<LocalSenderFinishedMessage>,
 }
 
+impl GetSnapshotSenderMessage {
+    pub fn new<A>(
+        requestor_addr: &Addr<A>,
+        send_snapshot_handle: SnapshotHandle,
+        parent_snapshot_handle: Option<SnapshotHandle>,
+    ) -> Self
+    where
+        A: Handler<SenderReadyMessage> + Handler<LocalSenderFinishedMessage>,
+    {
+        Self {
+            send_snapshot_handle,
+            parent_snapshot_handle,
+            target_ready: requestor_addr.sender(),
+            target_finished: requestor_addr.sender(),
+        }
+    }
+}
+
 #[message()]
 pub struct SenderReadyMessage(pub Result<Addr<BcActor<LocalSenderActor>>>);
+
+#[message(result = "Result<()>")]
+pub struct GetSnapshotHolderMessage {
+    pub send_snapshot_handle: SnapshotHandle,
+    pub parent_snapshot_handle: Option<SnapshotHandle>,
+    pub target_ready: Sender<HolderReadyMessage>,
+}
+
+impl GetSnapshotHolderMessage {
+    pub fn new<A>(
+        requestor_addr: &Addr<A>,
+        send_snapshot_handle: SnapshotHandle,
+        parent_snapshot_handle: Option<SnapshotHandle>,
+    ) -> Self
+    where
+        A: Handler<HolderReadyMessage>,
+    {
+        Self {
+            send_snapshot_handle,
+            parent_snapshot_handle,
+            target_ready: requestor_addr.sender(),
+        }
+    }
+}
+
+#[message()]
+pub struct HolderReadyMessage {
+    pub holder: Result<Addr<BcActor<DatasetHolderActor>>>,
+    pub snapshot_path: PathBuf,
+    pub parent_snapshot_path: Option<PathBuf>,
+}
+// {
+//     pub send_snapshot_handle: SnapshotHandle,
+//     pub parent_snapshot_handle: Option<SnapshotHandle>,
+//     pub send_snapshot_path: PathBuf,
+//     pub parent_snapshot_path: Option<PathBuf>,
+// }
 
 impl DatasetActor {
     pub fn new(
@@ -175,7 +227,6 @@ impl BcHandler<GetDatasetSnapshotsMessage> for DatasetActor {
         _msg: GetDatasetSnapshotsMessage,
     ) -> DatasetSnapshotsResponse {
         DatasetSnapshotsResponse {
-            dataset: self.dataset.as_ref().into(),
             snapshots: self.snapshots.iter().map(|s| s.into()).collect(),
         }
     }
@@ -214,6 +265,42 @@ impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
         .start()
         .await;
         msg.target_ready.send(SenderReadyMessage(started_sender_actor))?;
+
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<GetSnapshotHolderMessage> for DatasetActor {
+    async fn handle(
+        &mut self,
+        log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        msg: GetSnapshotHolderMessage,
+    ) -> Result<()> {
+        let send_snapshot = self
+            .snapshots
+            .iter()
+            .find(|s| s.uuid() == msg.send_snapshot_handle.uuid)
+            .context("Snapshot not found.")?;
+        let parent_snapshot = match &msg.parent_snapshot_handle {
+            Some(handle) => Some(
+                self.snapshots
+                    .iter()
+                    .find(|s| s.uuid() == handle.uuid)
+                    .context("Parent not found")?,
+            ),
+            None => None,
+        };
+
+        let started_holder_actor = DatasetHolderActor::new(log, msg.send_snapshot_handle, msg.parent_snapshot_handle)
+            .start()
+            .await;
+        msg.target_ready.send(HolderReadyMessage {
+            holder: started_holder_actor,
+            snapshot_path: send_snapshot.canonical_path(),
+            parent_snapshot_path: parent_snapshot.map(|s| s.canonical_path()),
+        })?;
 
         Ok(())
     }
@@ -268,3 +355,25 @@ impl BcHandler<LocalSenderFinishedMessage> for DatasetActor {
 //         self.process_send_queue();
 //     }
 // }
+
+pub struct DatasetHolderActor;
+
+impl DatasetHolderActor {
+    fn new(
+        log: &Logger,
+        send_handle: SnapshotHandle,
+        parent_handle: Option<SnapshotHandle>,
+    ) -> BcActor<DatasetHolderActor> {
+        let snapshot_id = send_handle.uuid.to_string();
+        let log = match parent_handle {
+            Some(parent) => {
+                log.new(o!("snapshot_pinned" => snapshot_id, "snapshot_parent_pinned" => parent.uuid.to_string()))
+            }
+            None => log.new(o!("snapshot_pinned" => snapshot_id)),
+        };
+        BcActor::new(DatasetHolderActor, &log)
+    }
+}
+
+#[async_trait::async_trait]
+impl BcActorCtrl for DatasetHolderActor {}

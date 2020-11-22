@@ -9,7 +9,7 @@ use paste::paste;
 use slog::{error, o, trace, Logger};
 use std::{future::Future, marker::PhantomData};
 use uuid::Uuid;
-use xactor::{Actor, Addr, Context, Handler, Message};
+use xactor::{Actor, Addr, Context, Handler, Message, WeakAddr};
 
 // pub trait ActorAddrExt<T: Actor> {
 //     fn get_child_actor<U, O>(&self, id: Uuid) -> U
@@ -146,7 +146,9 @@ where
 
 impl<A> Drop for BcActor<A> {
     fn drop(&mut self) {
-        self.intel_notify_drop(ActorDropMessage::new(self.actor_id));
+        if self.actor_id != 0 {
+            self.intel_notify_drop(ActorDropMessage::new(self.actor_id));
+        }
     }
 }
 
@@ -169,4 +171,43 @@ fn inner_make_snek_type_name(mut name: &str) -> String {
     }
 
     name.to_snake_case()
+}
+
+pub type BoxBcWeakAddr = Box<dyn BcWeakAddr>;
+pub type BoxBcAddr = Box<dyn BcAddr>;
+
+pub trait BcWeakAddr: Sync + Send {
+    fn upgrade(&self) -> Option<BoxBcAddr>;
+}
+
+pub trait BcAddr: Sync + Send {}
+
+struct BcWeakAddrImpl<T>(WeakAddr<T>);
+
+impl<T: Actor> BcWeakAddr for BcWeakAddrImpl<T> {
+    fn upgrade(&self) -> Option<BoxBcAddr> {
+        self.0.upgrade().map(|a| a.into())
+    }
+}
+
+struct BcAddrImpl<T>(Addr<T>);
+
+impl<T> BcAddr for BcAddrImpl<T> {}
+
+impl<T: Actor> From<Addr<T>> for BoxBcWeakAddr {
+    fn from(addr: Addr<T>) -> Self {
+        addr.downgrade().into()
+    }
+}
+
+impl<T: Actor> From<WeakAddr<T>> for BoxBcWeakAddr {
+    fn from(addr: WeakAddr<T>) -> Self {
+        Box::new(BcWeakAddrImpl(addr))
+    }
+}
+
+impl<T: Actor> From<Addr<T>> for BoxBcAddr {
+    fn from(addr: Addr<T>) -> Self {
+        Box::new(BcAddrImpl(addr))
+    }
 }

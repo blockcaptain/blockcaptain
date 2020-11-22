@@ -1,35 +1,46 @@
 use super::{
-    container::ContainerActor, container::GetContainerSnapshotsMessage, container::GetSnapshotReceiverMessage,
-    dataset::DatasetActor, dataset::GetDatasetSnapshotsMessage, dataset::GetSnapshotSenderMessage,
-    observation::ObservableEventMessage, transfer::TransferActor, transfer::TransferComplete,
+    container::ContainerActor,
+    container::GetSnapshotReceiverMessage,
+    dataset::DatasetActor,
+    dataset::GetDatasetSnapshotsMessage,
+    dataset::{GetSnapshotHolderMessage, GetSnapshotSenderMessage},
+    observation::ObservableEventMessage,
+    restic::GetBackupMessage,
+    restic::{ResticContainerActor, ResticTransferActor},
+    transfer::TransferActor,
+    transfer::TransferComplete,
 };
 use crate::{
     actorbase::{schedule_next_message, unhandled_result},
+    snapshots::{find_parent, find_ready, FindMode, GetContainerSnapshotsMessage},
+    xactorext::BoxBcAddr,
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use cron::Schedule;
 use libblkcapt::{
-    core::sync::find_parent,
-    core::sync::find_ready,
-    core::sync::FindMode,
-    core::ObservableEventStage,
+    core::{ObservableEventStage, SnapshotHandle},
     model::entities::{ObservableEvent, SnapshotSyncEntity, SnapshotSyncMode},
 };
 use slog::{debug, o, trace, Logger};
 use std::{collections::VecDeque, convert::TryInto, time::Duration};
-use xactor::{message, Actor, Addr, Context};
+use xactor::{message, Actor, Addr, Context, Handler};
 
 pub struct SyncActor {
     dataset: Addr<BcActor<DatasetActor>>,
-    container: Addr<BcActor<ContainerActor>>,
+    container: SyncToContainer,
     model: SnapshotSyncEntity,
 
     state_mode: SyncModeState,
-    state_active_send: Option<(Addr<BcActor<TransferActor>>, DateTime<Utc>)>,
+    state_active_send: Option<(BoxBcAddr, DateTime<Utc>)>,
     last_sent: Option<DateTime<Utc>>,
     sync_cycle_schedule: Option<Schedule>,
+}
+
+pub enum SyncToContainer {
+    Btrfs(Addr<BcActor<ContainerActor>>),
+    Restic(Addr<BcActor<ResticContainerActor>>),
 }
 
 enum SyncModeState {
@@ -60,7 +71,7 @@ struct StartSnapshotSyncCycleMessage;
 impl SyncActor {
     pub fn new(
         dataset: Addr<BcActor<DatasetActor>>,
-        container: Addr<BcActor<ContainerActor>>,
+        container: SyncToContainer,
         model: SnapshotSyncEntity,
         log: &Logger,
     ) -> BcActor<Self> {
@@ -88,32 +99,21 @@ impl SyncActor {
     }
 
     async fn run_cycle<'a>(&'a mut self, ctx: &Context<BcActor<Self>>, log: &Logger) -> Result<()> {
-        let dataset = self.dataset.call(GetDatasetSnapshotsMessage()).await.unwrap();
-        let container = self
-            .container
-            .call(GetContainerSnapshotsMessage {
-                source_dataset_id: self.model.dataset_id(),
-            })
-            .await
-            .unwrap();
-
-        // trace!(log, "CONTAINER CONTENT");
-        // for snapshot in &container.snapshots {
-        //     trace!(log, "SNAPSHOT IN CONTAINER: {:?}", snapshot);
-        // }
+        let dataset_snapshots = self.get_dataset_snapshots().await?;
+        let container_snapshots = self.get_container_snapshots().await?;
 
         let to_send = match &mut self.state_mode {
             SyncModeState::LatestScheduled(queue) | SyncModeState::LatestImmediate(queue, _) => queue
                 .pop_front()
-                .and_then(|limit| find_ready(&dataset.snapshots, &container.snapshots, FindMode::LatestBefore(limit))),
+                .and_then(|limit| find_ready(&dataset_snapshots, &container_snapshots, FindMode::LatestBefore(limit))),
             SyncModeState::AllScheduled(limit) => limit.and_then(|limit| {
                 find_ready(
-                    &dataset.snapshots,
-                    &container.snapshots,
+                    &dataset_snapshots,
+                    &container_snapshots,
                     FindMode::EarliestBefore(limit),
                 )
             }),
-            SyncModeState::AllImmediate => find_ready(&dataset.snapshots, &container.snapshots, FindMode::Earliest),
+            SyncModeState::AllImmediate => find_ready(&dataset_snapshots, &container_snapshots, FindMode::Earliest),
         };
 
         let to_send = if let Some(handle) = to_send {
@@ -123,38 +123,10 @@ impl SyncActor {
             return Ok(());
         };
 
-        let parent = find_parent(to_send, &dataset.snapshots, &container.snapshots);
+        let parent = find_parent(to_send, &dataset_snapshots, &container_snapshots);
 
-        let transfer_actor = TransferActor::new(
-            ctx.address().sender::<TransferComplete>(),
-            &log.new(o!("message" => ())),
-        );
-
-        let transfer_actor = transfer_actor.start().await.unwrap();
-        let sender_ready_sender = transfer_actor.sender();
-        let sender_finished_sender = transfer_actor.sender();
-
-        self.dataset
-            .call(GetSnapshotSenderMessage {
-                send_snapshot_handle: to_send.clone(),
-                parent_snapshot_handle: parent.cloned(),
-                target_ready: sender_ready_sender,
-                target_finished: sender_finished_sender,
-            })
-            .await
-            .unwrap()?;
-
-        self.container
-            .call(GetSnapshotReceiverMessage::new(
-                &transfer_actor,
-                self.model.dataset_id(),
-                to_send.clone(),
-            ))
-            .await
-            .unwrap()?;
-
+        let transfer_actor = self.start_transfer_actor(to_send, parent, ctx, log).await?;
         self.state_active_send = Some((transfer_actor, to_send.datetime));
-
         Ok(())
     }
 
@@ -167,6 +139,96 @@ impl SyncActor {
                 log,
                 ctx,
             );
+        }
+    }
+
+    async fn get_container_snapshots(&self) -> Result<Vec<SnapshotHandle>> {
+        match &self.container {
+            SyncToContainer::Btrfs(c) => self._get_container_snapshots(c).await,
+            SyncToContainer::Restic(c) => self._get_container_snapshots(c).await,
+        }
+    }
+
+    async fn _get_container_snapshots<T: Handler<GetContainerSnapshotsMessage>>(
+        &self,
+        addr: &Addr<T>,
+    ) -> Result<Vec<SnapshotHandle>> {
+        addr.call(GetContainerSnapshotsMessage {
+            source_dataset_id: self.model.dataset_id(),
+        })
+        .await
+        .map(|r| r.snapshots)
+    }
+
+    async fn get_dataset_snapshots(&self) -> Result<Vec<SnapshotHandle>> {
+        self.dataset.call(GetDatasetSnapshotsMessage).await.map(|r| r.snapshots)
+    }
+
+    async fn start_transfer_actor(
+        &self,
+        snapshot: &SnapshotHandle,
+        parent: Option<&SnapshotHandle>,
+        ctx: &Context<BcActor<Self>>,
+        log: &Logger,
+    ) -> Result<BoxBcAddr> {
+        match &self.container {
+            SyncToContainer::Btrfs(container) => {
+                let transfer_actor = TransferActor::new(
+                    ctx.address().sender::<TransferComplete>(),
+                    &log.new(o!("message" => ())),
+                );
+
+                let transfer_actor = transfer_actor.start().await.unwrap();
+
+                self.dataset
+                    .call(GetSnapshotSenderMessage::new(
+                        &transfer_actor,
+                        snapshot.clone(),
+                        parent.cloned(),
+                    ))
+                    .await
+                    .unwrap()?;
+
+                container
+                    .call(GetSnapshotReceiverMessage::new(
+                        &transfer_actor,
+                        self.model.dataset_id(),
+                        snapshot.clone(),
+                    ))
+                    .await
+                    .unwrap()?;
+
+                Ok(transfer_actor.into())
+            }
+            SyncToContainer::Restic(container) => {
+                let transfer_actor = ResticTransferActor::new(
+                    ctx.address().sender::<TransferComplete>(),
+                    container.clone(),
+                    &log.new(o!("message" => ())),
+                );
+
+                let transfer_actor = transfer_actor.start().await.unwrap();
+
+                self.dataset
+                    .call(GetSnapshotHolderMessage::new(
+                        &transfer_actor,
+                        snapshot.clone(),
+                        parent.cloned(),
+                    ))
+                    .await
+                    .unwrap()?;
+
+                container
+                    .call(GetBackupMessage::new(
+                        &transfer_actor,
+                        self.model.dataset_id(),
+                        snapshot.clone(),
+                    ))
+                    .await
+                    .unwrap()?;
+
+                Ok(transfer_actor.into())
+            }
         }
     }
 }
@@ -182,15 +244,7 @@ impl BcActorCtrl for SyncActor {
         self.schedule_next_cycle(log, ctx);
 
         if matches!(self.model.sync_mode, SnapshotSyncMode::IntervalImmediate(..)) {
-            self.last_sent = self
-                .container
-                .call(GetContainerSnapshotsMessage {
-                    source_dataset_id: self.model.dataset_id(),
-                })
-                .await?
-                .snapshots
-                .last()
-                .map(|s| s.datetime);
+            self.last_sent = self.get_container_snapshots().await?.last().map(|s| s.datetime);
         }
 
         Ok(())

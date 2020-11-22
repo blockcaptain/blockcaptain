@@ -1,5 +1,5 @@
-use super::pool::PoolActor;
 use super::{observation::HealthchecksActor, sync::SyncActor};
+use super::{pool::PoolActor, restic::ResticContainerActor, sync::SyncToContainer};
 use crate::xactorext::{join_all_actors, stop_all_actors, GetChildActorMessage};
 use crate::xactorext::{BcActor, BcActorCtrl};
 use anyhow::{Context as AnyhowContext, Result};
@@ -17,6 +17,7 @@ pub struct CaptainActor {
     healthcheck_actors: Vec<Addr<BcActor<HealthchecksActor>>>,
     sync_actors: Vec<Addr<BcActor<SyncActor>>>,
     pool_actors: HashMap<Uuid, Addr<BcActor<PoolActor>>>,
+    restic_actors: HashMap<Uuid, Addr<BcActor<ResticContainerActor>>>,
 }
 
 impl CaptainActor {
@@ -26,6 +27,7 @@ impl CaptainActor {
                 healthcheck_actors: Default::default(),
                 sync_actors: Default::default(),
                 pool_actors: Default::default(),
+                restic_actors: Default::default(),
             },
             log,
         )
@@ -42,30 +44,42 @@ impl CaptainActor {
             .map(|p| p.parent.id())
             .context("Invalid sync configuration. Source dataset does not exist.")?;
 
-        let container_pool_id = entities
-            .container(model.container_id())
-            .map(|p| p.parent.id())
-            .context("Invalid sync configuration. Destination container does not exist.")?;
-
         let dataset_pool = self
             .pool_actors
             .get(&dataset_pool_id)
             .context("Source dataset's pool didn't start.")?;
-        let container_pool = self
-            .pool_actors
-            .get(&container_pool_id)
-            .context("Destination container's pool didn't start.")?;
 
         let dataset_actor = dataset_pool
             .call(GetChildActorMessage::new(model.dataset_id()))
             .await?
             .context("Source dataset didn't start.")?;
-        let container_actor = container_pool
-            .call(GetChildActorMessage::new(model.container_id()))
-            .await?
-            .context("Destination container didn't start.")?;
 
-        Ok(SyncActor::new(dataset_actor, container_actor, model, log))
+        let maybe_container_pool_id = entities.container(model.container_id()).map(|p| p.parent.id());
+
+        let to_container_actor = if let Some(container_pool_id) = maybe_container_pool_id {
+            let container_pool = self
+                .pool_actors
+                .get(&container_pool_id)
+                .context("Destination container's pool didn't start.")?;
+            let container_actor = container_pool
+                .call(GetChildActorMessage::new(model.container_id()))
+                .await?
+                .context("Destination container didn't start.")?;
+
+            SyncToContainer::Btrfs(container_actor)
+        } else {
+            let _ = entities
+                .restic_container(model.container_id())
+                .context("Invalid sync configuration. Destination container does not exist.")?;
+            let container_actor = self
+                .restic_actors
+                .get(&model.container_id())
+                .context("Destination restic container didn't start.")?;
+
+            SyncToContainer::Restic(container_actor.clone())
+        };
+
+        Ok(SyncActor::new(dataset_actor, to_container_actor, model, log))
     }
 }
 
@@ -117,6 +131,29 @@ impl BcActorCtrl for CaptainActor {
                 .collect();
         }
 
+        if !entities.restic_containers.is_empty() {
+            trace!(log, "building restic actors");
+            self.restic_actors = entities
+                .restic_containers
+                .iter()
+                .map(|m| async move {
+                    let addr = ResticContainerActor::new(m.clone(), &log).start().await?;
+                    Result::<_>::Ok((m.id(), addr))
+                })
+                .collect::<FuturesUnordered<_>>()
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .filter_map(|sa| match sa {
+                    Ok(started_actor) => Some(started_actor),
+                    Err(error) => {
+                        error!(log, "Failed to start restic actor: {}", error);
+                        None
+                    }
+                })
+                .collect();
+        };
+
         if !entities.snapshot_syncs.is_empty() {
             trace!(log, "building sync actors");
             self.sync_actors = stream::iter(mem::take(&mut entities.snapshot_syncs).into_iter())
@@ -152,9 +189,11 @@ impl BcActorCtrl for CaptainActor {
         stop_all_actors(&mut self.healthcheck_actors);
         stop_all_actors(&mut self.sync_actors);
         stop_all_actors(self.pool_actors.values_mut());
+        stop_all_actors(self.restic_actors.values_mut());
 
         join_all_actors(self.healthcheck_actors.drain(..)).await;
         join_all_actors(self.sync_actors.drain(..)).await;
         join_all_actors(self.pool_actors.drain().map(|(_k, v)| v)).await;
+        join_all_actors(self.restic_actors.drain().map(|(_k, v)| v)).await;
     }
 }

@@ -7,6 +7,7 @@ pub mod actors {
     pub mod localsender;
     pub mod observation;
     pub mod pool;
+    pub mod restic;
     pub mod sync;
     pub mod transfer;
 }

@@ -1,3 +1,4 @@
+use crate::xactorext::BoxBcWeakAddr;
 use anyhow::Result;
 use once_cell::sync::OnceCell;
 use slog::{error, trace, warn, Logger};
@@ -6,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 use strum_macros::Display;
-use xactor::{message, Actor, Addr, Context, Handler, WeakAddr};
+use xactor::{message, Actor, Addr, Context, Handler};
 
 pub struct IntelActor {
     log: Logger,
@@ -14,11 +15,11 @@ pub struct IntelActor {
 }
 
 #[message]
-pub struct ActorStartMessage(u64, Box<dyn BcWeakAddr + Send>);
+pub struct ActorStartMessage(u64, BoxBcWeakAddr);
 
 impl ActorStartMessage {
     pub fn new<T: Actor>(actor_id: u64, actor_address: Addr<T>) -> Self {
-        Self(actor_id, Box::new(BcWeakAddrImpl(actor_address.downgrade())))
+        Self(actor_id, actor_address.into())
     }
 }
 
@@ -69,7 +70,7 @@ impl IntelActor {
 static INTEL_ACTOR_SINGLETON: OnceCell<Addr<IntelActor>> = OnceCell::new();
 
 struct Tractor {
-    actor: Box<dyn BcWeakAddr + Send>,
+    actor: BoxBcWeakAddr,
     state: ActorState,
     changed: Instant,
 }
@@ -175,21 +176,3 @@ impl Default for IntelActor {
         IntelActor::new(&slog_scope::logger())
     }
 }
-
-trait BcWeakAddr {
-    fn upgrade(&self) -> Option<Box<dyn BcAddr>>;
-}
-
-trait BcAddr {}
-
-struct BcWeakAddrImpl<T>(WeakAddr<T>);
-
-impl<T: 'static> BcWeakAddr for BcWeakAddrImpl<T> {
-    fn upgrade(&self) -> Option<Box<dyn BcAddr>> {
-        self.0.upgrade().map(|a| Box::new(BcAddrImpl(a)) as Box<dyn BcAddr>)
-    }
-}
-
-struct BcAddrImpl<T>(Addr<T>);
-
-impl<T> BcAddr for BcAddrImpl<T> {}

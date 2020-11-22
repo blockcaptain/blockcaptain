@@ -106,7 +106,9 @@ impl BcActorCtrl for TransferActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {}
+    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
+        // with tokio 0.3, use improved process api to hold handle and kill process
+    }
 }
 
 #[async_trait::async_trait]
@@ -128,6 +130,7 @@ impl BcHandler<SenderReadyMessage> for TransferActor {
             }
             (State::WaitingForActors(_, _), Err(_e)) => {
                 // deal with error
+                todo!();
             }
             _ => error!(log, "cant handle message in current state"),
         }

@@ -3,7 +3,7 @@ use crate::sys::fs::FsPathBuf;
 use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
 use cron::Schedule;
 use serde::{Deserialize, Serialize};
-use std::{convert::TryFrom, convert::TryInto, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, convert::TryFrom, convert::TryInto, path::PathBuf, str::FromStr};
 use std::{default::Default, num::NonZeroU32, time::Duration};
 use strum_macros::Display;
 use strum_macros::EnumString;
@@ -527,4 +527,40 @@ impl ObservableEvent {
             ObservableEvent::PoolScrub => EntityType::Pool,
         }
     }
+}
+
+// ## Restic #######################################################################################################
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ResticContainerEntity {
+    id: Uuid,
+    name: String,
+    pub repository: ResticRepository,
+    pub custom_environment: HashMap<String, String>,
+    pub snapshot_retention: Option<RetentionRuleset>,
+    pub pause_pruning: bool,
+}
+
+impl Entity for ResticContainerEntity {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn id(&self) -> Uuid {
+        self.id
+    }
+    fn entity_type(&self) -> EntityType {
+        EntityType::Container
+    }
+}
+
+impl<'a> AsRef<dyn Entity + 'a> for ResticContainerEntity {
+    fn as_ref(&self) -> &(dyn Entity + 'a) {
+        self
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ResticRepository {
+    Custom(String),
 }

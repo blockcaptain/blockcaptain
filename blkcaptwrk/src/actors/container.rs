@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     actorbase::{schedule_next_message, unhandled_result},
-    snapshots::{prune_snapshots, PruneMessage},
+    snapshots::{prune_snapshots, ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage},
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
 use anyhow::Result;
@@ -13,10 +13,8 @@ use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
     core::retention::evaluate_retention,
-    core::{
-        BtrfsContainer, BtrfsContainerSnapshot, BtrfsContainerSnapshotHandle, BtrfsDatasetSnapshotHandle, BtrfsPool,
-        BtrfsSnapshot,
-    },
+    core::SnapshotHandle,
+    core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsPool, BtrfsSnapshot},
     model::entities::FeatureState,
     model::entities::{BtrfsContainerEntity, ObservableEvent},
     model::Entity,
@@ -39,19 +37,10 @@ pub struct ActiveReceiver {
     dataset_id: Uuid,
 }
 
-#[message(result = "ContainerSnapshotsResponse")]
-pub struct GetContainerSnapshotsMessage {
-    pub source_dataset_id: Uuid,
-}
-
-pub struct ContainerSnapshotsResponse {
-    pub snapshots: Vec<BtrfsContainerSnapshotHandle>,
-}
-
 #[message(result = "Result<()>")]
 pub struct GetSnapshotReceiverMessage {
     source_dataset_id: Uuid,
-    source_snapshot_handle: BtrfsDatasetSnapshotHandle,
+    source_snapshot_handle: SnapshotHandle,
     target_ready: Sender<ReceiverReadyMessage>,
     target_finished: Sender<ReceiverFinishedMessage>,
 }
@@ -60,7 +49,7 @@ impl GetSnapshotReceiverMessage {
     pub fn new<A>(
         requestor_addr: &Addr<A>,
         source_dataset_id: Uuid,
-        source_snapshot_handle: BtrfsDatasetSnapshotHandle,
+        source_snapshot_handle: SnapshotHandle,
     ) -> GetSnapshotReceiverMessage
     where
         A: Handler<ReceiverReadyMessage> + Handler<ReceiverFinishedMessage>,
@@ -165,7 +154,7 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
     ) -> Result<()> {
         if self
             .container
-            .corresponding_snapshot(msg.source_dataset_id, &msg.source_snapshot_handle)
+            .snapshot_by_datetime(msg.source_dataset_id, msg.source_snapshot_handle.datetime)
             .is_ok()
         {
             anyhow::bail!(

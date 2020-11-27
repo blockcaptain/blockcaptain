@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, bail, Context, Error, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer};
-use std::{fmt::Display, fs, path::PathBuf, process::Stdio, str::FromStr, sync::Arc};
+use std::{fmt::Display, path::Path, fs, path::PathBuf, process::Stdio, str::FromStr, sync::Arc};
 use tokio::{
     io::AsyncBufReadExt,
     io::BufReader,
@@ -87,6 +87,19 @@ impl ResticRepository {
         command.args(&["snapshots", "--json"]);
         let output = command.output().await?;
         Self::parse_snapshots(&output.stdout, self.model().id())
+    }
+
+    pub async fn snapshot_by_datetime(
+        self: &Arc<Self>,
+        bind_path: &Path,
+        datetime: DateTime<Utc>,
+    ) -> Result<Option<ResticContainerSnapshot>> {
+        let mut command = self.new_command();
+        let datetime_tag = ResticBackup::datetime_tag(datetime);
+        command.args(&["snapshots", "--json", "--tag", &datetime_tag, "--path"]);
+        command.arg(&bind_path);
+        let output = command.output().await?;
+        Self::parse_snapshots(&output.stdout, self.model().id()).map(|mut r| r.pop())
     }
 
     pub async fn forget(self: &Arc<Self>, snapshots: &[ResticContainerSnapshot]) -> Result<()> {
@@ -180,7 +193,7 @@ impl ResticBackup {
             "backup",
             "--json",
             "--tag",
-            format!("uuid={},ts={}", snapshot.uuid, snapshot.datetime.format("%FT%H-%M-%SZ")).as_str(),
+            Self::snapshot_tags(&snapshot).as_str(),
         ]);
 
         ResticBackup {
@@ -193,9 +206,9 @@ impl ResticBackup {
         }
     }
 
-    pub fn start(mut self, path: PathBuf) -> Result<StartedResticBackup> {
+    pub fn start(mut self, path: &Path) -> Result<StartedResticBackup> {
         fs::create_dir_all(&self.source.bind_path)?;
-        bind_mount(&path, &self.source.bind_path)?;
+        bind_mount(path, &self.source.bind_path)?;
 
         // spawn as restic user?
         self.command.arg(&self.source.bind_path);
@@ -203,7 +216,7 @@ impl ResticBackup {
         self.command
             .spawn()
             .map_err(|e| {
-                let _ = unmount(&path);
+                let _ = unmount(path);
                 anyhow!(e)
             })
             .map(|mut process| {
@@ -237,6 +250,18 @@ impl ResticBackup {
             .ok()
             .filter(|m| m.message_type == "summary")
             .map(|m| m.snapshot_id)
+    }
+
+    pub fn datetime_tag(datetime: DateTime<Utc>) -> String {
+        format!("ts={}", datetime.format("%FT%H-%M-%SZ"))
+    }
+
+    pub fn uuid_tag(uuid: Uuid) -> String {
+        format!("uuid={}", uuid)
+    }
+
+    fn snapshot_tags(snapshot: &SnapshotHandle) -> String {
+        format!("{},{}", Self::uuid_tag(snapshot.uuid), Self::datetime_tag(snapshot.datetime))
     }
 }
 

@@ -10,7 +10,7 @@ use crate::{
     tasks::WorkerTask,
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
 use container::BackupReadyMessage;
 pub use container::{GetBackupMessage, ResticContainerActor};
 use cron::Schedule;
@@ -169,24 +169,28 @@ mod container {
             _ctx: &mut Context<BcActor<Self>>,
             msg: GetBackupMessage,
         ) -> Result<()> {
-            // TODO: restic method to look for 1 snapshot
-            // if self
-            //     .container
-            //     .corresponding_snapshot(msg.source_dataset_id, &msg.source_snapshot_handle)
-            //     .is_ok()
-            // {
-            //     anyhow::bail!(
-            //         "receiver requested for existing snapshot dataset_id: {} snapshot_datetime: {}",
-            //         msg.source_dataset_id,
-            //         msg.source_snapshot_handle.datetime
-            //     )
-            // }
-            let repository = &self.repository.get();
-
             const BASE_PATH: &str = "/var/lib/blkcapt/restic";
-            let mut bind_path = PathBuf::from(BASE_PATH);
-            bind_path.push(self.container_id.to_string());
-            bind_path.push(msg.source_dataset_id.to_string());
+            let bind_path = {
+                let mut p = PathBuf::from(BASE_PATH);
+                p.push(self.container_id.to_string());
+                p.push(msg.source_dataset_id.to_string());
+                p
+            };
+
+            let repository = &self.repository.get();
+            let existing_snapshot = repository
+                .snapshot_by_datetime(&bind_path, msg.source_snapshot_handle.datetime)
+                .await
+                .context("existing snapshot check failed")?;
+
+            if existing_snapshot.is_some() {
+                anyhow::bail!(
+                    "backup requested for existing snapshot dataset_id: {} snapshot_datetime: {}",
+                    msg.source_dataset_id,
+                    msg.source_snapshot_handle.datetime
+                )
+            }
+
             let snapshot_backup = repository.backup(bind_path, msg.source_dataset_id, msg.source_snapshot_handle);
             self.active_transfer = Some(ActiveTransfer {
                 actor: msg.target.clone(),
@@ -195,23 +199,6 @@ mod container {
             msg.target.send(BackupReadyMessage(Ok(snapshot_backup)))
         }
     }
-
-    // TODO
-    // #[async_trait::async_trait]
-    // impl BcHandler<ReceiverFinishedParentMessage> for ResticContainerActor {
-    //     async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: ReceiverFinishedParentMessage) {
-    //         let ReceiverFinishedParentMessage(actor_id, new_snapshot) = msg;
-    //         let active_receiver = self.active_receivers.remove(&actor_id).expect("FIXME");
-
-    //         let new_snapshot = new_snapshot.unwrap();
-    //         debug!(log, "container received snapshot {}", new_snapshot.datetime(); "received_uuid" => %new_snapshot.received_uuid());
-
-    //         self.snapshots
-    //             .get_mut(&active_receiver.dataset_id)
-    //             .expect("FIXME")
-    //             .push(new_snapshot);
-    //     }
-    // }
 
     #[async_trait::async_trait]
     impl BcHandler<PruneMessage> for ResticContainerActor {
@@ -341,7 +328,7 @@ mod transfer {
 
         fn maybe_start_transfer(incoming: State, ctx: &mut Context<BcActor<Self>>, log: &Logger) -> State {
             if let State::WaitingForHoldAndBackup(Some(holder_state), Some(backup)) = incoming {
-                let started_backup = backup.start(holder_state.snapshot_path);
+                let started_backup = backup.start(&holder_state.snapshot_path);
                 match started_backup {
                     Ok(started) => {
                         let task = WorkerTask::run(ctx.address(), log, |_| async move { started.wait().await.into() });
@@ -423,6 +410,15 @@ mod prune {
     use super::*;
 
     struct ResticPruneActor {}
+
+    impl ResticPruneActor {
+        pub fn new(
+            container: Addr<BcActor<ResticContainerActor>>,
+            log: &Logger,
+        ) -> BcActor<Self> {
+            todo!();
+        }
+    }
 
     impl ResticPruneActor {}
 

@@ -246,6 +246,8 @@ mod container {
 }
 
 mod transfer {
+    use crate::tasks::wrap;
+
     use super::*;
 
     pub struct ResticTransferActor {
@@ -331,7 +333,7 @@ mod transfer {
                 let started_backup = backup.start(&holder_state.snapshot_path);
                 match started_backup {
                     Ok(started) => {
-                        let task = WorkerTask::run(ctx.address(), log, |_| async move { started.wait().await.into() });
+                        let task = WorkerTask::run(ctx.address(), log, |ctx| async move { ctx; started.wait().await.into() });
                         State::Transferring(holder_state.holder, task)
                     }
                     Err(e) => {

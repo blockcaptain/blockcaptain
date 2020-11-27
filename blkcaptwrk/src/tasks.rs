@@ -22,17 +22,41 @@ impl<T: Send + 'static> Message for WorkerCompleteMessage<T> {
     type Result = ();
 }
 
+pub trait BorrowingFn<'a, A, T> {
+    type Fut: std::future::Future<Output = CancellableResult<T>> + Send + 'a;
+    fn call(self, arg: &'a mut WorkerTaskContext<A>) -> Self::Fut;
+}
+
+impl<'a, Fu: 'a, F, A, T> BorrowingFn<'a, A, T> for F
+where
+    A: Actor,
+    F: FnOnce(&'a mut WorkerTaskContext<A>) -> Fu,
+    Fu: Future<Output = CancellableResult<T>> + Send + 'a,
+{
+    type Fut = Fu;
+    fn call(self, rt: &'a mut WorkerTaskContext<A>) -> Fu {
+        self(rt)
+    }
+}
+
+// pub fn wrap<A: Actor, T, F, Fu>(closure: F) -> impl for<'a> BorrowingFn<'a, A, T>
+// where
+//     F: for<'a> FnOnce(&'a mut WorkerTaskContext<A>) -> Fu,
+//     Fu: Future<Output = CancellableResult<T>> + Send + 'a,
+// {
+//     closure
+// }
+
 impl WorkerTask {
-    pub fn run<A, F, R, T>(parent: Addr<A>, log: &Logger, func: F) -> Self
+    pub fn run<A, F, T>(parent: Addr<A>, log: &Logger, func: F) -> Self
     where
         A: Actor + Handler<WorkerCompleteMessage<T>>,
-        F: FnOnce(WorkerTaskContext<A>) -> R + Send + 'static,
-        R: Future<Output = CancellableResult<T>> + Send,
+        F: for<'a> BorrowingFn<'a, A, T> + Send + 'static,
         T: Send + 'static,
     {
         let (sender, receiver) = oneshot::channel();
         let parent = parent.downgrade();
-        let context = WorkerTaskContext {
+        let mut context = WorkerTaskContext {
             parent,
             cancellation: receiver,
             log: log.clone(),
@@ -44,7 +68,9 @@ impl WorkerTask {
             // Since we await the future here, it should make sense that context
             // reference is gone in this scope, but the future needs to be static
             // go it can live in the future.
-            let maybe_cancelled = func(context).await;
+            // https://stackoverflow.com/questions/63517250/specify-rust-closures-lifetime
+            // https://github.com/rust-lang/rust/issues/70263
+            let maybe_cancelled = func.call(&mut context).await;
             match maybe_cancelled {
                 CancellableResult::Ok(result) => match parent.upgrade() {
                     Some(strong_parent) => {

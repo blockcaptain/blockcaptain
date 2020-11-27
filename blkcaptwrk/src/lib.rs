@@ -13,4 +13,5 @@ pub mod actors {
 }
 mod actorbase;
 mod snapshots;
+mod tasks;
 mod xactorext;

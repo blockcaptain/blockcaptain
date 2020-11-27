@@ -89,6 +89,13 @@ impl ResticRepository {
         Self::parse_snapshots(&output.stdout, self.model().id())
     }
 
+    pub async fn forget(self: &Arc<Self>, snapshots: &[ResticContainerSnapshot]) -> Result<()> {
+        let mut command = self.new_command();
+        command.args(&["forget"]);
+        command.args(snapshots.iter().map(|s| s.uuid.to_string()));
+        command.output().await.map(|_| ()).context("forget process failed")
+    }
+
     pub fn model(&self) -> &ResticContainerEntity {
         &self.model
     }

@@ -309,19 +309,12 @@ impl BcHandler<StartSnapshotSyncCycleMessage> for SyncActor {
 
 #[async_trait::async_trait]
 impl BcHandler<TransferComplete> for SyncActor {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: TransferComplete) {
+    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: TransferComplete) {
         if let Some((_, sent_snapshot_datetime)) = self.state_active_send {
             self.last_sent = Some(sent_snapshot_datetime);
             self.state_active_send = None;
         }
-        unhandled_result(log, msg.0);
-
-        //let TransferComplete(finished_receiver) = msg;
-        // info!(
-        //     log,
-        //     "received: {:?}",
-        //     finished_receiver.expect("FIXME").received_snapshot
-        // );
+        // TODO react to failed transfers
 
         let result = self.run_cycle(ctx, log).await;
         unhandled_result(log, result);

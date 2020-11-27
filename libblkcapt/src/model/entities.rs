@@ -541,6 +541,20 @@ pub struct ResticContainerEntity {
     pub pause_pruning: bool,
 }
 
+impl ResticContainerEntity {
+    pub fn pruning_state(&self) -> FeatureState {
+        if self.snapshot_retention.is_some() {
+            if self.pause_pruning {
+                FeatureState::Paused
+            } else {
+                FeatureState::Enabled
+            }
+        } else {
+            FeatureState::Unconfigured
+        }
+    }
+}
+
 impl Entity for ResticContainerEntity {
     fn name(&self) -> &str {
         &self.name

@@ -8,7 +8,7 @@ use super::{
     localsender::{LocalSenderActor, LocalSenderFinishedMessage},
 };
 use crate::{
-    actorbase::unhandled_error,
+    actorbase::{log_result, unhandled_error, TerminalState},
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
 use anyhow::Result;
@@ -84,18 +84,20 @@ impl TransferActor {
     fn finish_transfer(
         &self,
         ctx: &mut Context<BcActor<Self>>,
+        log: &Logger,
         transfer_result: Result<()>,
         sender_result: Result<()>,
         receiver_result: Result<()>,
     ) {
         let result = transfer_result.and(sender_result).and(receiver_result);
-        let _ = self.parent.send(TransferComplete(result));
+        log_result(log, &result);
+        let _ = self.parent.send(TransferComplete(result.as_ref().into()));
         ctx.stop(None);
     }
 }
 
 #[message()]
-pub struct TransferComplete(pub Result<()>);
+pub struct TransferComplete(pub TerminalState);
 
 #[message()]
 struct InternalTransferComplete(Result<()>);
@@ -186,7 +188,7 @@ impl BcHandler<LocalSenderFinishedMessage> for TransferActor {
                         sender: Some(sender),
                         receiver: Some(receiver),
                     } => {
-                        self.finish_transfer(ctx, transfer, sender, receiver);
+                        self.finish_transfer(ctx, log, transfer, sender, receiver);
                         self.state = State::Finished;
                     }
                     c => {
@@ -223,7 +225,7 @@ impl BcHandler<ReceiverFinishedMessage> for TransferActor {
                         sender: Some(sender),
                         receiver: Some(receiver),
                     } => {
-                        self.finish_transfer(ctx, transfer, sender, receiver);
+                        self.finish_transfer(ctx, log, transfer, sender, receiver);
                         self.state = State::Finished;
                     }
                     c => {
@@ -247,7 +249,7 @@ impl BcHandler<InternalTransferComplete> for TransferActor {
                         sender: Some(sender),
                         receiver: Some(receiver),
                     } => {
-                        self.finish_transfer(ctx, transfer, sender, receiver);
+                        self.finish_transfer(ctx, log, transfer, sender, receiver);
                         self.state = State::Finished;
                     }
                     completions => {

@@ -1,11 +1,12 @@
+use super::Snapshot;
 use crate::model::entities::KeepSpec;
-use crate::{core::BtrfsSnapshot, model::entities::RetentionRuleset};
+use crate::model::entities::RetentionRuleset;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::{cmp::Reverse, iter::repeat};
 use std::{convert::TryFrom, num::NonZeroUsize};
 
-pub fn evaluate_retention<T: BtrfsSnapshot>(
+pub fn evaluate_retention<T: Snapshot>(
     mut snapshots: Vec<T>,
     rules: &RetentionRuleset,
 ) -> Result<RetentionEvaluation<T>> {

@@ -86,8 +86,8 @@ impl TerminalState {
     }
 }
 
-impl<T, E> From<Result<&T, &E>> for TerminalState {
-    fn from(result: std::result::Result<&T, &E>) -> Self {
+impl<T, E> From<Result<T, E>> for TerminalState {
+    fn from(result: std::result::Result<T, E>) -> Self {
         match result {
             Ok(_) => TerminalState::Succeeded,
             Err(_) => TerminalState::dnr(),

@@ -14,8 +14,8 @@ use anyhow::{Context as AnyhowContext, Result};
 use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
-    core::SnapshotHandle,
     core::{retention::evaluate_retention, BtrfsDataset, BtrfsDatasetSnapshot, BtrfsPool, BtrfsSnapshot},
+    core::{Snapshot, SnapshotHandle},
     model::entities::BtrfsDatasetEntity,
     model::entities::FeatureState,
     model::entities::ObservableEvent,

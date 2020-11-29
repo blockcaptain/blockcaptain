@@ -237,9 +237,12 @@ impl AsRef<BtrfsDataset> for BtrfsDataset {
     }
 }
 
-pub trait BtrfsSnapshot: Display {
-    fn uuid(&self) -> Uuid;
+pub trait Snapshot: Display {
     fn datetime(&self) -> DateTime<Utc>;
+}
+
+pub trait BtrfsSnapshot: Snapshot {
+    fn uuid(&self) -> Uuid;
     fn delete(self) -> Result<()>;
 }
 
@@ -294,10 +297,6 @@ impl BtrfsDatasetSnapshot {
 }
 
 impl BtrfsSnapshot for BtrfsDatasetSnapshot {
-    fn datetime(&self) -> DateTime<Utc> {
-        self.datetime
-    }
-
     fn uuid(&self) -> Uuid {
         self.subvolume.uuid
     }
@@ -308,6 +307,12 @@ impl BtrfsSnapshot for BtrfsDatasetSnapshot {
         //     source: e,
         //     snapshot: self,
         // })
+    }
+}
+
+impl Snapshot for BtrfsDatasetSnapshot {
+    fn datetime(&self) -> DateTime<Utc> {
+        self.datetime
     }
 }
 
@@ -523,12 +528,14 @@ impl BtrfsSnapshot for BtrfsContainerSnapshot {
         self.subvolume.uuid
     }
 
-    fn datetime(&self) -> DateTime<Utc> {
-        self.datetime
-    }
-
     fn delete(self) -> Result<()> {
         self.container.pool.filesystem.delete_subvolume(self.path())
+    }
+}
+
+impl Snapshot for BtrfsContainerSnapshot {
+    fn datetime(&self) -> DateTime<Utc> {
+        self.datetime
     }
 }
 

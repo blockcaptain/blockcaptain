@@ -13,8 +13,8 @@ use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
     core::retention::evaluate_retention,
-    core::SnapshotHandle,
     core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsPool, BtrfsSnapshot},
+    core::{Snapshot, SnapshotHandle},
     model::entities::FeatureState,
     model::entities::{BtrfsContainerEntity, ObservableEvent},
     model::Entity,

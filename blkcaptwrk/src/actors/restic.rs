@@ -23,6 +23,7 @@ use libblkcapt::{
     model::entities::ResticContainerEntity,
     model::Entity,
 };
+use prune::{PruneCompleteMessage, ResticPruneActor};
 use slog::{o, trace, Logger};
 use std::convert::TryInto;
 use std::{collections::HashMap, hash::Hash, mem, panic, path::PathBuf, sync::Arc};
@@ -32,7 +33,13 @@ use uuid::Uuid;
 use xactor::{message, Addr, Context, Sender};
 
 mod container {
+    use std::collections::{HashSet, VecDeque};
+
+    use libblkcapt::core::retention::evaluate_retention;
     use slog::info;
+    use xactor::{Actor, WeakAddr};
+
+    use crate::xactorext::{BcAddr, BoxBcAddr};
 
     use super::*;
 
@@ -41,7 +48,7 @@ mod container {
         repository: RepositoryState,
         snapshots: HashMap<Uuid, Vec<ResticContainerSnapshot>>,
         prune_schedule: Option<Schedule>,
-        active_transfer: Option<ActiveTransfer>,
+        state: State,
     }
 
     enum RepositoryState {
@@ -58,16 +65,32 @@ mod container {
         }
     }
 
-    pub struct ActiveTransfer {
-        actor: Addr<BcActor<ResticTransferActor>>,
-        dataset_id: Uuid,
+    enum State {
+        Active {
+            active: Active,
+            actor: BoxBcAddr,
+            waiting: VecDeque<GetBackupMessage>,
+        },
+        Idle,
+        Faulted,
+    }
+
+    enum Active {
+        Transfer { dataset_id: Uuid, prune_pending: bool },
+        Prune,
+    }
+
+    impl State {
+        fn take(&mut self) -> Self {
+            mem::replace(self, State::Faulted)
+        }
     }
 
     #[message(result = "Result<()>")]
     pub struct GetBackupMessage {
         source_dataset_id: Uuid,
         source_snapshot_handle: SnapshotHandle,
-        target: Addr<BcActor<ResticTransferActor>>,
+        target: WeakAddr<BcActor<ResticTransferActor>>,
     }
 
     #[message]
@@ -82,7 +105,7 @@ mod container {
             Self {
                 source_dataset_id,
                 source_snapshot_handle,
-                target: requestor_addr.clone(),
+                target: requestor_addr.downgrade(),
             }
         }
     }
@@ -96,7 +119,7 @@ mod container {
                     repository: RepositoryState::Pending(model),
                     snapshots: Default::default(),
                     prune_schedule: None,
-                    active_transfer: None,
+                    state: State::Idle,
                 },
                 &log.new(o!("container_id" => id.to_string())),
             )
@@ -104,6 +127,87 @@ mod container {
 
         fn schedule_next_prune(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
             schedule_next_message(self.prune_schedule.as_ref(), "prune", PruneMessage(), log, ctx);
+        }
+
+        async fn process_waiting(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
+            let mut state = self.state.take();
+
+            if let State::Active { active, actor, waiting } = &mut state {
+                if matches!(active, Active::Transfer { prune_pending, .. } if *prune_pending) {
+                    *active = Active::Prune;
+                    *actor = self.start_prune(log, ctx).await;
+                } else if let Some(waiter) = waiting.pop_front() {
+                    let (new_active, new_actor) = self.start_backup(waiter).await.expect("TODO");
+                    *active = new_active;
+                    *actor = new_actor;
+                } else {
+                    state = State::Idle;
+                }
+            }
+
+            self.state = state;
+        }
+
+        async fn start_prune(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> BoxBcAddr {
+            let repository = self.repository.get();
+            let rules = repository
+                .model()
+                .snapshot_retention
+                .as_ref()
+                .expect("retention exist based on message scheduling in started");
+
+            // forget
+            let mut forgets = Vec::new();
+            for (dataset_id, snapshots) in &self.snapshots {
+                let snapshots = snapshots.iter().collect();
+                let evaluation = evaluate_retention(snapshots, rules).expect("TODO");
+                forgets.extend(evaluation.drop_snapshots);
+            }
+
+            repository.forget(&forgets).await.expect("TODO");
+
+            // start prune process
+            let prune = self.repository.get().prune();
+            let actor = ResticPruneActor::new(ctx.address(), prune, log)
+                .start()
+                .await
+                .expect("TODO");
+            actor.into()
+        }
+
+        async fn start_backup(&self, msg: GetBackupMessage) -> Result<(Active, BoxBcAddr)> {
+            const BASE_PATH: &str = "/var/lib/blkcapt/restic";
+            let bind_path = {
+                let mut p = PathBuf::from(BASE_PATH);
+                p.push(self.container_id.to_string());
+                p.push(msg.source_dataset_id.to_string());
+                p
+            };
+
+            let repository = &self.repository.get();
+            let existing_snapshot = repository
+                .snapshot_by_datetime(&bind_path, msg.source_snapshot_handle.datetime)
+                .await
+                .context("existing snapshot check failed")?;
+
+            if existing_snapshot.is_some() {
+                anyhow::bail!(
+                    "backup requested for existing snapshot dataset_id: {} snapshot_datetime: {}",
+                    msg.source_dataset_id,
+                    msg.source_snapshot_handle.datetime
+                )
+            }
+
+            let snapshot_backup = repository.backup(bind_path, msg.source_dataset_id, msg.source_snapshot_handle);
+            let addr = msg.target.upgrade().context("transfer is no longer alive")?;
+            let _ = addr.send(BackupReadyMessage(Ok(snapshot_backup)));
+            Ok((
+                Active::Transfer {
+                    dataset_id: msg.source_dataset_id,
+                    prune_pending: false,
+                },
+                addr.into(),
+            ))
         }
     }
 
@@ -169,83 +273,109 @@ mod container {
             _ctx: &mut Context<BcActor<Self>>,
             msg: GetBackupMessage,
         ) -> Result<()> {
-            const BASE_PATH: &str = "/var/lib/blkcapt/restic";
-            let bind_path = {
-                let mut p = PathBuf::from(BASE_PATH);
-                p.push(self.container_id.to_string());
-                p.push(msg.source_dataset_id.to_string());
-                p
-            };
-
-            let repository = &self.repository.get();
-            let existing_snapshot = repository
-                .snapshot_by_datetime(&bind_path, msg.source_snapshot_handle.datetime)
-                .await
-                .context("existing snapshot check failed")?;
-
-            if existing_snapshot.is_some() {
-                anyhow::bail!(
-                    "backup requested for existing snapshot dataset_id: {} snapshot_datetime: {}",
-                    msg.source_dataset_id,
-                    msg.source_snapshot_handle.datetime
-                )
+            match &mut self.state {
+                State::Active { waiting, .. } => {
+                    waiting.push_back(msg);
+                    Ok(())
+                }
+                State::Idle => match self.start_backup(msg).await {
+                    Ok((active, actor)) => {
+                        self.state = State::Active {
+                            active,
+                            actor,
+                            waiting: Default::default(),
+                        };
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                },
+                State::Faulted => Err(anyhow!("actor faulted")),
             }
-
-            let snapshot_backup = repository.backup(bind_path, msg.source_dataset_id, msg.source_snapshot_handle);
-            self.active_transfer = Some(ActiveTransfer {
-                actor: msg.target.clone(),
-                dataset_id: msg.source_dataset_id,
-            });
-            msg.target.send(BackupReadyMessage(Ok(snapshot_backup)))
         }
     }
 
     #[async_trait::async_trait]
     impl BcHandler<PruneMessage> for ResticContainerActor {
-        async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: PruneMessage) {
-            // let rules = self
-            //     .container
-            //     .model()
-            //     .snapshot_retention
-            //     .as_ref()
-            //     .expect("retention exist based on message scheduling in started");
-
-            // let result = observable_func(self.container.model().id(), ObservableEvent::ContainerPrune, || {
-            //     let result = self.container.source_dataset_ids().and_then(|ids| {
-            //         ids.iter()
-            //             .map(|id| {
-            //                 trace!(log, "prune container"; "dataset_id" => %id);
-            //                 self.container
-            //                     .snapshots(*id)
-            //                     .and_then(|snapshots| evaluate_retention(snapshots, rules))
-            //                     .and_then(|eval| prune_snapshots(eval, &log))
-            //             })
-            //             .collect::<Result<()>>()
-            //     });
-            //     ready(result)
-            // })
-            // .await;
-
-            // unhandled_result(log, result);
+        async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: PruneMessage) {
+            match &mut self.state {
+                State::Active {
+                    active: Active::Transfer { prune_pending, .. },
+                    ..
+                } => {
+                    *prune_pending = true;
+                }
+                State::Active {
+                    active: Active::Prune, ..
+                } => {
+                    info!(log, "prune triggered, but already pruning");
+                }
+                State::Idle => {
+                    self.state = State::Active {
+                        active: Active::Prune,
+                        actor: self.start_prune(log, ctx).await,
+                        waiting: Default::default(),
+                    }
+                }
+                State::Faulted => {}
+            }
         }
     }
 
     #[async_trait::async_trait]
     impl BcHandler<ParentTransferComplete> for ResticContainerActor {
-        async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: ParentTransferComplete) {
-            if let Some(transfer) = &self.active_transfer {
-                if let Some(snapshot) = msg.1 {
-                    info!(log, "snapshot received"; "dataset_id" => %transfer.dataset_id, "time" => %snapshot.datetime);
-                    self.snapshots.entry(transfer.dataset_id).or_default().push(snapshot);
+        async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: ParentTransferComplete) {
+            match &mut self.state {
+                State::Active {
+                    active: Active::Transfer { dataset_id, .. },
+                    ..
+                } => {
+                    if let Some(snapshot) = msg.1 {
+                        info!(log, "snapshot received"; "dataset_id" => %dataset_id, "time" => %snapshot.datetime);
+                        self.snapshots.entry(*dataset_id).or_default().push(snapshot);
+                    }
+
+                    // TODO deal with failed transfer
+
+                    self.process_waiting(log, ctx).await;
                 }
-                //TODO deal with failed transfer
-                self.active_transfer = None;
+                State::Active {
+                    active: Active::Prune, ..
+                }
+                | State::Idle => {
+                    ctx.stop(None);
+                    self.state = State::Faulted;
+                }
+                State::Faulted => {}
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BcHandler<PruneCompleteMessage> for ResticContainerActor {
+        async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: PruneCompleteMessage) {
+            match &mut self.state {
+                State::Active {
+                    active: Active::Prune, ..
+                } => {
+                    self.process_waiting(log, ctx).await;
+                }
+                State::Active {
+                    active: Active::Transfer { .. },
+                    ..
+                }
+                | State::Idle => {
+                    ctx.stop(None);
+                    self.state = State::Faulted;
+                }
+                State::Faulted => {}
             }
         }
     }
 }
 
 mod transfer {
+    use slog::{error, warn};
+
     use super::*;
 
     pub struct ResticTransferActor {
@@ -291,19 +421,23 @@ mod transfer {
             let (state, result) = match self.state.take() {
                 State::Transferring(_holder, worker_task) => {
                     worker_task.abort();
-                    (TerminalState::Cancelled, Err(anyhow!("cancelled during transfer")))
+                    warn!(log, "cancelled during transfer");
+                    (TerminalState::Cancelled, None)
                 }
                 State::WaitingForHoldAndBackup(..) => {
-                    (TerminalState::Cancelled, Err(anyhow!("cancelled prior to transfer")))
+                    warn!(log, "cancelled prior to transfer");
+                    (TerminalState::Cancelled, None)
                 }
-                State::Transferred(result) => (result.as_ref().into(), result),
-                State::Faulted => (TerminalState::Faulted, Err(anyhow!("actor faulted"))),
+                State::Transferred(result) => (result.as_ref().into(), result.ok()),
+                State::Faulted => {
+                    error!(log, "actor faulted");
+                    (TerminalState::Faulted, None)
+                }
                 State::Stopped(_) => panic!(),
             };
             self.state = State::Stopped(state);
-            log_result(log, &result);
 
-            let container_notify_result = self.parent.call(ParentTransferComplete(state, result.ok())).await;
+            let container_notify_result = self.parent.call(ParentTransferComplete(state, result)).await;
             unhandled_result(log, container_notify_result);
             let parent_notify_result = self.requestor.send(TransferComplete(state));
             unhandled_result(log, parent_notify_result);
@@ -408,22 +542,68 @@ mod transfer {
 
 mod prune {
     use super::*;
+    use libblkcapt::core::restic::{ResticPrune, StartedResticPrune};
 
-    struct ResticPruneActor {}
+    pub struct ResticPruneActor {
+        state: State,
+        parent: Addr<BcActor<ResticContainerActor>>,
+    }
+
+    enum State {
+        Created(ResticPrune),
+        Started(WorkerTask),
+        Faulted,
+        Stopped(TerminalState),
+    }
 
     impl ResticPruneActor {
-        pub fn new(
-            container: Addr<BcActor<ResticContainerActor>>,
-            log: &Logger,
-        ) -> BcActor<Self> {
-            todo!();
+        pub fn new(container: Addr<BcActor<ResticContainerActor>>, prune: ResticPrune, log: &Logger) -> BcActor<Self> {
+            BcActor::new(
+                Self {
+                    state: State::Created(prune),
+                    parent: container,
+                },
+                log,
+            )
         }
     }
 
     impl ResticPruneActor {}
 
+    #[message]
+    pub struct PruneCompleteMessage;
+
+    type PruneWorkerCompleteMessage = WorkerCompleteMessage<Result<()>>;
+
     #[async_trait::async_trait]
-    impl BcActorCtrl for ResticPruneActor {}
+    impl BcActorCtrl for ResticPruneActor {
+        async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+            if let State::Created(pruner) = mem::replace(&mut self.state, State::Faulted) {
+                let pruner = pruner.start()?;
+                let task = WorkerTask::run(ctx.address(), log, |_| async move { pruner.wait().await.into() });
+                self.state = State::Started(task);
+            } else {
+                ctx.stop(None);
+            }
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BcHandler<PruneWorkerCompleteMessage> for ResticPruneActor {
+        async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: PruneWorkerCompleteMessage) {
+            if let State::Started(..) = mem::replace(&mut self.state, State::Faulted) {
+                self.state = State::Stopped(msg.0.into());
+                unhandled_result(
+                    log,
+                    self.parent
+                        .send(PruneCompleteMessage)
+                        .context("failed to notify parent of completion"),
+                );
+            }
+            ctx.stop(None);
+        }
+    }
 }
 
 pub fn group_by<I, F, K, T>(xs: I, mut key_fn: F) -> HashMap<K, Vec<T>>

@@ -1,4 +1,4 @@
-use super::{parse_snapshot_label, SnapshotHandle};
+use super::{parse_snapshot_label, Snapshot, SnapshotHandle};
 use crate::{
     model::{entities::ResticContainerEntity, Entity},
     sys::fs::{bind_mount, unmount},
@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, bail, Context, Error, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer};
-use std::{fmt::Display, path::Path, fs, path::PathBuf, process::Stdio, str::FromStr, sync::Arc};
+use std::{borrow::Borrow, fmt::Display, fs, path::Path, path::PathBuf, process::Stdio, str::FromStr, sync::Arc};
 use tokio::{
     io::AsyncBufReadExt,
     io::BufReader,
@@ -29,6 +29,18 @@ impl From<&ResticContainerSnapshot> for SnapshotHandle {
             datetime: snapshot.datetime,
             uuid: snapshot.uuid.low,
         }
+    }
+}
+
+impl<B: Borrow<ResticContainerSnapshot> + Display> Snapshot for B {
+    fn datetime(&self) -> DateTime<Utc> {
+        self.borrow().datetime
+    }
+}
+
+impl Display for ResticContainerSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(())
     }
 }
 
@@ -82,6 +94,11 @@ impl ResticRepository {
         ResticBackup::new(command, bind_at, dataset_id, snapshot)
     }
 
+    pub fn prune(self: &Arc<Self>) -> ResticPrune {
+        let command = self.new_command();
+        ResticPrune::new(command)
+    }
+
     pub async fn snapshots(self: &Arc<Self>) -> Result<Vec<ResticContainerSnapshot>> {
         let mut command = self.new_command();
         command.args(&["snapshots", "--json"]);
@@ -102,7 +119,7 @@ impl ResticRepository {
         Self::parse_snapshots(&output.stdout, self.model().id()).map(|mut r| r.pop())
     }
 
-    pub async fn forget(self: &Arc<Self>, snapshots: &[ResticContainerSnapshot]) -> Result<()> {
+    pub async fn forget(self: &Arc<Self>, snapshots: &[&ResticContainerSnapshot]) -> Result<()> {
         let mut command = self.new_command();
         command.args(&["forget"]);
         command.args(snapshots.iter().map(|s| s.uuid.to_string()));
@@ -189,12 +206,7 @@ struct SnapshotSource {
 
 impl ResticBackup {
     fn new(mut repo_command: Command, bind_path: PathBuf, dataset_id: Uuid, snapshot: SnapshotHandle) -> Self {
-        repo_command.args(&[
-            "backup",
-            "--json",
-            "--tag",
-            Self::snapshot_tags(&snapshot).as_str(),
-        ]);
+        repo_command.args(&["backup", "--json", "--tag", Self::snapshot_tags(&snapshot).as_str()]);
 
         ResticBackup {
             command: repo_command,
@@ -261,7 +273,11 @@ impl ResticBackup {
     }
 
     fn snapshot_tags(snapshot: &SnapshotHandle) -> String {
-        format!("{},{}", Self::uuid_tag(snapshot.uuid), Self::datetime_tag(snapshot.datetime))
+        format!(
+            "{},{}",
+            Self::uuid_tag(snapshot.uuid),
+            Self::datetime_tag(snapshot.datetime)
+        )
     }
 }
 
@@ -287,6 +303,35 @@ impl StartedResticBackup {
             uuid: new_snapshot_id,
             received_uuid: self.source.snapshot.uuid,
         })
+    }
+}
+
+pub struct ResticPrune {
+    command: Command,
+}
+
+impl ResticPrune {
+    fn new(mut repo_command: Command) -> Self {
+        repo_command.args(&["prune"]);
+
+        ResticPrune { command: repo_command }
+    }
+
+    pub fn start(mut self) -> Result<StartedResticPrune> {
+        let process = self.command.spawn().context("spawn restic prune process failed")?;
+
+        Ok(StartedResticPrune { process })
+    }
+}
+
+pub struct StartedResticPrune {
+    process: Child,
+}
+
+impl StartedResticPrune {
+    pub async fn wait(self) -> Result<()> {
+        self.process.await.unwrap();
+        Ok(()) // FIXME
     }
 }
 

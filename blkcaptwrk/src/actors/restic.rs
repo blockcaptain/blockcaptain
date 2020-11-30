@@ -8,7 +8,7 @@ use crate::{
     snapshots::{ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage},
     tasks::WorkerCompleteMessage,
     tasks::WorkerTask,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
+    xactorext::{BcActor, BcActorCtrl, BcAddr, BcHandler},
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
 use container::BackupReadyMessage;
@@ -68,7 +68,6 @@ mod container {
     enum State {
         Active {
             active: Active,
-            actor: BoxBcAddr,
             waiting: VecDeque<GetBackupMessage>,
         },
         Idle,
@@ -76,8 +75,14 @@ mod container {
     }
 
     enum Active {
-        Transfer { dataset_id: Uuid, prune_pending: bool },
-        Prune,
+        Transfer {
+            actor: WeakAddr<BcActor<ResticTransferActor>>,
+            dataset_id: Uuid,
+            prune_pending: bool,
+        },
+        Prune {
+            actor: Addr<BcActor<ResticPruneActor>>,
+        },
     }
 
     impl State {
@@ -132,14 +137,11 @@ mod container {
         async fn process_waiting(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
             let mut state = self.state.take();
 
-            if let State::Active { active, actor, waiting } = &mut state {
+            if let State::Active { active, waiting } = &mut state {
                 if matches!(active, Active::Transfer { prune_pending, .. } if *prune_pending) {
-                    *active = Active::Prune;
-                    *actor = self.start_prune(log, ctx).await;
+                    *active = self.start_prune(log, ctx).await;
                 } else if let Some(waiter) = waiting.pop_front() {
-                    let (new_active, new_actor) = self.start_backup(waiter).await.expect("TODO");
-                    *active = new_active;
-                    *actor = new_actor;
+                    *active = self.start_backup(waiter).await.expect("TODO");
                 } else {
                     state = State::Idle;
                 }
@@ -148,7 +150,7 @@ mod container {
             self.state = state;
         }
 
-        async fn start_prune(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> BoxBcAddr {
+        async fn start_prune(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Active {
             let repository = self.repository.get();
             let rules = repository
                 .model()
@@ -172,10 +174,10 @@ mod container {
                 .start()
                 .await
                 .expect("TODO");
-            actor.into()
+            Active::Prune { actor }
         }
 
-        async fn start_backup(&self, msg: GetBackupMessage) -> Result<(Active, BoxBcAddr)> {
+        async fn start_backup(&self, msg: GetBackupMessage) -> Result<Active> {
             const BASE_PATH: &str = "/var/lib/blkcapt/restic";
             let bind_path = {
                 let mut p = PathBuf::from(BASE_PATH);
@@ -201,13 +203,11 @@ mod container {
             let snapshot_backup = repository.backup(bind_path, msg.source_dataset_id, msg.source_snapshot_handle);
             let addr = msg.target.upgrade().context("transfer is no longer alive")?;
             let _ = addr.send(BackupReadyMessage(Ok(snapshot_backup)));
-            Ok((
-                Active::Transfer {
-                    dataset_id: msg.source_dataset_id,
-                    prune_pending: false,
-                },
-                addr.into(),
-            ))
+            Ok(Active::Transfer {
+                dataset_id: msg.source_dataset_id,
+                prune_pending: false,
+                actor: addr.downgrade(),
+            })
         }
     }
 
@@ -244,7 +244,28 @@ mod container {
             Ok(())
         }
 
-        async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {}
+        async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
+            self.state = match self.state.take() {
+                State::Active { active, waiting } => {
+                    let maybe_actor: Option<BoxBcAddr> = match active {
+                        Active::Transfer { actor, .. } => actor.upgrade().map(|a| a.into()),
+                        Active::Prune { actor } => Some(actor.into()),
+                    };
+                    if let Some(mut actor) = maybe_actor {
+                        let _ = actor.stop();
+                        actor.wait_for_stop().await;
+                    }
+                    for waiter in waiting {
+                        if let Some(addr) = waiter.target.upgrade() {
+                            let _ = addr.send(BackupReadyMessage(Err(anyhow!("container stopped"))));
+                        }
+                    }
+                    State::Idle
+                }
+                State::Idle => State::Idle,
+                State::Faulted => State::Faulted,
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -279,10 +300,9 @@ mod container {
                     Ok(())
                 }
                 State::Idle => match self.start_backup(msg).await {
-                    Ok((active, actor)) => {
+                    Ok(active) => {
                         self.state = State::Active {
                             active,
-                            actor,
                             waiting: Default::default(),
                         };
                         Ok(())
@@ -305,14 +325,14 @@ mod container {
                     *prune_pending = true;
                 }
                 State::Active {
-                    active: Active::Prune, ..
+                    active: Active::Prune { .. },
+                    ..
                 } => {
                     info!(log, "prune triggered, but already pruning");
                 }
                 State::Idle => {
                     self.state = State::Active {
-                        active: Active::Prune,
-                        actor: self.start_prune(log, ctx).await,
+                        active: self.start_prune(log, ctx).await,
                         waiting: Default::default(),
                     }
                 }
@@ -339,7 +359,8 @@ mod container {
                     self.process_waiting(log, ctx).await;
                 }
                 State::Active {
-                    active: Active::Prune, ..
+                    active: Active::Prune { .. },
+                    ..
                 }
                 | State::Idle => {
                     ctx.stop(None);
@@ -355,7 +376,8 @@ mod container {
         async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: PruneCompleteMessage) {
             match &mut self.state {
                 State::Active {
-                    active: Active::Prune, ..
+                    active: Active::Prune { .. },
+                    ..
                 } => {
                     self.process_waiting(log, ctx).await;
                 }
@@ -374,7 +396,7 @@ mod container {
 }
 
 mod transfer {
-    use slog::{error, warn};
+    use slog::{debug, error, warn};
 
     use super::*;
 
@@ -418,10 +440,12 @@ mod transfer {
         }
 
         async fn stopped(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
-            let (state, result) = match self.state.take() {
+            let (terminal_state, result) = match self.state.take() {
                 State::Transferring(_holder, worker_task) => {
-                    worker_task.abort();
                     warn!(log, "cancelled during transfer");
+                    worker_task.abort();
+                    debug!(log, "waiting for worker");
+                    worker_task.wait().await;
                     (TerminalState::Cancelled, None)
                 }
                 State::WaitingForHoldAndBackup(..) => {
@@ -435,12 +459,14 @@ mod transfer {
                 }
                 State::Stopped(_) => panic!(),
             };
-            self.state = State::Stopped(state);
+            self.state = State::Stopped(terminal_state);
 
-            let container_notify_result = self.parent.call(ParentTransferComplete(state, result)).await;
-            unhandled_result(log, container_notify_result);
-            let parent_notify_result = self.requestor.send(TransferComplete(state));
-            unhandled_result(log, parent_notify_result);
+            let container_notify_result = self.parent.send(ParentTransferComplete(terminal_state, result));
+            let parent_notify_result = self.requestor.send(TransferComplete(terminal_state));
+            if !matches!(terminal_state, TerminalState::Cancelled) {
+                unhandled_result(log, container_notify_result);
+                unhandled_result(log, parent_notify_result);
+            }
         }
     }
 
@@ -507,7 +533,7 @@ mod transfer {
         Backup(Result<ResticBackup>),
     }
 
-    #[message()]
+    #[message]
     pub struct ParentTransferComplete(pub TerminalState, pub Option<ResticContainerSnapshot>);
 
     #[async_trait::async_trait]

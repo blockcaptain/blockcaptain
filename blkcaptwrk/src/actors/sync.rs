@@ -14,7 +14,7 @@ use crate::{
     actorbase::{schedule_next_message, unhandled_result},
     snapshots::{find_parent, find_ready, FindMode, GetContainerSnapshotsMessage},
     xactorext::BoxBcAddr,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
+    xactorext::{stop_all_actors, BcActor, BcActorCtrl, BcAddr, BcHandler},
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -250,9 +250,14 @@ impl BcActorCtrl for SyncActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) {
+    async fn stopped(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
         if is_immediate(&self.model.sync_mode) {
-            ctx.unsubscribe::<ObservableEventMessage>().await.expect("FIXME");
+            let _ = ctx.unsubscribe::<ObservableEventMessage>().await;
+        }
+
+        if let Some((mut active, _)) = self.state_active_send.take() {
+            let _ = active.stop();
+            active.wait_for_stop().await;
         }
     }
 }

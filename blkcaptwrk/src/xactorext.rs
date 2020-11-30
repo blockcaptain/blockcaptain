@@ -183,7 +183,11 @@ pub trait BcWeakAddr: Sync + Send {
     fn upgrade(&self) -> Option<BoxBcAddr>;
 }
 
-pub trait BcAddr: Sync + Send {}
+#[async_trait::async_trait]
+pub trait BcAddr: Sync + Send {
+    fn stop(&mut self) -> Result<()>;
+    async fn wait_for_stop(self: Box<Self>);
+}
 
 struct BcWeakAddrImpl<T>(WeakAddr<T>);
 
@@ -195,7 +199,16 @@ impl<T: Actor> BcWeakAddr for BcWeakAddrImpl<T> {
 
 struct BcAddrImpl<T>(Addr<T>);
 
-impl<T> BcAddr for BcAddrImpl<T> {}
+#[async_trait::async_trait]
+impl<T: Actor> BcAddr for BcAddrImpl<T> {
+    fn stop(&mut self) -> Result<()> {
+        self.0.stop(None)
+    }
+
+    async fn wait_for_stop(self: Box<Self>) {
+        self.0.wait_for_stop().await;
+    }
+}
 
 impl<T: Actor> From<Addr<T>> for BoxBcWeakAddr {
     fn from(addr: Addr<T>) -> Self {

@@ -1,13 +1,13 @@
 use super::actorbase::unhandled_result;
 use anyhow::{Context as AnyhowContext, Result};
-use slog::{error, info, Logger};
-use std::{future::Future, marker::PhantomData, panic};
+use slog::{debug, error, info, Logger};
+use std::{cell::Cell, future::Future, marker::PhantomData, panic};
 use tokio::{sync::oneshot, task::JoinHandle};
 use xactor::{Actor, Addr, Handler, Message, WeakAddr};
 
 pub struct WorkerTask {
     handle: JoinHandle<()>,
-    canceller: oneshot::Sender<()>,
+    canceller: Cell<Option<oneshot::Sender<()>>>,
 }
 
 pub struct WorkerTaskContext<A> {
@@ -55,16 +55,16 @@ impl WorkerTask {
                                 .context("work task finished but failed to send completion message to parent"),
                         );
                     }
-                    None => error!(log, "worker task finished but parent is gone"),
+                    None => debug!(log, "worker task finished but parent is gone"),
                 },
                 CancellableResult::Cancelled(_) => {
-                    info!(log, "task cancelled");
+                    debug!(log, "task cancelled");
                 }
             }
         });
         Self {
             handle,
-            canceller: sender,
+            canceller: Cell::new(Some(sender)),
         }
     }
 
@@ -79,11 +79,13 @@ impl WorkerTask {
         }
     }
 
-    pub fn cancel(self) {
-        let _ = self.canceller.send(());
+    pub fn cancel(&self) {
+        if let Some(sender) = self.canceller.take() {
+            let _ = sender.send(());
+        }
     }
 
-    pub fn abort(self) {
+    pub fn abort(&self) {
         //FIXME abort available in tokio 0.3
         //let _ = self.handle.abort()
     }

@@ -117,3 +117,78 @@ where
         entity_by_name_or_id(all_children, parts[0])
     }
 }
+
+pub mod service {
+    use anyhow::{Context, Result};
+    use bytes::buf::BufExt;
+    use clap::Clap;
+    use comfy_table::Cell;
+    use libblkcapt::{
+        core::system::{ActiveState, ActorState, SystemState, TerminalState},
+        sys::net::ServiceClient,
+    };
+
+    use crate::ui::{comfy_id_header, comfy_id_value, comfy_name_value, print_comfy_table};
+
+    #[derive(Clap, Debug)]
+    pub struct ServiceStatusOptions {}
+
+    pub async fn service_status(_: ServiceStatusOptions) -> Result<()> {
+        let client = ServiceClient::default();
+        let result = client.get("/").await?;
+        let body = hyper::body::aggregate(result).await?;
+        let mut system: SystemState = serde_json::from_reader(body.reader())?;
+        system.actors.sort_by_key(|a| a.actor_id);
+
+        print_comfy_table(
+            vec![
+                comfy_id_header(),
+                Cell::new("Actor Type"),
+                Cell::new("State"),
+                Cell::new("Substate"),
+            ],
+            system.actors.into_iter().map(|a| {
+                vec![
+                    comfy_name_value(a.actor_id),
+                    Cell::new(&a.actor_type),
+                    actor_state_cell(&a.actor_state),
+                    actor_substate_cell(a.actor_state),
+                ]
+            }),
+        );
+
+        Ok(())
+    }
+
+    pub fn actor_state_cell(state: &ActorState) -> Cell {
+        Cell::new(state).fg(match state {
+            ActorState::Started(..) => comfy_table::Color::Green,
+            ActorState::Stopped(..) => comfy_table::Color::Yellow,
+            ActorState::Dropped(..) => comfy_table::Color::Cyan,
+            ActorState::Zombie(..) => comfy_table::Color::Red,
+        })
+    }
+
+    pub fn actor_substate_cell(state: ActorState) -> Cell {
+        let (message, color) = match state {
+            ActorState::Started(active_state) => match active_state {
+                ActiveState::Custom(state) => (state, comfy_table::Color::Green),
+                ActiveState::Unresponsive => (ActiveState::Unresponsive.to_string(), comfy_table::Color::Red),
+                ActiveState::Stopping => (ActiveState::Stopping.to_string(), comfy_table::Color::Yellow),
+            },
+            ActorState::Stopped(terminal_state)
+            | ActorState::Dropped(terminal_state)
+            | ActorState::Zombie(terminal_state) => (
+                terminal_state.to_string(),
+                match terminal_state {
+                    TerminalState::Succeeded => comfy_table::Color::Green,
+                    TerminalState::Cancelled => comfy_table::Color::Yellow,
+                    TerminalState::Failed | TerminalState::Faulted | TerminalState::Indeterminate => {
+                        comfy_table::Color::Red
+                    }
+                },
+            ),
+        };
+        Cell::new(message).fg(color)
+    }
+}

@@ -8,8 +8,8 @@ use super::{
     localsender::{LocalSenderActor, LocalSenderFinishedMessage},
 };
 use crate::{
-    actorbase::{log_result, unhandled_error, TerminalState},
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
+    actorbase::{log_result, unhandled_error},
+    xactorext::{BcActor, BcActorCtrl, BcHandler, TerminalState},
 };
 use anyhow::Result;
 use bytes::BytesMut;
@@ -108,8 +108,9 @@ impl BcActorCtrl for TransferActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
+    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
         // with tokio 0.3, use improved process api to hold handle and kill process
+        TerminalState::Succeeded
     }
 }
 

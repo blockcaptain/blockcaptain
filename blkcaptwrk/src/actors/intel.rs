@@ -1,12 +1,12 @@
-use crate::xactorext::BoxBcWeakAddr;
+use crate::xactorext::{BcActor, BcActorCtrl, BoxBcWeakAddr, TerminalState};
 use anyhow::Result;
+use libblkcapt::core::system;
 use once_cell::sync::OnceCell;
 use slog::{error, trace, warn, Logger};
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
-use strum_macros::Display;
 use xactor::{message, Actor, Addr, Context, Handler};
 
 pub struct IntelActor {
@@ -17,18 +17,25 @@ pub struct IntelActor {
 #[message]
 pub struct ActorStartMessage(u64, BoxBcWeakAddr);
 
+enum ActorState {
+    Started,
+    Stopped,
+    Dropped,
+    Zombie,
+}
+
 impl ActorStartMessage {
-    pub fn new<T: Actor>(actor_id: u64, actor_address: Addr<T>) -> Self {
+    pub fn new<T: BcActorCtrl>(actor_id: u64, actor_address: Addr<BcActor<T>>) -> Self {
         Self(actor_id, actor_address.into())
     }
 }
 
 #[message]
-pub struct ActorStopMessage(u64);
+pub struct ActorStopMessage(u64, TerminalState);
 
 impl ActorStopMessage {
-    pub fn new(actor_id: u64) -> Self {
-        Self(actor_id)
+    pub fn new(actor_id: u64, state: TerminalState) -> Self {
+        Self(actor_id, state)
     }
 }
 
@@ -72,23 +79,22 @@ static INTEL_ACTOR_SINGLETON: OnceCell<Addr<IntelActor>> = OnceCell::new();
 struct Tractor {
     actor: BoxBcWeakAddr,
     state: ActorState,
+    terminal_state: Option<TerminalState>,
     changed: Instant,
 }
 
-#[derive(Display)]
-enum ActorState {
-    Started,
-    Stopped,
-    Dropped,
-    Zombie,
+impl Tractor {
+    fn system_terminal_state(&self) -> system::TerminalState {
+        self.terminal_state.map(|s| s.into()).unwrap_or_default()
+    }
 }
 
 #[message]
 #[derive(Clone)]
 struct Update;
 
-#[message]
-struct DebugNow;
+#[message(result = "system::SystemState")]
+pub struct GetStateMessage;
 
 #[async_trait::async_trait]
 impl Actor for IntelActor {
@@ -119,6 +125,7 @@ impl Handler<ActorStartMessage> for IntelActor {
             Tractor {
                 actor: msg.1,
                 state: ActorState::Started,
+                terminal_state: None,
                 changed: Instant::now(),
             },
         );
@@ -128,14 +135,23 @@ impl Handler<ActorStartMessage> for IntelActor {
 #[async_trait::async_trait]
 impl Handler<ActorStopMessage> for IntelActor {
     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: ActorStopMessage) {
-        self.actors.get_mut(&msg.0).unwrap().state = ActorState::Stopped;
+        if let Some(tractor) = self.actors.get_mut(&msg.0) {
+            tractor.state = ActorState::Stopped;
+            tractor.terminal_state = Some(msg.1);
+        } else {
+            error!(self.log, "stop message for untracked actor"; "actor_id" => msg.0)
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl Handler<ActorDropMessage> for IntelActor {
     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: ActorDropMessage) {
-        self.actors.get_mut(&msg.0).unwrap().state = ActorState::Dropped;
+        if let Some(tractor) = self.actors.get_mut(&msg.0) {
+            tractor.state = ActorState::Dropped;
+        } else {
+            error!(self.log, "drop message for untracked actor"; "actor_id" => msg.0)
+        }
     }
 }
 
@@ -163,10 +179,25 @@ impl Handler<Update> for IntelActor {
 }
 
 #[async_trait::async_trait]
-impl Handler<DebugNow> for IntelActor {
-    async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: DebugNow) {
-        for (id, tractor) in self.actors.iter() {
-            println!("ACTOR DEBUG [{:04}][{}]", id, tractor.state);
+impl Handler<GetStateMessage> for IntelActor {
+    async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: GetStateMessage) -> system::SystemState {
+        system::SystemState {
+            actors: self
+                .actors
+                .iter()
+                .map(|(id, tractor)| system::SystemActor {
+                    actor_id: *id,
+                    actor_state: match tractor.state {
+                        ActorState::Started => {
+                            system::ActorState::Started(system::ActiveState::Custom(String::from("unknown")))
+                        }
+                        ActorState::Stopped => system::ActorState::Stopped(tractor.system_terminal_state()),
+                        ActorState::Dropped => system::ActorState::Dropped(tractor.system_terminal_state()),
+                        ActorState::Zombie => system::ActorState::Zombie(tractor.system_terminal_state()),
+                    },
+                    actor_type: tractor.actor.actor_type(),
+                })
+                .collect(),
         }
     }
 }
@@ -174,5 +205,16 @@ impl Handler<DebugNow> for IntelActor {
 impl Default for IntelActor {
     fn default() -> Self {
         IntelActor::new(&slog_scope::logger())
+    }
+}
+
+impl From<TerminalState> for libblkcapt::core::system::TerminalState {
+    fn from(s: TerminalState) -> Self {
+        match s {
+            TerminalState::Succeeded => system::TerminalState::Succeeded,
+            TerminalState::Failed => system::TerminalState::Failed,
+            TerminalState::Cancelled => system::TerminalState::Cancelled,
+            TerminalState::Faulted => system::TerminalState::Faulted,
+        }
     }
 }

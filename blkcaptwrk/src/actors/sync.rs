@@ -14,7 +14,7 @@ use crate::{
     actorbase::{schedule_next_message, unhandled_result},
     snapshots::{find_parent, find_ready, FindMode, GetContainerSnapshotsMessage},
     xactorext::BoxBcAddr,
-    xactorext::{stop_all_actors, BcActor, BcActorCtrl, BcAddr, BcHandler},
+    xactorext::{stop_all_actors, BcActor, BcActorCtrl, BcAddr, BcHandler, TerminalState},
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -250,7 +250,7 @@ impl BcActorCtrl for SyncActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
+    async fn stopped(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
         if is_immediate(&self.model.sync_mode) {
             let _ = ctx.unsubscribe::<ObservableEventMessage>().await;
         }
@@ -258,6 +258,9 @@ impl BcActorCtrl for SyncActor {
         if let Some((mut active, _)) = self.state_active_send.take() {
             let _ = active.stop();
             active.wait_for_stop().await;
+            TerminalState::Cancelled
+        } else {
+            TerminalState::Succeeded
         }
     }
 }

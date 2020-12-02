@@ -10,6 +10,7 @@ mod commands;
 mod ui;
 use commands::observer::*;
 use commands::pool::*;
+use commands::service::*;
 
 fn main() {
     let maybe_options = CliOptions::try_parse();
@@ -56,6 +57,9 @@ async fn command_dispath(options: CliOptions) -> Result<()> {
             ObserverSubCommands::Test(options) => test_observer(options).await?,
             ObserverSubCommands::List(options) => list_observer(options)?,
         },
+        TopCommands::Service(top_options) => match top_options.subcmd {
+            ServiceSubCommands::Status(options) => service_status(options).await?,
+        },
     }
 
     Ok(())
@@ -77,6 +81,7 @@ enum TopCommands {
     Dataset(DatasetCommands),
     Container(ContainerCommands),
     Observer(ObserverCommands),
+    Service(ServiceCommands),
 }
 
 #[derive(Clap)]
@@ -133,6 +138,17 @@ enum ObserverSubCommands {
     Show(ObserverShowOptions),
     Test(ObserverTestOptions),
     List(ObserverListOptions),
+}
+
+#[derive(Clap)]
+struct ServiceCommands {
+    #[clap(subcommand)]
+    subcmd: ServiceSubCommands,
+}
+
+#[derive(Clap)]
+enum ServiceSubCommands {
+    Status(ServiceStatusOptions),
 }
 
 struct ClapErrorWrapper(clap::Error);

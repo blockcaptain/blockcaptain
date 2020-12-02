@@ -2,6 +2,7 @@ use hyper::{client::connect::dns::GaiResolver, client::HttpConnector, Client, Ur
 use hyper::{Body, Response};
 use hyper_timeout::TimeoutConnector;
 use hyper_tls::HttpsConnector;
+use hyperlocal::UnixConnector;
 use std::time::Duration;
 
 // TODO: make a mockable trait for the static net client creator
@@ -13,7 +14,7 @@ pub struct HttpsClient {
 }
 
 impl HttpsClient {
-    pub fn default() -> HttpsClient {
+    pub fn default() -> Self {
         let mut http = HttpConnector::new();
         http.set_connect_timeout(Some(Duration::from_secs(3)));
         http.enforce_http(false);
@@ -22,12 +23,35 @@ impl HttpsClient {
         connector.set_read_timeout(Some(Duration::from_secs(5)));
         connector.set_write_timeout(Some(Duration::from_secs(5)));
 
-        HttpsClient {
+        Self {
             client: Client::builder().build::<_, hyper::Body>(connector),
         }
     }
 
     pub async fn get(&self, url: Uri) -> Result<Response<Body>, hyper::Error> {
+        self.client.get(url).await
+    }
+}
+
+pub struct ServiceClient {
+    client: Client<TimeoutConnector<UnixConnector>>,
+}
+
+impl ServiceClient {
+    pub fn default() -> Self {
+        let unix = UnixConnector {};
+        let mut connector = TimeoutConnector::new(unix);
+        connector.set_read_timeout(Some(Duration::from_secs(10)));
+        connector.set_write_timeout(Some(Duration::from_secs(10)));
+
+        Self {
+            client: Client::builder().build::<_, hyper::Body>(connector),
+        }
+    }
+
+    pub async fn get(&self, path: &str) -> Result<Response<Body>, hyper::Error> {
+        const SOCKET: &str = "/var/lib/blkcapt/wrk.sock";
+        let url: Uri = hyperlocal::Uri::new(SOCKET, path).into();
         self.client.get(url).await
     }
 }

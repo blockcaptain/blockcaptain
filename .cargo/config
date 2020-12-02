@@ -1,0 +1,4 @@
+[build]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# replace this in the future https://github.com/rust-lang/rust/issues/71519

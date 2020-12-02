@@ -1,6 +1,7 @@
 pub mod localsndrcv;
 pub mod restic;
 pub mod retention;
+pub mod system;
 use crate::model::Entity;
 use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};

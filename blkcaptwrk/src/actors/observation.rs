@@ -1,6 +1,6 @@
 use crate::{
     actorbase::{schedule_next_message, unhandled_result},
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
+    xactorext::{BcActor, BcActorCtrl, BcHandler, TerminalState},
 };
 use anyhow::Result;
 use cron::Schedule;
@@ -115,10 +115,12 @@ impl BcActorCtrl for HealthchecksActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) {
+    async fn stopped(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
         ctx.unsubscribe::<ObservableEventMessage>()
             .await
             .expect("can always unsubscribe");
+
+        TerminalState::Succeeded
     }
 }
 

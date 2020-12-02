@@ -9,7 +9,7 @@ use paste::paste;
 use slog::{error, o, trace, Logger};
 use std::{future::Future, marker::PhantomData};
 use uuid::Uuid;
-use xactor::{Actor, Addr, Context, Handler, Message, WeakAddr};
+use xactor::{message, Actor, Addr, Context, Handler, Message, WeakAddr};
 
 // pub trait ActorAddrExt<T: Actor> {
 //     fn get_child_actor<U, O>(&self, id: Uuid) -> U
@@ -63,7 +63,40 @@ pub trait BcActorCtrl: Sized + Send + 'static {
         Ok(())
     }
 
-    async fn stopped(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {}
+    async fn stopped(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+        TerminalState::Succeeded
+    }
+
+    async fn status(&self) -> String {
+        String::new()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum TerminalState {
+    Succeeded,
+    Failed,
+    Cancelled,
+    Faulted,
+}
+
+// impl TerminalState {
+//     fn dnr() -> Self {
+//         TerminalState::Failed(false)
+//     }
+
+//     fn retry() -> Self {
+//         TerminalState::Failed(true)
+//     }
+// }
+
+impl<T, E> From<Result<T, E>> for TerminalState {
+    fn from(result: std::result::Result<T, E>) -> Self {
+        match result {
+            Ok(_) => TerminalState::Succeeded,
+            Err(_) => TerminalState::Failed,
+        }
+    }
 }
 
 pub struct BcActor<T> {
@@ -102,7 +135,18 @@ impl<T> BcActor<T> {
     notify_impl!(drop, ActorDropMessage);
 }
 
-trait IntelMessage {}
+// #[message(result = "String")]
+// pub struct GetActorStatusMessage;
+
+// #[async_trait::async_trait]
+// impl<A> Handler<GetActorStatusMessage> for A
+// where
+//     A: BcActorCtrl,
+// {
+//     async fn handle(&mut self, ctx: &mut Context<Self>, msg: GetActorStatusMessage) -> String {
+//         self.status()
+//     }
+// }
 
 #[async_trait::async_trait]
 impl<A, M> Handler<M> for BcActor<A>
@@ -138,8 +182,8 @@ where
 
     async fn stopped(&mut self, ctx: &mut Context<Self>) {
         trace!(self.log, "actor stopping");
-        self.inner.stopped(&self.log, ctx).await;
-        self.intel_notify_stop(ActorStopMessage::new(self.actor_id));
+        let terminal_state = self.inner.stopped(&self.log, ctx).await;
+        self.intel_notify_stop(ActorStopMessage::new(self.actor_id, terminal_state));
         trace!(self.log, "actor stopped");
     }
 }
@@ -180,27 +224,33 @@ pub type BoxBcWeakAddr = Box<dyn BcWeakAddr>;
 pub type BoxBcAddr = Box<dyn BcAddr>;
 
 pub trait BcWeakAddr: Sync + Send {
+    fn actor_type(&self) -> String;
     fn upgrade(&self) -> Option<BoxBcAddr>;
 }
 
 #[async_trait::async_trait]
 pub trait BcAddr: Sync + Send {
+    fn actor_type(&self) -> String;
     fn stop(&mut self) -> Result<()>;
     async fn wait_for_stop(self: Box<Self>);
 }
 
-struct BcWeakAddrImpl<T>(WeakAddr<T>);
+struct BcWeakAddrImpl<T>(WeakAddr<BcActor<T>>);
 
-impl<T: Actor> BcWeakAddr for BcWeakAddrImpl<T> {
+impl<T: BcActorCtrl> BcWeakAddr for BcWeakAddrImpl<T> {
     fn upgrade(&self) -> Option<BoxBcAddr> {
         self.0.upgrade().map(|a| a.into())
     }
+
+    fn actor_type(&self) -> String {
+        snek_type_name::<T>()
+    }
 }
 
-struct BcAddrImpl<T>(Addr<T>);
+struct BcAddrImpl<T>(Addr<BcActor<T>>);
 
 #[async_trait::async_trait]
-impl<T: Actor> BcAddr for BcAddrImpl<T> {
+impl<T: BcActorCtrl> BcAddr for BcAddrImpl<T> {
     fn stop(&mut self) -> Result<()> {
         self.0.stop(None)
     }
@@ -208,22 +258,26 @@ impl<T: Actor> BcAddr for BcAddrImpl<T> {
     async fn wait_for_stop(self: Box<Self>) {
         self.0.wait_for_stop().await;
     }
+
+    fn actor_type(&self) -> String {
+        snek_type_name::<T>()
+    }
 }
 
-impl<T: Actor> From<Addr<T>> for BoxBcWeakAddr {
-    fn from(addr: Addr<T>) -> Self {
+impl<T: BcActorCtrl> From<Addr<BcActor<T>>> for BoxBcWeakAddr {
+    fn from(addr: Addr<BcActor<T>>) -> Self {
         addr.downgrade().into()
     }
 }
 
-impl<T: Actor> From<WeakAddr<T>> for BoxBcWeakAddr {
-    fn from(addr: WeakAddr<T>) -> Self {
+impl<T: BcActorCtrl> From<WeakAddr<BcActor<T>>> for BoxBcWeakAddr {
+    fn from(addr: WeakAddr<BcActor<T>>) -> Self {
         Box::new(BcWeakAddrImpl(addr))
     }
 }
 
-impl<T: Actor> From<Addr<T>> for BoxBcAddr {
-    fn from(addr: Addr<T>) -> Self {
+impl<T: BcActorCtrl> From<Addr<BcActor<T>>> for BoxBcAddr {
+    fn from(addr: Addr<BcActor<T>>) -> Self {
         Box::new(BcAddrImpl(addr))
     }
 }

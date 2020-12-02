@@ -67,30 +67,3 @@ pub fn schedule_next_message<A: BcHandler<M>, M: Message<Result = ()>>(
         panic!("schedule_next_message called when no schedule was configured")
     }
 }
-
-#[derive(Clone, Copy)]
-pub enum TerminalState {
-    Succeeded,
-    Failed(bool),
-    Cancelled,
-    Faulted,
-}
-
-impl TerminalState {
-    fn dnr() -> Self {
-        TerminalState::Failed(false)
-    }
-
-    fn retry() -> Self {
-        TerminalState::Failed(true)
-    }
-}
-
-impl<T, E> From<Result<T, E>> for TerminalState {
-    fn from(result: std::result::Result<T, E>) -> Self {
-        match result {
-            Ok(_) => TerminalState::Succeeded,
-            Err(_) => TerminalState::dnr(),
-        }
-    }
-}

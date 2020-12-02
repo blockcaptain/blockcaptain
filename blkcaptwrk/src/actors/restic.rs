@@ -2,13 +2,13 @@ use super::{
     dataset::{DatasetHolderActor, HolderReadyMessage},
     transfer::TransferComplete,
 };
-use crate::actorbase::{log_result, TerminalState};
+use crate::actorbase::log_result;
 use crate::{
     actorbase::{schedule_next_message, unhandled_result},
     snapshots::{ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage},
     tasks::WorkerCompleteMessage,
     tasks::WorkerTask,
-    xactorext::{BcActor, BcActorCtrl, BcAddr, BcHandler},
+    xactorext::{BcActor, BcActorCtrl, BcAddr, BcHandler, TerminalState},
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
 use container::BackupReadyMessage;
@@ -244,8 +244,8 @@ mod container {
             Ok(())
         }
 
-        async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
-            self.state = match self.state.take() {
+        async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+            match self.state.take() {
                 State::Active { active, waiting } => {
                     let maybe_actor: Option<BoxBcAddr> = match active {
                         Active::Transfer { actor, .. } => actor.upgrade().map(|a| a.into()),
@@ -260,10 +260,10 @@ mod container {
                             let _ = addr.send(BackupReadyMessage(Err(anyhow!("container stopped"))));
                         }
                     }
-                    State::Idle
+                    TerminalState::Cancelled
                 }
-                State::Idle => State::Idle,
-                State::Faulted => State::Faulted,
+                State::Idle => TerminalState::Succeeded,
+                State::Faulted => TerminalState::Faulted,
             }
         }
     }
@@ -411,7 +411,6 @@ mod transfer {
         Transferring(Addr<BcActor<DatasetHolderActor>>, WorkerTask),
         Transferred(Result<ResticContainerSnapshot>),
         Faulted,
-        Stopped(TerminalState),
     }
 
     impl State {
@@ -439,7 +438,7 @@ mod transfer {
             Ok(())
         }
 
-        async fn stopped(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
+        async fn stopped(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
             let (terminal_state, result) = match self.state.take() {
                 State::Transferring(_holder, worker_task) => {
                     warn!(log, "cancelled during transfer");
@@ -457,9 +456,7 @@ mod transfer {
                     error!(log, "actor faulted");
                     (TerminalState::Faulted, None)
                 }
-                State::Stopped(_) => panic!(),
             };
-            self.state = State::Stopped(terminal_state);
 
             let container_notify_result = self.parent.send(ParentTransferComplete(terminal_state, result));
             let parent_notify_result = self.requestor.send(TransferComplete(terminal_state));
@@ -467,6 +464,7 @@ mod transfer {
                 unhandled_result(log, container_notify_result);
                 unhandled_result(log, parent_notify_result);
             }
+            terminal_state
         }
     }
 

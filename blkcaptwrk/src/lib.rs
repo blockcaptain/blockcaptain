@@ -8,6 +8,7 @@ pub mod actors {
     pub mod observation;
     pub mod pool;
     pub mod restic;
+    pub mod server;
     pub mod sync;
     pub mod transfer;
 }

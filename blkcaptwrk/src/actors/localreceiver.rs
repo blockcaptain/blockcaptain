@@ -70,8 +70,6 @@ impl BcActorCtrl for LocalReceiverActor {
         }
         Ok(())
     }
-
-    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {}
 }
 
 #[async_trait::async_trait]

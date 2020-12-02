@@ -1,6 +1,6 @@
-use super::{observation::HealthchecksActor, sync::SyncActor};
+use super::{observation::HealthchecksActor, server::ServerActor, sync::SyncActor};
 use super::{pool::PoolActor, restic::ResticContainerActor, sync::SyncToContainer};
-use crate::xactorext::{join_all_actors, stop_all_actors, GetChildActorMessage};
+use crate::xactorext::{join_all_actors, stop_all_actors, GetChildActorMessage, TerminalState};
 use crate::xactorext::{BcActor, BcActorCtrl};
 use anyhow::{Context as AnyhowContext, Result};
 use futures_util::{
@@ -18,6 +18,7 @@ pub struct CaptainActor {
     sync_actors: Vec<Addr<BcActor<SyncActor>>>,
     pool_actors: HashMap<Uuid, Addr<BcActor<PoolActor>>>,
     restic_actors: HashMap<Uuid, Addr<BcActor<ResticContainerActor>>>,
+    server_actor: Option<Addr<BcActor<ServerActor>>>,
 }
 
 impl CaptainActor {
@@ -28,6 +29,7 @@ impl CaptainActor {
                 sync_actors: Default::default(),
                 pool_actors: Default::default(),
                 restic_actors: Default::default(),
+                server_actor: None,
             },
             log,
         )
@@ -182,10 +184,12 @@ impl BcActorCtrl for CaptainActor {
                 .collect();
         }
 
+        self.server_actor = Some(ServerActor::new(log).start().await.expect("TODO"));
+
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) {
+    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
         stop_all_actors(&mut self.healthcheck_actors);
         stop_all_actors(&mut self.sync_actors);
         stop_all_actors(self.pool_actors.values_mut());
@@ -195,5 +199,12 @@ impl BcActorCtrl for CaptainActor {
         join_all_actors(self.sync_actors.drain(..)).await;
         join_all_actors(self.pool_actors.drain().map(|(_k, v)| v)).await;
         join_all_actors(self.restic_actors.drain().map(|(_k, v)| v)).await;
+
+        self.server_actor.take().map(|mut s| {
+            let _ = s.stop(None);
+            let _ = s.wait_for_stop();
+        });
+
+        TerminalState::Succeeded
     }
 }

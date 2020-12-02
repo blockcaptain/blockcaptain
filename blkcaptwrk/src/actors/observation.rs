@@ -1,6 +1,6 @@
 use crate::{
     actorbase::{schedule_next_message, unhandled_result},
-    xactorext::{BcActor, BcActorCtrl, BcHandler, TerminalState},
+    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::Result;
 use cron::Schedule;
@@ -151,5 +151,17 @@ impl BcHandler<HeartbeatMessage> for HealthchecksActor {
 
         unhandled_result(log, result);
         self.schedule_next_heartbeat(log, ctx);
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<GetActorStatusMessage> for HealthchecksActor {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetActorStatusMessage,
+    ) -> String {
+        String::from("ok")
     }
 }

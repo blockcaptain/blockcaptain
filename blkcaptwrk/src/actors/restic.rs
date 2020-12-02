@@ -8,7 +8,7 @@ use crate::{
     snapshots::{ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage},
     tasks::WorkerCompleteMessage,
     tasks::WorkerTask,
-    xactorext::{BcActor, BcActorCtrl, BcAddr, BcHandler, TerminalState},
+    xactorext::{BcActor, BcActorCtrl, BcAddr, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
 use container::BackupReadyMessage;
@@ -393,6 +393,26 @@ mod container {
             }
         }
     }
+
+    #[async_trait::async_trait]
+    impl BcHandler<GetActorStatusMessage> for ResticContainerActor {
+        async fn handle(
+            &mut self,
+            _log: &Logger,
+            _ctx: &mut Context<BcActor<Self>>,
+            _msg: GetActorStatusMessage,
+        ) -> String {
+            match &self.state {
+                State::Active { active, .. } => match active {
+                    Active::Transfer { .. } => "transferring",
+                    Active::Prune { .. } => "pruning",
+                },
+                State::Idle => "idle",
+                State::Faulted => "faulted",
+            }
+            .into()
+        }
+    }
 }
 
 mod transfer {
@@ -562,6 +582,18 @@ mod transfer {
             ctx.stop(None);
         }
     }
+
+    #[async_trait::async_trait]
+    impl BcHandler<GetActorStatusMessage> for ResticTransferActor {
+        async fn handle(
+            &mut self,
+            _log: &Logger,
+            _ctx: &mut Context<BcActor<Self>>,
+            _msg: GetActorStatusMessage,
+        ) -> String {
+            String::from("ok")
+        }
+    }
 }
 
 mod prune {
@@ -626,6 +658,18 @@ mod prune {
                 );
             }
             ctx.stop(None);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BcHandler<GetActorStatusMessage> for ResticPruneActor {
+        async fn handle(
+            &mut self,
+            _log: &Logger,
+            _ctx: &mut Context<BcActor<Self>>,
+            _msg: GetActorStatusMessage,
+        ) -> String {
+            String::from("ok")
         }
     }
 }

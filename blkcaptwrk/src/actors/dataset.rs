@@ -5,6 +5,7 @@ use super::{
 };
 use crate::{
     actorbase::schedule_next_message, actorbase::unhandled_error, snapshots::prune_snapshots, snapshots::PruneMessage,
+    xactorext::GetActorStatusMessage,
 };
 use crate::{
     actorbase::unhandled_result,
@@ -354,6 +355,18 @@ impl BcHandler<LocalSenderFinishedMessage> for DatasetActor {
 //     }
 // }
 
+#[async_trait::async_trait]
+impl BcHandler<GetActorStatusMessage> for DatasetActor {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetActorStatusMessage,
+    ) -> String {
+        String::from("ok")
+    }
+}
+
 pub struct DatasetHolderActor;
 
 impl DatasetHolderActor {
@@ -375,3 +388,15 @@ impl DatasetHolderActor {
 
 #[async_trait::async_trait]
 impl BcActorCtrl for DatasetHolderActor {}
+
+#[async_trait::async_trait]
+impl BcHandler<GetActorStatusMessage> for DatasetHolderActor {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetActorStatusMessage,
+    ) -> String {
+        String::from("ok")
+    }
+}

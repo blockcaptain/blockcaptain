@@ -6,7 +6,7 @@ use super::{
 use crate::{
     actorbase::{schedule_next_message, unhandled_result},
     snapshots::{prune_snapshots, ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage},
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
+    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage},
 };
 use anyhow::Result;
 use cron::Schedule;
@@ -231,5 +231,17 @@ impl BcHandler<PruneMessage> for ContainerActor {
         .await;
 
         unhandled_result(log, result);
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<GetActorStatusMessage> for ContainerActor {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetActorStatusMessage,
+    ) -> String {
+        String::from("ok")
     }
 }

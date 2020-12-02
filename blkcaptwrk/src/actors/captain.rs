@@ -1,6 +1,8 @@
 use super::{observation::HealthchecksActor, server::ServerActor, sync::SyncActor};
 use super::{pool::PoolActor, restic::ResticContainerActor, sync::SyncToContainer};
-use crate::xactorext::{join_all_actors, stop_all_actors, GetChildActorMessage, TerminalState};
+use crate::xactorext::{
+    join_all_actors, stop_all_actors, BcHandler, GetActorStatusMessage, GetChildActorMessage, TerminalState,
+};
 use crate::xactorext::{BcActor, BcActorCtrl};
 use anyhow::{Context as AnyhowContext, Result};
 use futures_util::{
@@ -206,5 +208,17 @@ impl BcActorCtrl for CaptainActor {
         });
 
         TerminalState::Succeeded
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<GetActorStatusMessage> for CaptainActor {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetActorStatusMessage,
+    ) -> String {
+        String::from("ok")
     }
 }

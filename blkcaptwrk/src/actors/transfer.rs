@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     actorbase::{log_result, unhandled_error},
-    xactorext::{BcActor, BcActorCtrl, BcHandler, TerminalState},
+    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::Result;
 use bytes::BytesMut;
@@ -265,3 +265,15 @@ impl BcHandler<InternalTransferComplete> for TransferActor {
 
 //https://docs.rs/futures/0.3.6/futures/future/struct.Abortable.html
 //https://docs.rs/futures/0.3.6/futures/future/struct.RemoteHandle.html
+
+#[async_trait::async_trait]
+impl BcHandler<GetActorStatusMessage> for TransferActor {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetActorStatusMessage,
+    ) -> String {
+        String::from("ok")
+    }
+}

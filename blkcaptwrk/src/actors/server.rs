@@ -1,4 +1,4 @@
-use futures_util::FutureExt;
+use futures_util::{FutureExt, TryFutureExt};
 use slog::Logger;
 use std::{convert::Infallible, future::Future, path::PathBuf};
 use tokio::{net::UnixListener, sync::oneshot, task::JoinHandle};
@@ -7,7 +7,7 @@ use xactor::Context;
 
 use crate::{
     tasks::{WorkerCompleteMessage, WorkerTask},
-    xactorext::{BcActor, BcActorCtrl, BcHandler, TerminalState},
+    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::Result;
 
@@ -40,7 +40,11 @@ impl BcActorCtrl for ServerActor {
 
             let routes = warp::any().and_then(|| async {
                 let addr = IntelActor::addr();
-                let state = addr.call(GetStateMessage).await.map_err(|_| warp::reject())?;
+                let state = addr
+                    .call(GetStateMessage)
+                    .and_then(|fut| fut.map(Ok))
+                    .await
+                    .map_err(|_| warp::reject())?;
                 Ok::<_, Rejection>(warp::reply::json(&state))
             });
 
@@ -60,5 +64,17 @@ impl BcActorCtrl for ServerActor {
         }
 
         TerminalState::Succeeded
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<GetActorStatusMessage> for ServerActor {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetActorStatusMessage,
+    ) -> String {
+        String::from("ok")
     }
 }

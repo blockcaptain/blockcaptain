@@ -6,7 +6,7 @@ use cron::Schedule;
 use slog::{debug, error, info, Logger};
 use xactor::{Context, Message};
 
-use crate::xactorext::{BcActor, BcHandler};
+use crate::xactorext::{BcActor, BcActorCtrl, BcHandler};
 
 pub fn unhandled_error(log: &Logger, error: Error) {
     log_error(log, &error)
@@ -52,7 +52,7 @@ fn schedule_next_delay(after: DateTime<Utc>, what: &str, schedule: &Schedule, lo
     }
 }
 
-pub fn schedule_next_message<A: BcHandler<M>, M: Message<Result = ()>>(
+pub fn schedule_next_message<A: BcActorCtrl + BcHandler<M>, M: Message<Result = ()>>(
     schedule: Option<&Schedule>,
     what: &str,
     message: M,

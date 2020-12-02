@@ -1,6 +1,6 @@
 use super::{container::ContainerActor, dataset::DatasetActor};
-use crate::xactorext::GetChildActorMessage;
 use crate::xactorext::{BcActor, BcActorCtrl, BcHandler};
+use crate::xactorext::{GetActorStatusMessage, GetChildActorMessage};
 use anyhow::{bail, Result};
 use futures_util::stream::FuturesUnordered;
 use futures_util::stream::StreamExt;
@@ -185,5 +185,17 @@ impl BcHandler<GetChildActorMessage<BcActor<ContainerActor>>> for PoolActor {
         msg: GetChildActorMessage<BcActor<ContainerActor>>,
     ) -> Option<Addr<BcActor<ContainerActor>>> {
         self.containers.get(&msg.0).cloned()
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<GetActorStatusMessage> for PoolActor {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetActorStatusMessage,
+    ) -> String {
+        String::from("fine")
     }
 }

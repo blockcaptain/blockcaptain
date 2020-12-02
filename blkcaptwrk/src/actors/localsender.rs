@@ -1,4 +1,4 @@
-use crate::xactorext::{BcActor, BcActorCtrl, BcHandler};
+use crate::xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage};
 use anyhow::Result;
 use libblkcapt::core::localsndrcv::SnapshotSender;
 use slog::Logger;
@@ -89,5 +89,17 @@ impl BcHandler<InternalSenderFinished> for LocalSenderActor {
         self.state = State::Finished;
         self.parent.send(LocalSenderFinishedMessage(Ok(()))).expect("FIXME");
         self.requestor.send(LocalSenderFinishedMessage(msg.0)).expect("FIXME");
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<GetActorStatusMessage> for LocalSenderActor {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetActorStatusMessage,
+    ) -> String {
+        String::from("ok")
     }
 }

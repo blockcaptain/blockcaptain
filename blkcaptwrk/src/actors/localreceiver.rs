@@ -1,6 +1,6 @@
 use crate::{
     actorbase::unhandled_result,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
+    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage},
 };
 use anyhow::Result;
 use libblkcapt::core::{localsndrcv::SnapshotReceiver, BtrfsContainerSnapshot};
@@ -102,5 +102,17 @@ impl BcHandler<InternalReceiverFinished> for LocalReceiverActor {
         // TODO need proper error sent below.
         let requestor_notify_result = self.requestor.send(ReceiverFinishedMessage(Ok(())));
         unhandled_result(log, requestor_notify_result);
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<GetActorStatusMessage> for LocalReceiverActor {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetActorStatusMessage,
+    ) -> String {
+        String::from("ok")
     }
 }

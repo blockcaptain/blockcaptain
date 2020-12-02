@@ -1,5 +1,10 @@
 use crate::xactorext::{BcActor, BcActorCtrl, BoxBcWeakAddr, TerminalState};
 use anyhow::Result;
+use futures_util::{
+    future::FutureExt,
+    future::{ready, BoxFuture},
+    stream::{self, FuturesUnordered, StreamExt},
+};
 use libblkcapt::core::system;
 use once_cell::sync::OnceCell;
 use slog::{error, trace, warn, Logger};
@@ -17,6 +22,7 @@ pub struct IntelActor {
 #[message]
 pub struct ActorStartMessage(u64, BoxBcWeakAddr);
 
+#[derive(Clone)]
 enum ActorState {
     Started,
     Stopped,
@@ -76,6 +82,7 @@ impl IntelActor {
 
 static INTEL_ACTOR_SINGLETON: OnceCell<Addr<IntelActor>> = OnceCell::new();
 
+#[derive(Clone)]
 struct Tractor {
     actor: BoxBcWeakAddr,
     state: ActorState,
@@ -93,7 +100,7 @@ impl Tractor {
 #[derive(Clone)]
 struct Update;
 
-#[message(result = "system::SystemState")]
+#[message(result = "BoxFuture<'static, system::SystemState>")]
 pub struct GetStateMessage;
 
 #[async_trait::async_trait]
@@ -180,25 +187,43 @@ impl Handler<Update> for IntelActor {
 
 #[async_trait::async_trait]
 impl Handler<GetStateMessage> for IntelActor {
-    async fn handle(&mut self, _ctx: &mut Context<Self>, _msg: GetStateMessage) -> system::SystemState {
-        system::SystemState {
-            actors: self
-                .actors
-                .iter()
-                .map(|(id, tractor)| system::SystemActor {
-                    actor_id: *id,
+    async fn handle(
+        &mut self,
+        _ctx: &mut Context<Self>,
+        _msg: GetStateMessage,
+    ) -> BoxFuture<'static, system::SystemState> {
+        self.actors
+            .clone()
+            .into_iter()
+            .map(|(id, tractor)| async move {
+                system::SystemActor {
+                    actor_id: id,
                     actor_state: match tractor.state {
                         ActorState::Started => {
-                            system::ActorState::Started(system::ActiveState::Custom(String::from("unknown")))
+                            let active_state = match tractor.actor.upgrade() {
+                                Some(actor) => match tokio::time::timeout(Duration::from_secs(3), actor.status()).await
+                                {
+                                    Ok(status_result) => match status_result {
+                                        Ok(data) => system::ActiveState::Custom(data),
+                                        Err(_) => system::ActiveState::Stopping,
+                                    },
+                                    Err(_) => system::ActiveState::Unresponsive,
+                                },
+                                None => system::ActiveState::Stopping,
+                            };
+                            system::ActorState::Started(active_state)
                         }
                         ActorState::Stopped => system::ActorState::Stopped(tractor.system_terminal_state()),
                         ActorState::Dropped => system::ActorState::Dropped(tractor.system_terminal_state()),
                         ActorState::Zombie => system::ActorState::Zombie(tractor.system_terminal_state()),
                     },
                     actor_type: tractor.actor.actor_type(),
-                })
-                .collect(),
-        }
+                }
+            })
+            .collect::<FuturesUnordered<_>>()
+            .collect::<Vec<_>>()
+            .map(|actors| system::SystemState { actors })
+            .boxed()
     }
 }
 

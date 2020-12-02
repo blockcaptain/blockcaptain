@@ -52,23 +52,19 @@ impl<T: Actor> xactor::Message for GetChildActorMessage<T> {
 }
 
 #[async_trait::async_trait]
-pub trait BcHandler<M: Message>: BcActorCtrl {
+pub trait BcHandler<M: Message>: Sized {
     async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: M) -> M::Result;
 }
 
 #[async_trait::async_trait]
 #[allow(unused_variables)]
-pub trait BcActorCtrl: Sized + Send + 'static {
+pub trait BcActorCtrl: BcHandler<GetActorStatusMessage> + Sized + Send + 'static {
     async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         Ok(())
     }
 
     async fn stopped(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
         TerminalState::Succeeded
-    }
-
-    async fn status(&self) -> String {
-        String::new()
     }
 }
 
@@ -135,18 +131,8 @@ impl<T> BcActor<T> {
     notify_impl!(drop, ActorDropMessage);
 }
 
-// #[message(result = "String")]
-// pub struct GetActorStatusMessage;
-
-// #[async_trait::async_trait]
-// impl<A> Handler<GetActorStatusMessage> for A
-// where
-//     A: BcActorCtrl,
-// {
-//     async fn handle(&mut self, ctx: &mut Context<Self>, msg: GetActorStatusMessage) -> String {
-//         self.status()
-//     }
-// }
+#[message(result = "String")]
+pub struct GetActorStatusMessage;
 
 #[async_trait::async_trait]
 impl<A, M> Handler<M> for BcActor<A>
@@ -223,7 +209,7 @@ fn inner_make_snek_type_name(mut name: &str) -> String {
 pub type BoxBcWeakAddr = Box<dyn BcWeakAddr>;
 pub type BoxBcAddr = Box<dyn BcAddr>;
 
-pub trait BcWeakAddr: Sync + Send {
+pub trait BcWeakAddr: BcWeakAddrClone + Sync + Send {
     fn actor_type(&self) -> String;
     fn upgrade(&self) -> Option<BoxBcAddr>;
 }
@@ -232,10 +218,17 @@ pub trait BcWeakAddr: Sync + Send {
 pub trait BcAddr: Sync + Send {
     fn actor_type(&self) -> String;
     fn stop(&mut self) -> Result<()>;
+    async fn status(&self) -> Result<String>;
     async fn wait_for_stop(self: Box<Self>);
 }
 
 struct BcWeakAddrImpl<T>(WeakAddr<BcActor<T>>);
+
+impl<T> Clone for BcWeakAddrImpl<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
 
 impl<T: BcActorCtrl> BcWeakAddr for BcWeakAddrImpl<T> {
     fn upgrade(&self) -> Option<BoxBcAddr> {
@@ -262,6 +255,10 @@ impl<T: BcActorCtrl> BcAddr for BcAddrImpl<T> {
     fn actor_type(&self) -> String {
         snek_type_name::<T>()
     }
+
+    async fn status(&self) -> Result<String> {
+        self.0.call(GetActorStatusMessage).await
+    }
 }
 
 impl<T: BcActorCtrl> From<Addr<BcActor<T>>> for BoxBcWeakAddr {
@@ -279,5 +276,27 @@ impl<T: BcActorCtrl> From<WeakAddr<BcActor<T>>> for BoxBcWeakAddr {
 impl<T: BcActorCtrl> From<Addr<BcActor<T>>> for BoxBcAddr {
     fn from(addr: Addr<BcActor<T>>) -> Self {
         Box::new(BcAddrImpl(addr))
+    }
+}
+
+//https://stackoverflow.com/questions/30353462/how-to-clone-a-struct-storing-a-boxed-trait-object
+//https://github.com/dtolnay/dyn-clone
+
+pub trait BcWeakAddrClone {
+    fn clone_box(&self) -> Box<dyn BcWeakAddr>;
+}
+
+impl<T> BcWeakAddrClone for T
+where
+    T: 'static + BcWeakAddr + Clone,
+{
+    fn clone_box(&self) -> Box<dyn BcWeakAddr> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn BcWeakAddr> {
+    fn clone(&self) -> Self {
+        self.clone_box()
     }
 }

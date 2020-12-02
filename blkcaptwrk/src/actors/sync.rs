@@ -14,7 +14,7 @@ use crate::{
     actorbase::{schedule_next_message, unhandled_result},
     snapshots::{find_parent, find_ready, FindMode, GetContainerSnapshotsMessage},
     xactorext::BoxBcAddr,
-    xactorext::{stop_all_actors, BcActor, BcActorCtrl, BcAddr, BcHandler, TerminalState},
+    xactorext::{stop_all_actors, BcActor, BcActorCtrl, BcAddr, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -326,5 +326,17 @@ impl BcHandler<TransferComplete> for SyncActor {
 
         let result = self.run_cycle(ctx, log).await;
         unhandled_result(log, result);
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<GetActorStatusMessage> for SyncActor {
+    async fn handle(
+        &mut self,
+        _log: &Logger,
+        _ctx: &mut Context<BcActor<Self>>,
+        _msg: GetActorStatusMessage,
+    ) -> String {
+        String::from("ok")
     }
 }

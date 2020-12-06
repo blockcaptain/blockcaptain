@@ -37,11 +37,12 @@ mod container {
     use std::collections::{HashSet, VecDeque};
 
     use chrono::{DateTime, Utc};
-    use libblkcapt::core::retention::evaluate_retention;
+    use libblkcapt::{core::retention::evaluate_retention, model::entities::ObservableEvent};
     use slog::info;
     use xactor::{Actor, WeakAddr};
 
     use crate::{
+        actors::observation::{start_observation, StartedObservation},
         snapshots::clear_deleted,
         xactorext::{BcAddr, BoxBcAddr},
     };
@@ -87,6 +88,7 @@ mod container {
         },
         Prune {
             actor: Addr<BcActor<ResticPruneActor>>,
+            observation: Option<StartedObservation>,
             forgets: Vec<(Uuid, HashSet<DateTime<Utc>>)>,
         },
     }
@@ -165,6 +167,7 @@ mod container {
         }
 
         async fn start_prune(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Option<Active> {
+            let observation = start_observation(self.container_id, ObservableEvent::ContainerPrune).await;
             let repository = self.repository.get();
             let rules = repository
                 .model()
@@ -188,6 +191,7 @@ mod container {
                 .collect::<Vec<_>>();
 
             if forgets.is_empty() {
+                observation.succeeded();
                 return None;
             }
 
@@ -204,6 +208,7 @@ mod container {
 
             Some(Active::Prune {
                 actor,
+                observation: Some(observation),
                 forgets: evals
                     .into_iter()
                     .map(|(id, eval)| (id, eval.drop_snapshots.into_iter().map(|s| s.datetime).collect()))
@@ -281,13 +286,16 @@ mod container {
         async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
             match self.state.take() {
                 State::Active { active, waiting } => {
-                    let maybe_actor: Option<BoxBcAddr> = match active {
-                        Active::Transfer { actor, .. } => actor.upgrade().map(|a| a.into()),
-                        Active::Prune { actor, .. } => Some(actor.into()),
+                    let (maybe_actor, maybe_observation): (Option<BoxBcAddr>, _) = match active {
+                        Active::Transfer { actor, .. } => (actor.upgrade().map(|a| a.into()), None),
+                        Active::Prune { actor, observation, .. } => (Some(actor.into()), observation),
                     };
                     if let Some(mut actor) = maybe_actor {
                         let _ = actor.stop();
                         actor.wait_for_stop().await;
+                    }
+                    if let Some(observation) = maybe_observation {
+                        observation.cancelled();
                     }
                     for waiter in waiting {
                         if let Some(addr) = waiter.target.upgrade() {
@@ -414,10 +422,12 @@ mod container {
         async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: PruneCompleteMessage) {
             match &mut self.state {
                 State::Active {
-                    active: Active::Prune { forgets, .. },
+                    active: Active::Prune {
+                        forgets, observation, ..
+                    },
                     ..
                 } => {
-                    let forgot = msg.0;
+                    let PruneCompleteMessage(forgot, result) = msg;
                     if forgot {
                         for (dataset_id, snapshots) in forgets {
                             if let Some(cache) = self.snapshots.get_mut(dataset_id) {
@@ -425,6 +435,11 @@ mod container {
                             }
                         }
                     }
+
+                    if let Some(observation) = observation.take() {
+                        observation.result(result);
+                    }
+
                     self.process_waiting(log, ctx).await;
                 }
                 State::Active {
@@ -683,7 +698,7 @@ mod prune {
     impl ResticPruneActor {}
 
     #[message]
-    pub struct PruneCompleteMessage(pub bool);
+    pub struct PruneCompleteMessage(pub bool, pub Result<()>);
 
     type PruneWorkerCompleteMessage = WorkerCompleteMessage<Result<()>>;
 
@@ -699,32 +714,36 @@ mod prune {
         }
 
         async fn stopped(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
-            let terminal_state = match self.state.take() {
+            let (terminal_state, result) = match self.state.take() {
                 State::Created(..) => {
-                    warn!(log, "cancelled prior to transfer");
-                    TerminalState::Cancelled
+                    const MSG: &str = "cancelled prior to transfer";
+                    warn!(log, "{}", MSG);
+                    (TerminalState::Cancelled, Err(anyhow!(MSG)))
                 }
                 State::StartedForget(worker, _) => {
-                    warn!(log, "cancelled during forget");
+                    const MSG: &str = "cancelled during forget";
+                    warn!(log, "{}", MSG);
                     worker.abort();
-                    TerminalState::Cancelled
+                    (TerminalState::Cancelled, Err(anyhow!(MSG)))
                 }
                 State::StartedPrune(worker) => {
-                    warn!(log, "cancelled during prune");
+                    const MSG: &str = "cancelled during prune";
+                    warn!(log, "{}", MSG);
                     worker.abort();
-                    TerminalState::Cancelled
+                    (TerminalState::Cancelled, Err(anyhow!(MSG)))
                 }
                 State::Pruned(result) => {
                     log_result(log, &result);
-                    result.into()
+                    (result.as_ref().into(), result)
                 }
                 State::Faulted => {
-                    error!(log, "actor faulted");
-                    TerminalState::Faulted
+                    const MSG: &str = "actor faulted";
+                    error!(log, "{}", MSG);
+                    (TerminalState::Faulted, Err(anyhow!(MSG)))
                 }
             };
 
-            let container_notify_result = self.parent.send(PruneCompleteMessage(self.forgot));
+            let container_notify_result = self.parent.send(PruneCompleteMessage(self.forgot, result));
             if !matches!(terminal_state, TerminalState::Cancelled) {
                 unhandled_result(log, container_notify_result);
             }

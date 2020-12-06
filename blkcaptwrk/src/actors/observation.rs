@@ -13,9 +13,9 @@ use libblkcapt::{
     model::Entity,
 };
 use slog::{o, Logger};
-use std::{convert::TryFrom, convert::TryInto, fmt::Debug, future::Future};
+use std::{borrow::Borrow, convert::TryFrom, convert::TryInto, fmt::Debug, future::Future};
 use uuid::Uuid;
-use xactor::{message, Broker, Context, Service};
+use xactor::{message, Addr, Broker, Context, Service};
 
 #[message()]
 #[derive(Clone, Debug)]
@@ -35,6 +35,13 @@ where
     R: Future<Output = std::result::Result<T, E>>,
     E: Debug,
 {
+    let observation = start_observation(source, event).await;
+    let result = func().await;
+    observation.result(&result);
+    result
+}
+
+pub async fn start_observation(source: Uuid, event: ObservableEvent) -> StartedObservation {
     let mut broker = Broker::from_registry().await.expect("broker is always available");
     broker
         .publish(ObservableEventMessage {
@@ -44,28 +51,68 @@ where
         })
         .expect("can always publish");
 
-    let result = func().await;
+    StartedObservation {
+        source,
+        event,
+        stopped: false,
+        broker,
+    }
+}
 
-    let final_stage = match &result {
-        Ok(_) => {
-            slog_scope::trace!("observable func succeeded"; "entity_id" => %source, "observable_event" => %event);
-            ObservableEventStage::Succeeded
+pub struct StartedObservation {
+    source: Uuid,
+    event: ObservableEvent,
+    stopped: bool,
+    broker: Addr<Broker<ObservableEventMessage>>,
+}
+
+impl StartedObservation {
+    pub fn succeeded(self) {
+        slog_scope::trace!("observation succeeded"; "entity_id" => %self.source, "observable_event" => %self.event);
+        self.stop(ObservableEventStage::Succeeded);
+    }
+
+    pub fn failed<S: AsRef<str>>(self, message: S) {
+        slog_scope::trace!("observable failed"; "entity_id" => %self.source, "observable_event" => %self.event, "error" => message.as_ref());
+        self.stop(ObservableEventStage::Failed(message.as_ref().to_owned()));
+    }
+
+    pub fn cancelled(self) {
+        slog_scope::trace!("observation cancelled"; "entity_id" => %self.source, "observable_event" => %self.event);
+        self.failed("cancelled");
+    }
+
+    pub fn result<T, E: Debug, R: Borrow<Result<T, E>>>(self, result: R) {
+        match result.borrow() {
+            Ok(_) => self.succeeded(),
+            Err(e) => {
+                self.failed(format!("{:?}", e));
+            }
+        };
+    }
+
+    fn stop(mut self, stage: ObservableEventStage) {
+        self.broker
+            .publish(ObservableEventMessage {
+                source: self.source,
+                event: self.event,
+                stage,
+            })
+            .expect("can always publish");
+        self.stopped = true;
+    }
+}
+
+impl Drop for StartedObservation {
+    fn drop(&mut self) {
+        if !self.stopped {
+            let _ = self.broker.publish(ObservableEventMessage {
+                source: self.source,
+                event: self.event,
+                stage: ObservableEventStage::Failed(String::from("observation was not stopped explicitly")),
+            });
         }
-        Err(e) => {
-            slog_scope::trace!("observable func failed"; "entity_id" => %source, "observable_event" => %event, "error" => ?e);
-            ObservableEventStage::Failed(format!("{:?}", e))
-        }
-    };
-
-    broker
-        .publish(ObservableEventMessage {
-            source,
-            event,
-            stage: final_stage,
-        })
-        .expect("can always publish");
-
-    result
+    }
 }
 
 pub struct HealthchecksActor {

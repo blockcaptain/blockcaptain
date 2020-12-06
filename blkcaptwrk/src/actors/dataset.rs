@@ -4,14 +4,19 @@ use super::{
     pool::PoolActor,
 };
 use crate::{
-    actorbase::schedule_next_message, actorbase::unhandled_error, snapshots::prune_snapshots, snapshots::PruneMessage,
+    actorbase::schedule_next_message,
+    actorbase::unhandled_error,
+    snapshots::PruneMessage,
+    snapshots::{
+        clear_deleted, delete_snapshots, failed_snapshot_deletes_as_result, log_evaluation, prune_btrfs_snapshots,
+    },
     xactorext::GetActorStatusMessage,
 };
 use crate::{
     actorbase::unhandled_result,
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
-use anyhow::{Context as AnyhowContext, Result};
+use anyhow::{anyhow, Context as AnyhowContext, Result};
 use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
@@ -196,20 +201,16 @@ impl BcHandler<SnapshotMessage> for DatasetActor {
 #[async_trait::async_trait]
 impl BcHandler<PruneMessage> for DatasetActor {
     async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: PruneMessage) {
-        let rules = self
-            .dataset
-            .model()
-            .snapshot_retention
-            .as_ref()
-            .expect("retention exist based on message scheduling in started");
-
         let result = observable_func(self.dataset.model().id(), ObservableEvent::DatasetPrune, || {
-            let result = self
+            let rules = self
                 .dataset
-                .snapshots()
-                .and_then(|snapshots| evaluate_retention(snapshots, rules))
-                .and_then(|eval| prune_snapshots(eval, &log));
-            ready(result)
+                .model()
+                .snapshot_retention
+                .as_ref()
+                .expect("retention exist based on message scheduling in started");
+
+            let failed_deletes = prune_btrfs_snapshots(&mut self.snapshots, rules, log);
+            ready(failed_snapshot_deletes_as_result(failed_deletes))
         })
         .await;
 

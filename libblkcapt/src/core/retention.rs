@@ -3,13 +3,11 @@ use crate::model::entities::KeepSpec;
 use crate::model::entities::RetentionRuleset;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use std::{cmp::Reverse, iter::repeat};
+use std::{cmp::Reverse, collections::HashSet, iter::repeat};
 use std::{convert::TryFrom, num::NonZeroUsize};
 
-pub fn evaluate_retention<T: Snapshot>(
-    mut snapshots: Vec<T>,
-    rules: &RetentionRuleset,
-) -> Result<RetentionEvaluation<T>> {
+pub fn evaluate_retention<'a, T: Snapshot>(snapshots: &'a [T], rules: &RetentionRuleset) -> RetentionEvaluation<'a, T> {
+    let mut snapshots: Vec<_> = snapshots.iter().collect();
     snapshots.sort_unstable_by_key(|b| Reverse(b.datetime()));
     let snapshots = snapshots;
 
@@ -44,27 +42,33 @@ pub fn evaluate_retention<T: Snapshot>(
         }
     }
 
-    Ok(RetentionEvaluation {
+    RetentionEvaluation {
         drop_snapshots,
         keep_minimum_snapshots,
         keep_interval_buckets,
-    })
+    }
 }
 
-pub struct RetentionEvaluation<T> {
-    pub drop_snapshots: Vec<T>,
-    pub keep_minimum_snapshots: Vec<T>,
-    pub keep_interval_buckets: Vec<RetainBucket<T>>,
+pub struct RetentionEvaluation<'a, T> {
+    pub drop_snapshots: Vec<&'a T>,
+    pub keep_minimum_snapshots: Vec<&'a T>,
+    pub keep_interval_buckets: Vec<RetainBucket<'a, T>>,
+}
+
+impl<'a, T: Snapshot> RetentionEvaluation<'a, T> {
+    fn into_drop_set(self) -> HashSet<DateTime<Utc>> {
+        self.drop_snapshots.into_iter().map(|s| s.datetime()).collect()
+    }
 }
 
 #[derive(Debug)]
-pub struct RetainBucket<T> {
-    pub snapshots: Vec<T>,
+pub struct RetainBucket<'a, T> {
+    pub snapshots: Vec<&'a T>,
     pub max_fill: NonZeroUsize,
     pub end_time: chrono::DateTime<Utc>,
 }
 
-impl<T> RetainBucket<T> {
+impl<'a, T> RetainBucket<'a, T> {
     fn new(keep: KeepSpec, end_time: DateTime<Utc>) -> Self {
         Self {
             snapshots: Default::default(),

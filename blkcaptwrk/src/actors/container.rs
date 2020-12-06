@@ -5,10 +5,13 @@ use super::{
 };
 use crate::{
     actorbase::{schedule_next_message, unhandled_result},
-    snapshots::{prune_snapshots, ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage},
+    snapshots::{
+        clear_deleted, delete_snapshots, failed_snapshot_deletes_as_result, log_evaluation, prune_btrfs_snapshots,
+        ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage,
+    },
     xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage},
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
@@ -207,26 +210,19 @@ impl BcHandler<ReceiverFinishedParentMessage> for ContainerActor {
 #[async_trait::async_trait]
 impl BcHandler<PruneMessage> for ContainerActor {
     async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: PruneMessage) {
-        let rules = self
-            .container
-            .model()
-            .snapshot_retention
-            .as_ref()
-            .expect("retention exist based on message scheduling in started");
-
         let result = observable_func(self.container.model().id(), ObservableEvent::ContainerPrune, || {
-            let result = self.container.source_dataset_ids().and_then(|ids| {
-                ids.iter()
-                    .map(|id| {
-                        trace!(log, "prune container"; "dataset_id" => %id);
-                        self.container
-                            .snapshots(*id)
-                            .and_then(|snapshots| evaluate_retention(snapshots, rules))
-                            .and_then(|eval| prune_snapshots(eval, &log))
-                    })
-                    .collect::<Result<()>>()
+            let rules = self
+                .container
+                .model()
+                .snapshot_retention
+                .as_ref()
+                .expect("retention exist based on message scheduling in started");
+
+            let failed_deletes = self.snapshots.iter_mut().fold(0, |acc, (dataset_id, snapshots)| {
+                trace!(log, "prune container"; "dataset_id" => %dataset_id);
+                acc + prune_btrfs_snapshots(snapshots, rules, log)
             });
-            ready(result)
+            ready(failed_snapshot_deletes_as_result(failed_deletes))
         })
         .await;
 

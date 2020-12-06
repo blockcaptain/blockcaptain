@@ -119,11 +119,9 @@ impl ResticRepository {
         Self::parse_snapshots(&output.stdout, self.model().id()).map(|mut r| r.pop())
     }
 
-    pub async fn forget(self: &Arc<Self>, snapshots: &[&ResticContainerSnapshot]) -> Result<()> {
-        let mut command = self.new_command();
-        command.args(&["forget"]);
-        command.args(snapshots.iter().map(|s| s.uuid.to_string()));
-        command.output().await.map(|_| ()).context("forget process failed")
+    pub fn forget(self: &Arc<Self>, snapshots: &[&ResticContainerSnapshot]) -> ResticForget {
+        let command = self.new_command();
+        ResticForget::new(command, snapshots)
     }
 
     pub fn model(&self) -> &ResticContainerEntity {
@@ -135,7 +133,7 @@ impl ResticRepository {
         // let repository = match &self.model.repository {
         //     crate::model::entities::ResticRepository::Custom(r) => r,
         // };
-        // ^ future
+        // ^ future with more linkages
         let crate::model::entities::ResticRepository::Custom(repository) = &self.model.repository;
         command.env("RESTIC_REPOSITORY", repository);
         command.envs(&self.model.custom_environment);
@@ -329,6 +327,36 @@ pub struct StartedResticPrune {
 }
 
 impl StartedResticPrune {
+    pub async fn wait(self) -> Result<()> {
+        self.process.await.unwrap();
+        Ok(()) // FIXME
+    }
+}
+
+pub struct ResticForget {
+    command: Command,
+}
+
+impl ResticForget {
+    fn new(mut repo_command: Command, snapshots: &[&ResticContainerSnapshot]) -> Self {
+        repo_command.args(&["forget"]);
+        repo_command.args(snapshots.iter().map(|s| s.uuid.to_string()));
+
+        Self { command: repo_command }
+    }
+
+    pub fn start(mut self) -> Result<StartedResticPrune> {
+        let process = self.command.spawn().context("spawn restic forget process failed")?;
+
+        Ok(StartedResticPrune { process })
+    }
+}
+
+pub struct StartedResticForget {
+    process: Child,
+}
+
+impl StartedResticForget {
     pub async fn wait(self) -> Result<()> {
         self.process.await.unwrap();
         Ok(()) // FIXME

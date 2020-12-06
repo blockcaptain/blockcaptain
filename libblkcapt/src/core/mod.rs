@@ -244,7 +244,7 @@ pub trait Snapshot: Display {
 
 pub trait BtrfsSnapshot: Snapshot {
     fn uuid(&self) -> Uuid;
-    fn delete(self) -> Result<()>;
+    fn delete(&self) -> Result<()>;
 }
 
 #[derive(Clone, Derivative)]
@@ -302,7 +302,7 @@ impl BtrfsSnapshot for BtrfsDatasetSnapshot {
         self.subvolume.uuid
     }
 
-    fn delete(self) -> Result<()> {
+    fn delete(&self) -> Result<()> {
         self.dataset.pool.filesystem.delete_subvolume(self.path())
         // .map_err(|e| SnapshotDeleteError {
         //     source: e,
@@ -529,7 +529,7 @@ impl BtrfsSnapshot for BtrfsContainerSnapshot {
         self.subvolume.uuid
     }
 
-    fn delete(self) -> Result<()> {
+    fn delete(&self) -> Result<()> {
         self.container.pool.filesystem.delete_subvolume(self.path())
     }
 }

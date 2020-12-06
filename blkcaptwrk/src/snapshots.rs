@@ -1,10 +1,18 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
-use libblkcapt::core::{retention::RetentionEvaluation, BtrfsSnapshot, SnapshotHandle};
+use libblkcapt::{
+    core::{
+        retention::{evaluate_retention, RetentionEvaluation},
+        BtrfsSnapshot, Snapshot, SnapshotHandle,
+    },
+    model::entities::RetentionRuleset,
+};
 use slog::{info, trace, Logger};
-use std::collections::HashSet;
+use std::{borrow::Borrow, collections::HashSet};
 use uuid::Uuid;
 use xactor::message;
+
+use crate::actorbase::log_result;
 
 pub fn find_ready<'a>(
     dataset_snapshots: &'a [SnapshotHandle],
@@ -79,7 +87,7 @@ pub fn find_parent<'a>(
 #[derive(Clone)]
 pub struct PruneMessage();
 
-pub fn prune_snapshots<T: BtrfsSnapshot>(evaluation: RetentionEvaluation<T>, log: &Logger) -> Result<()> {
+pub fn log_evaluation<T: Snapshot>(evaluation: &RetentionEvaluation<T>, log: &Logger) {
     for snapshot in evaluation.keep_interval_buckets.iter().flat_map(|b| b.snapshots.iter()) {
         trace!(log, "Keeping snapshot {} reason: in retention interval.", snapshot);
     }
@@ -88,15 +96,48 @@ pub fn prune_snapshots<T: BtrfsSnapshot>(evaluation: RetentionEvaluation<T>, log
         trace!(log, "Keeping snapshot {} reason: keep minimum newest.", snapshot);
     }
 
-    for snapshot in evaluation.drop_snapshots {
+    for snapshot in evaluation.drop_snapshots.iter() {
         info!(
             log,
             "Snapshot {} is being pruned because it did not meet any retention criteria.", snapshot
         );
-        snapshot.delete()?;
     }
+}
 
-    Ok(())
+pub fn delete_snapshots<T: BtrfsSnapshot>(snapshots: &[&T], log: &Logger) -> HashSet<DateTime<Utc>> {
+    snapshots
+        .into_iter()
+        .filter_map(|s| {
+            let result = s.delete();
+            log_result(log, &result);
+            result.map(|_| s.datetime()).ok()
+        })
+        .collect()
+}
+
+pub fn clear_deleted<T: Snapshot>(snapshots: &mut Vec<T>, deleted: HashSet<DateTime<Utc>>) {
+    snapshots.retain(|s| !deleted.contains(&s.datetime()));
+}
+
+pub fn prune_btrfs_snapshots<T: BtrfsSnapshot>(
+    snapshots: &mut Vec<T>,
+    rules: &RetentionRuleset,
+    log: &Logger,
+) -> usize {
+    let evaluation = evaluate_retention(snapshots, rules);
+    log_evaluation(&evaluation, log);
+    let deleted = delete_snapshots(&evaluation.drop_snapshots, log);
+    let failed_deletes = evaluation.drop_snapshots.len() - deleted.len();
+    clear_deleted(snapshots, deleted);
+    failed_deletes
+}
+
+pub fn failed_snapshot_deletes_as_result(failed_count: usize) -> Result<()> {
+    if failed_count > 0 {
+        Ok(())
+    } else {
+        Err(anyhow!("{} snapshots failed to delete", failed_count))
+    }
 }
 
 #[message(result = "ContainerSnapshotsResponse")]

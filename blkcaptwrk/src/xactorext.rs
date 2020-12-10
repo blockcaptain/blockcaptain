@@ -25,16 +25,16 @@ use xactor::{message, Actor, Addr, Context, Handler, Message, WeakAddr};
 //     }
 // }
 
-pub fn stop_all_actors<'a, V: IntoIterator<Item = &'a mut Addr<T>>, T: xactor::Actor>(actors: V) {
+pub fn stop_all_actors<'a, V: IntoIterator<Item = &'a mut A>, A: AnyAddr + 'a>(actors: V) {
     let actors_iter = actors.into_iter();
     for actor in actors_iter {
         actor
-            .stop(None)
+            .stop()
             .unwrap_or_else(|e| slog_scope::error!("Stopping actor failed: {}.", e));
     }
 }
 
-pub fn join_all_actors<V: IntoIterator<Item = Addr<T>>, T: xactor::Actor>(actors: V) -> impl Future {
+pub fn join_all_actors<V: IntoIterator<Item = A>, A: AnyAddr + 'static>(actors: V) -> impl Future {
     let futures_iter = actors.into_iter().map(|a| a.wait_for_stop());
     join_all(futures_iter)
 }
@@ -210,12 +210,14 @@ pub type BoxBcWeakAddr = Box<dyn BcWeakAddr>;
 pub type BoxBcAddr = Box<dyn BcAddr>;
 
 pub trait BcWeakAddr: BcWeakAddrClone + Sync + Send {
+    fn actor_id(&self) -> u64;
     fn actor_type(&self) -> String;
     fn upgrade(&self) -> Option<BoxBcAddr>;
 }
 
 #[async_trait::async_trait]
 pub trait BcAddr: Sync + Send {
+    fn actor_id(&self) -> u64;
     fn actor_type(&self) -> String;
     fn stop(&mut self) -> Result<()>;
     async fn status(&self) -> Result<String>;
@@ -238,6 +240,10 @@ impl<T: BcActorCtrl> BcWeakAddr for BcWeakAddrImpl<T> {
     fn actor_type(&self) -> String {
         snek_type_name::<T>()
     }
+
+    fn actor_id(&self) -> u64 {
+        self.0.actor_id()
+    }
 }
 
 struct BcAddrImpl<T>(Addr<BcActor<T>>);
@@ -259,10 +265,20 @@ impl<T: BcActorCtrl> BcAddr for BcAddrImpl<T> {
     async fn status(&self) -> Result<String> {
         self.0.call(GetActorStatusMessage).await
     }
+
+    fn actor_id(&self) -> u64 {
+        self.0.actor_id()
+    }
 }
 
 impl<T: BcActorCtrl> From<Addr<BcActor<T>>> for BoxBcWeakAddr {
     fn from(addr: Addr<BcActor<T>>) -> Self {
+        addr.downgrade().into()
+    }
+}
+
+impl<T: BcActorCtrl> From<&Addr<BcActor<T>>> for BoxBcWeakAddr {
+    fn from(addr: &Addr<BcActor<T>>) -> Self {
         addr.downgrade().into()
     }
 }
@@ -298,5 +314,34 @@ where
 impl Clone for Box<dyn BcWeakAddr> {
     fn clone(&self) -> Self {
         self.clone_box()
+    }
+}
+
+
+#[async_trait::async_trait]
+pub trait AnyAddr {
+    fn stop(&mut self) -> Result<()>;
+    async fn wait_for_stop(self);
+}
+
+#[async_trait::async_trait]
+impl<T: Actor> AnyAddr for Addr<T> {
+    fn stop(&mut self) -> Result<()> {
+        Self::stop(self, None)
+    }
+
+    async fn wait_for_stop(self) {
+        Self::wait_for_stop(self).await
+    }
+}
+
+#[async_trait::async_trait]
+impl AnyAddr for BoxBcAddr {
+    fn stop(&mut self) -> Result<()> {
+        BcAddr::stop(self.as_mut())
+    }
+
+    async fn wait_for_stop(self) {
+        BcAddr::wait_for_stop(self).await
     }
 }

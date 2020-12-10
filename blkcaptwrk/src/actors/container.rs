@@ -3,14 +3,10 @@ use super::{
     observation::observable_func,
     pool::PoolActor,
 };
-use crate::{
-    actorbase::{schedule_next_message, unhandled_result},
-    snapshots::{
+use crate::{actorbase::{schedule_next_message, unhandled_result}, snapshots::{
         clear_deleted, delete_snapshots, failed_snapshot_deletes_as_result, log_evaluation, prune_btrfs_snapshots,
         ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage,
-    },
-    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage},
-};
+    }, xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState, join_all_actors, stop_all_actors}};
 use anyhow::{anyhow, Result};
 use cron::Schedule;
 use futures_util::future::ready;
@@ -25,7 +21,7 @@ use libblkcapt::{
 use slog::{debug, o, trace, Logger};
 use std::{collections::HashMap, convert::TryInto, sync::Arc};
 use uuid::Uuid;
-use xactor::{message, Actor, Addr, Context, Handler, Sender};
+use xactor::{Actor, Addr, Context, Handler, Sender, WeakAddr, message};
 
 pub struct ContainerActor {
     pool: Addr<BcActor<PoolActor>>,
@@ -36,7 +32,7 @@ pub struct ContainerActor {
 }
 
 pub struct ActiveReceiver {
-    actor: Addr<BcActor<LocalReceiverActor>>,
+    actor: WeakAddr<BcActor<LocalReceiverActor>>,
     dataset_id: Uuid,
 }
 
@@ -126,6 +122,17 @@ impl BcActorCtrl for ContainerActor {
 
         Ok(())
     }
+
+    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+        let mut active_actors = self.active_receivers.drain().filter_map(|(_, a)| a.actor.upgrade()).collect::<Vec<_>>();
+        if !active_actors.is_empty() {
+            stop_all_actors(&mut active_actors);
+            join_all_actors(active_actors).await;
+            TerminalState::Cancelled
+        } else {
+            TerminalState::Succeeded
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -179,7 +186,7 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
             self.active_receivers.insert(
                 addr.actor_id(),
                 ActiveReceiver {
-                    actor: addr.clone(),
+                    actor: addr.downgrade(),
                     dataset_id: msg.source_dataset_id,
                 },
             );

@@ -7,7 +7,7 @@ use tokio::io::AsyncRead;
 use xactor::{message, Context, Sender};
 
 #[message()]
-pub struct LocalSenderFinishedMessage(pub Result<()>);
+pub struct LocalSenderFinishedMessage(pub u64, pub Result<()>);
 
 #[message(result = "Box<dyn AsyncRead + Send + Unpin>")]
 pub struct GetReaderMessage;
@@ -85,10 +85,10 @@ impl BcHandler<GetReaderMessage> for LocalSenderActor {
 
 #[async_trait::async_trait]
 impl BcHandler<InternalSenderFinished> for LocalSenderActor {
-    async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: InternalSenderFinished) {
+    async fn handle(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: InternalSenderFinished) {
         self.state = State::Finished;
-        self.parent.send(LocalSenderFinishedMessage(Ok(()))).expect("FIXME");
-        self.requestor.send(LocalSenderFinishedMessage(msg.0)).expect("FIXME");
+        self.parent.send(LocalSenderFinishedMessage(ctx.actor_id(), Ok(()))).expect("FIXME");
+        self.requestor.send(LocalSenderFinishedMessage(ctx.actor_id(), msg.0)).expect("FIXME");
     }
 }
 

@@ -255,7 +255,7 @@ impl BcActorCtrl for SyncActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+    async fn stopped(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
         if is_immediate(&self.model.sync_mode) {
             let _ = ctx.unsubscribe::<ObservableEventMessage>().await;
         }

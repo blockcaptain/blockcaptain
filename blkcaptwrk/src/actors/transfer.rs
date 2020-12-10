@@ -173,7 +173,7 @@ impl BcHandler<LocalSenderFinishedMessage> for TransferActor {
                 self.state = State::Transferring(
                     transfer,
                     ActorCompletions {
-                        sender: Some(msg.0),
+                        sender: Some(msg.1),
                         ..completions
                     },
                     actors,
@@ -181,7 +181,7 @@ impl BcHandler<LocalSenderFinishedMessage> for TransferActor {
             }
             State::WaitingForCompletion(transfer, completions, actors) => {
                 let completions = ActorCompletions {
-                    sender: Some(msg.0),
+                    sender: Some(msg.1),
                     ..completions
                 };
                 match completions {

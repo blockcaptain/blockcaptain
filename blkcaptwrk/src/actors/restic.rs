@@ -538,10 +538,10 @@ mod transfer {
             };
 
             let container_notify_result = self.parent.send(ParentTransferComplete(terminal_state, result));
-            let parent_notify_result = self.requestor.send(TransferComplete(terminal_state));
+            let requestor_notify_result = self.requestor.send(TransferComplete(terminal_state));
             if !matches!(terminal_state, TerminalState::Cancelled) {
                 unhandled_result(log, container_notify_result);
-                unhandled_result(log, parent_notify_result);
+                unhandled_result(log, requestor_notify_result);
             }
             terminal_state
         }

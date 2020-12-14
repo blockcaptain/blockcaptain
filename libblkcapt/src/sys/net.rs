@@ -1,3 +1,4 @@
+use http::Request;
 use hyper::{client::connect::dns::GaiResolver, client::HttpConnector, Client, Uri};
 use hyper::{Body, Response};
 use hyper_timeout::TimeoutConnector;
@@ -30,6 +31,11 @@ impl HttpsClient {
 
     pub async fn get(&self, url: Uri) -> Result<Response<Body>, hyper::Error> {
         self.client.get(url).await
+    }
+
+    pub async fn post(&self, url: Uri, body: String) -> Result<Response<Body>, hyper::Error> {
+        let request = Request::post(url).body(Body::from(body)).unwrap();
+        self.client.request(request).await
     }
 }
 

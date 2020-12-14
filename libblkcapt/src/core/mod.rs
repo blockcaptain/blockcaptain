@@ -607,14 +607,15 @@ impl ObservationEmitter {
         let uri = Uri::from_str((uri_string + suffix).as_str()).unwrap();
 
         slog_scope::trace!("Emitting health check to url: {}", uri);
-        self.http_client
-            .get(uri)
-            .await
-            .map_err(|e| anyhow!(e))
-            .and_then(|r| match r.status() {
-                http::status::StatusCode::OK => Ok(()),
-                e => Err(anyhow!(e)),
-            })
+        let result = match stage {
+            ObservableEventStage::Starting | ObservableEventStage::Succeeded => self.http_client.get(uri).await,
+            ObservableEventStage::Failed(error) => self.http_client.post(uri, error).await,
+        };
+
+        result.map_err(|e| anyhow!(e)).and_then(|r| match r.status() {
+            http::status::StatusCode::OK => Ok(()),
+            e => Err(anyhow!(e)),
+        })
     }
 }
 

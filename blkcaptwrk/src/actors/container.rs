@@ -3,10 +3,16 @@ use super::{
     observation::observable_func,
     pool::PoolActor,
 };
-use crate::{actorbase::{schedule_next_message, unhandled_result}, snapshots::{
+use crate::{
+    actorbase::{schedule_next_message, unhandled_result},
+    snapshots::{
         clear_deleted, delete_snapshots, failed_snapshot_deletes_as_result, log_evaluation, prune_btrfs_snapshots,
         ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage,
-    }, xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState, join_all_actors, stop_all_actors}};
+    },
+    xactorext::{
+        join_all_actors, stop_all_actors, BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState,
+    },
+};
 use anyhow::{anyhow, Result};
 use cron::Schedule;
 use futures_util::future::ready;
@@ -21,7 +27,7 @@ use libblkcapt::{
 use slog::{debug, o, trace, Logger};
 use std::{collections::HashMap, convert::TryInto, sync::Arc};
 use uuid::Uuid;
-use xactor::{Actor, Addr, Context, Handler, Sender, WeakAddr, message};
+use xactor::{message, Actor, Addr, Context, Handler, Sender, WeakAddr};
 
 pub struct ContainerActor {
     pool: Addr<BcActor<PoolActor>>,
@@ -124,7 +130,11 @@ impl BcActorCtrl for ContainerActor {
     }
 
     async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
-        let mut active_actors = self.active_receivers.drain().filter_map(|(_, a)| a.actor.upgrade()).collect::<Vec<_>>();
+        let mut active_actors = self
+            .active_receivers
+            .drain()
+            .filter_map(|(_, a)| a.actor.upgrade())
+            .collect::<Vec<_>>();
         if !active_actors.is_empty() {
             stop_all_actors(&mut active_actors);
             join_all_actors(active_actors).await;
@@ -227,7 +237,7 @@ impl BcHandler<PruneMessage> for ContainerActor {
 
             let failed_deletes = self.snapshots.iter_mut().fold(0, |acc, (dataset_id, snapshots)| {
                 trace!(log, "prune container"; "dataset_id" => %dataset_id);
-                acc + prune_btrfs_snapshots(snapshots, rules, log)
+                acc + prune_btrfs_snapshots(snapshots, &vec![], rules, log)
             });
             ready(failed_snapshot_deletes_as_result(failed_deletes))
         })

@@ -317,7 +317,6 @@ impl Clone for Box<dyn BcWeakAddr> {
     }
 }
 
-
 #[async_trait::async_trait]
 pub trait AnyAddr {
     fn stop(&mut self) -> Result<()>;

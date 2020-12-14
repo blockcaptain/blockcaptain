@@ -87,8 +87,12 @@ impl BcHandler<GetReaderMessage> for LocalSenderActor {
 impl BcHandler<InternalSenderFinished> for LocalSenderActor {
     async fn handle(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: InternalSenderFinished) {
         self.state = State::Finished;
-        self.parent.send(LocalSenderFinishedMessage(ctx.actor_id(), Ok(()))).expect("FIXME");
-        self.requestor.send(LocalSenderFinishedMessage(ctx.actor_id(), msg.0)).expect("FIXME");
+        self.parent
+            .send(LocalSenderFinishedMessage(ctx.actor_id(), Ok(())))
+            .expect("FIXME");
+        self.requestor
+            .send(LocalSenderFinishedMessage(ctx.actor_id(), msg.0))
+            .expect("FIXME");
     }
 }
 

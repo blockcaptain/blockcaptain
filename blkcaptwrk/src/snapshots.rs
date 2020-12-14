@@ -7,7 +7,7 @@ use libblkcapt::{
     },
     model::entities::RetentionRuleset,
 };
-use slog::{info, trace, Logger};
+use slog::{debug, info, trace, Logger};
 use std::{borrow::Borrow, collections::HashSet};
 use uuid::Uuid;
 use xactor::message;
@@ -121,10 +121,21 @@ pub fn clear_deleted<T: Snapshot>(snapshots: &mut Vec<T>, deleted: HashSet<DateT
 
 pub fn prune_btrfs_snapshots<T: BtrfsSnapshot>(
     snapshots: &mut Vec<T>,
+    holds: &Vec<Uuid>,
     rules: &RetentionRuleset,
     log: &Logger,
 ) -> usize {
-    let evaluation = evaluate_retention(snapshots, rules);
+    let evaluation = {
+        let mut eval = evaluate_retention(snapshots, rules);
+        eval.drop_snapshots.retain(|s| {
+            let retain = !holds.contains(&s.uuid());
+            if !retain {
+                debug!(log, "Snapshot {} is marked for deletion, but is currently held.", s);
+            }
+            retain
+        });
+        eval
+    };
     log_evaluation(&evaluation, log);
     let deleted = delete_snapshots(&evaluation.drop_snapshots, log);
     let failed_deletes = evaluation.drop_snapshots.len() - deleted.len();

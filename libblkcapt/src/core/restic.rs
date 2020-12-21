@@ -383,33 +383,27 @@ mod tests {
 
     #[test]
     fn restic_snapshots_parse() {
-        const RESTIC_OUTPUT: &[u8] = br#"[{"time":"2020-11-13T21:00:49.956949773Z","parent":"6385c9977fe79a332f9c762cae1684f48efb1c8c905492b17213d70160079c76","tree":"f9048e608cdd4505abb0aa2b0a15b52167760a60d9e2794b498ad79e1910d0f5","paths":["/var/lib/blkcapt/restic/cf125c66-c94c-94f9-7097-3045d4a6c1ce/8a7ae0b5-b28c-b240-8c07-0015431d58d8"],"hostname":"blkcaptdev","username":"root","id":"cb1fa1cf88b627343a8083edb8985971ac766ccaba79d763b176b11b269cdb9b","short_id":"cb1fa1cf"},{"time":"2020-11-13T21:01:32.541412696Z","parent":"cb1fa1cf88b627343a8083edb8985971ac766ccaba79d763b176b11b269cdb9b","tree":"ccde6f9a0a5ffb971ed5ad1a56e93436342bda1be7af9b00c4228ae0a20d68d6","paths":["/var/lib/blkcapt/restic/cf125c66-c94c-94f9-7097-3045d4a6c1ce/8a7ae0b5-b28c-b240-8c07-0015431d58d8"],"hostname":"blkcaptdev","username":"root","id":"264d86e4d60777fe66596e620f8b499551117234e7478f804c33e6fbb990cd8a","short_id":"264d86e4"},{"time":"2020-11-13T21:03:10.942354588Z","parent":"264d86e4d60777fe66596e620f8b499551117234e7478f804c33e6fbb990cd8a","tree":"ccde6f9a0a5ffb971ed5ad1a56e93436342bda1be7af9b00c4228ae0a20d68d6","paths":["/var/lib/blkcapt/restic/cf125c66-c94c-94f9-7097-3045d4a6c1ce/8a7ae0b5-b28c-b240-8c07-0015431d58d8"],"hostname":"blkcaptdev","username":"root","id":"12c455f61bf583d9700014cf35f34270d39e73e2d02c7a702114de269b03aba5","short_id":"12c455f6"}]"#;
-        let actual = ResticRepository::parse_snapshots(RESTIC_OUTPUT).unwrap();
-        let expected_dataset_id = "8a7ae0b5-b28c-b240-8c07-0015431d58d8".parse().unwrap();
+        const RESTIC_OUTPUT: &[u8] = br#"[{"time":"2020-11-30T04:26:00.737443538Z","parent":"c7c4f0ed86a6a6ab812b41999a8fde92463cacb1673762541d1b5a139e5e0d19","tree":"fa98182915064b51e79bb95d20371696cbbde2d098fd0855521f79175d9e2dab","paths":["/var/lib/blkcapt/restic/e1370910-8805-4b72-b1aa-b007b6acc9cc/b99a584c-72c0-4cbe-9c6d-0c32274563f7"],"hostname":"blkcaptdev","username":"root","tags":["uuid=7f56a00a-2139-4048-96e2-c4946b731914","ts=2020-11-29T21-26-00Z"],"id":"4b0bdb80f692407f90413167a2f8673c2b948ad466e48d10a6072afc69ec7add","short_id":"4b0bdb80"},{"time":"2020-12-01T04:12:06.301970176Z","parent":"8067bdf9d334fcc550ddd9cca4afc382d97c10a583b1c37135508c2377e42ddb","tree":"b6b5f9002e282bb9ab0be82666bb1d6a038c0d71eb7dfda8dd1ee16870b5daa6","paths":["/var/lib/blkcapt/restic/e1370910-8805-4b72-b1aa-b007b6acc9cc/b99a584c-72c0-4cbe-9c6d-0c32274563f7"],"hostname":"blkcaptdev","username":"root","tags":["uuid=57c929a8-61ad-6747-957d-5daa101de0ff","ts=2020-11-30T04-58-00Z"],"id":"40e670db06225d0945b3ab4c0023f823d30f0ba15984df02266b74de29a1b657","short_id":"40e670db"}]"#;
+        let actual =
+            ResticRepository::parse_snapshots(RESTIC_OUTPUT, "e1370910-8805-4b72-b1aa-b007b6acc9cc".parse().unwrap())
+                .unwrap();
+        let expected_dataset_id = "b99a584c-72c0-4cbe-9c6d-0c32274563f7".parse().unwrap();
         let expected = vec![
             ResticContainerSnapshot {
-                uuid: "cb1fa1cf88b627343a8083edb8985971ac766ccaba79d763b176b11b269cdb9b"
+                uuid: "4b0bdb80f692407f90413167a2f8673c2b948ad466e48d10a6072afc69ec7add"
                     .parse()
                     .unwrap(),
                 dataset_id: expected_dataset_id,
-                datetime: "2020-11-13T21:00:49.956949773Z".parse().unwrap(),
-                received_uuid: "".parse().unwrap(),
+                datetime: "2020-11-29T21:26:00Z".parse().unwrap(),
+                received_uuid: "7f56a00a-2139-4048-96e2-c4946b731914".parse().unwrap(),
             },
             ResticContainerSnapshot {
-                uuid: "264d86e4d60777fe66596e620f8b499551117234e7478f804c33e6fbb990cd8a"
+                uuid: "40e670db06225d0945b3ab4c0023f823d30f0ba15984df02266b74de29a1b657"
                     .parse()
                     .unwrap(),
                 dataset_id: expected_dataset_id,
-                datetime: "2020-11-13T21:01:32.541412696Z".parse().unwrap(),
-                received_uuid: "".parse().unwrap(),
-            },
-            ResticContainerSnapshot {
-                uuid: "12c455f61bf583d9700014cf35f34270d39e73e2d02c7a702114de269b03aba5"
-                    .parse()
-                    .unwrap(),
-                dataset_id: expected_dataset_id,
-                datetime: "2020-11-13T21:03:10.942354588Z".parse().unwrap(),
-                received_uuid: "".parse().unwrap(),
+                datetime: "2020-11-30T04:58:00Z".parse().unwrap(),
+                received_uuid: "57c929a8-61ad-6747-957d-5daa101de0ff".parse().unwrap(),
             },
         ];
         assert_eq!(actual, expected);

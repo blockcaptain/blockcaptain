@@ -8,7 +8,7 @@ use super::{
     localsender::{LocalSenderActor, LocalSenderFinishedMessage},
 };
 use crate::{
-    actorbase::{unhandled_error, unhandled_result},
+    actorbase::unhandled_result,
     tasks::{WorkerCompleteMessage, WorkerTask},
     xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState},
 };
@@ -188,7 +188,7 @@ impl BcActorCtrl for TransferActor {
     }
 
     async fn stopped(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
-        let (terminal_state, result) = match self.state.take() {
+        let (terminal_state, _result) = match self.state.take() {
             State::Transferring(_, mut actors) => {
                 warn!(log, "cancelled during transfer");
                 actors.0.abort();

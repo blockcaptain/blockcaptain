@@ -1,10 +1,10 @@
 use super::{container::ContainerActor, dataset::DatasetActor, observation::start_observation};
 use crate::xactorext::{GetActorStatusMessage, GetChildActorMessage};
 use crate::{
-    actorbase::{log_result, schedule_next_message, unhandled_error, unhandled_result},
+    actorbase::{schedule_next_message, unhandled_error},
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result};
 use cron::Schedule;
 use futures_util::stream::FuturesUnordered;
 use futures_util::stream::StreamExt;
@@ -14,7 +14,7 @@ use libblkcapt::{
     model::Entity,
 };
 use scrub::{PoolScrubActor, ScrubCompleteMessage};
-use slog::{debug, error, info, o, Logger};
+use slog::{error, info, o, Logger};
 use std::{collections::HashMap, convert::TryInto, mem, sync::Arc};
 use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context};
@@ -70,7 +70,7 @@ impl PoolActor {
 impl BcActorCtrl for PoolActor {
     async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         let pool = if let PoolState::Pending(model) = self.pool.take() {
-            BtrfsPool::validate(model.clone()).map(Arc::new)?
+            BtrfsPool::validate(model).map(Arc::new)?
         } else {
             panic!("pool already started");
         };

@@ -199,10 +199,10 @@ impl BcActorCtrl for CaptainActor {
         join_all_actors(self.pool_actors.drain().map(|(_k, v)| v)).await;
         join_all_actors(self.restic_actors.drain().map(|(_k, v)| v)).await;
 
-        self.server_actor.take().map(|mut s| {
-            let _ = s.stop(None);
-            let _ = s.wait_for_stop();
-        });
+        if let Some(mut actor) = self.server_actor.take() {
+            let _ = actor.stop(None);
+            let _ = actor.wait_for_stop();
+        }
 
         TerminalState::Succeeded
     }

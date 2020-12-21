@@ -6,19 +6,18 @@ use super::{
 use crate::{
     actorbase::{schedule_next_message, unhandled_result},
     snapshots::{
-        clear_deleted, delete_snapshots, failed_snapshot_deletes_as_result, log_evaluation, prune_btrfs_snapshots,
-        ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage,
+        failed_snapshot_deletes_as_result, prune_btrfs_snapshots, ContainerSnapshotsResponse,
+        GetContainerSnapshotsMessage, PruneMessage,
     },
     xactorext::{
         join_all_actors, stop_all_actors, BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState,
     },
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
-    core::retention::evaluate_retention,
-    core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsPool, BtrfsSnapshot},
+    core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsPool},
     core::{Snapshot, SnapshotHandle},
     model::entities::FeatureState,
     model::entities::{BtrfsContainerEntity, ObservableEvent},
@@ -226,7 +225,7 @@ impl BcHandler<PruneMessage> for ContainerActor {
 
             let failed_deletes = self.snapshots.iter_mut().fold(0, |acc, (dataset_id, snapshots)| {
                 trace!(log, "prune container"; "dataset_id" => %dataset_id);
-                acc + prune_btrfs_snapshots(snapshots, &vec![], rules, log)
+                acc + prune_btrfs_snapshots(snapshots, &[], rules, log)
             });
             ready(failed_snapshot_deletes_as_result(failed_deletes))
         })

@@ -8,7 +8,7 @@ use libblkcapt::{
     model::entities::RetentionRuleset,
 };
 use slog::{debug, info, trace, Logger};
-use std::{borrow::Borrow, collections::HashSet};
+use std::collections::HashSet;
 use uuid::Uuid;
 use xactor::message;
 
@@ -102,7 +102,7 @@ pub fn log_evaluation<T: Snapshot>(evaluation: &RetentionEvaluation<T>, log: &Lo
 
 pub fn delete_snapshots<T: BtrfsSnapshot>(snapshots: &[&T], log: &Logger) -> HashSet<DateTime<Utc>> {
     snapshots
-        .into_iter()
+        .iter()
         .filter_map(|s| {
             let result = s.delete();
             log_result(log, &result);
@@ -116,7 +116,7 @@ pub fn clear_deleted<T: Snapshot>(snapshots: &mut Vec<T>, deleted: HashSet<DateT
 }
 
 pub fn prune_btrfs_snapshots<T: BtrfsSnapshot>(
-    snapshots: &mut Vec<T>, holds: &Vec<Uuid>, rules: &RetentionRuleset, log: &Logger,
+    snapshots: &mut Vec<T>, holds: &[Uuid], rules: &RetentionRuleset, log: &Logger,
 ) -> usize {
     let evaluation = {
         let mut eval = evaluate_retention(snapshots, rules);

@@ -190,7 +190,7 @@ fn inner_make_snek_type_name(mut name: &str) -> String {
     const ACTOR_SUFFIX: &str = "Actor";
     const MESSAGE_SUFFIX: &str = "Message";
 
-    if let Some(index) = name.find("<") {
+    if let Some(index) = name.find('<') {
         name = &name[..index];
     }
     if let Some(index) = name.rfind("::") {

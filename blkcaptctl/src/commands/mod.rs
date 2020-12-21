@@ -112,7 +112,7 @@ where
 }
 
 pub mod service {
-    use anyhow::{Context, Result};
+    use anyhow::Result;
     use bytes::buf::BufExt;
     use clap::Clap;
     use comfy_table::Cell;
@@ -121,7 +121,7 @@ pub mod service {
         sys::net::ServiceClient,
     };
 
-    use crate::ui::{comfy_id_header, comfy_id_value, comfy_name_value, print_comfy_table};
+    use crate::ui::{comfy_id_header, comfy_name_value, print_comfy_table};
 
     #[derive(Clap, Debug)]
     pub struct ServiceStatusOptions {}

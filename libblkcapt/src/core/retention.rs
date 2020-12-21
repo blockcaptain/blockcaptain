@@ -1,7 +1,7 @@
 use super::Snapshot;
 use crate::model::entities::KeepSpec;
 use crate::model::entities::RetentionRuleset;
-use anyhow::Result;
+
 use chrono::{DateTime, Utc};
 use std::{cmp::Reverse, collections::HashSet, iter::repeat};
 use std::{convert::TryFrom, num::NonZeroUsize};

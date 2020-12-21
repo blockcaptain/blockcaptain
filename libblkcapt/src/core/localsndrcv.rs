@@ -173,8 +173,8 @@ pub struct StartedPoolScrub {
 
 impl StartedPoolScrub {
     pub async fn wait(self) -> Result<(), ScrubError> {
-        let foo = self.process.await.unwrap();
-        match foo.code() {
+        let exit_status = self.process.await.unwrap();
+        match exit_status.code() {
             Some(code) => match code {
                 0 => Ok(()),
                 3 => Err(ScrubError::UncorrectableErrors),

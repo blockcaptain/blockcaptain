@@ -1,6 +1,6 @@
 use super::actorbase::unhandled_result;
-use anyhow::{Context as AnyhowContext, Result};
-use slog::{debug, error, info, Logger};
+use anyhow::Context as AnyhowContext;
+use slog::{debug, Logger};
 use std::{cell::Cell, future::Future, marker::PhantomData, panic};
 use tokio::{sync::oneshot, task::JoinHandle};
 use xactor::{Actor, Addr, Handler, Message, WeakAddr};

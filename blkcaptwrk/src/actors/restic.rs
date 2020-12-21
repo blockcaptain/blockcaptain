@@ -8,7 +8,7 @@ use crate::{
     snapshots::{ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage},
     tasks::WorkerCompleteMessage,
     tasks::WorkerTask,
-    xactorext::{BcActor, BcActorCtrl, BcAddr, BcHandler, GetActorStatusMessage, TerminalState},
+    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
 use container::BackupReadyMessage;
@@ -44,7 +44,7 @@ mod container {
     use crate::{
         actors::observation::{start_observation, StartedObservation},
         snapshots::clear_deleted,
-        xactorext::{BcAddr, BoxBcAddr},
+        xactorext::BoxBcAddr,
     };
 
     use super::*;
@@ -640,7 +640,7 @@ mod transfer {
 
 mod prune {
     use super::*;
-    use libblkcapt::core::restic::{ResticForget, ResticPrune, StartedResticPrune};
+    use libblkcapt::core::restic::{ResticForget, ResticPrune};
 
     pub struct ResticPruneActor {
         state: State,

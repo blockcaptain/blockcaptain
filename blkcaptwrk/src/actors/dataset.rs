@@ -1,4 +1,3 @@
-#![feature(drain_filter)]
 use super::{
     localsender::{LocalSenderActor, LocalSenderFinishedMessage},
     observation::observable_func,
@@ -8,20 +7,18 @@ use crate::{
     actorbase::schedule_next_message,
     actorbase::unhandled_error,
     snapshots::PruneMessage,
-    snapshots::{
-        clear_deleted, delete_snapshots, failed_snapshot_deletes_as_result, log_evaluation, prune_btrfs_snapshots,
-    },
+    snapshots::{failed_snapshot_deletes_as_result, prune_btrfs_snapshots},
     xactorext::{join_all_actors, stop_all_actors, BoxBcWeakAddr, GetActorStatusMessage, TerminalState},
 };
 use crate::{
     actorbase::unhandled_result,
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
-use anyhow::{anyhow, Context as AnyhowContext, Result};
+use anyhow::{Context as AnyhowContext, Result};
 use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
-    core::{retention::evaluate_retention, BtrfsDataset, BtrfsDatasetSnapshot, BtrfsPool, BtrfsSnapshot},
+    core::{BtrfsDataset, BtrfsDatasetSnapshot, BtrfsPool, BtrfsSnapshot},
     core::{Snapshot, SnapshotHandle},
     model::entities::BtrfsDatasetEntity,
     model::entities::FeatureState,
@@ -167,7 +164,7 @@ impl BcActorCtrl for DatasetActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
         let mut active_actors = self
             .active_sends_holds
             .drain(..)
@@ -215,7 +212,7 @@ impl BcHandler<PruneMessage> for DatasetActor {
                 .as_ref()
                 .expect("retention exist based on message scheduling in started");
 
-            let holds = self
+            let holds: Vec<_> = self
                 .active_sends_holds
                 .iter()
                 .flat_map(|a| once(a.1).chain(a.2.into_iter()))

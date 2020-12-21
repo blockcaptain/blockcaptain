@@ -1,9 +1,9 @@
 use crate::xactorext::{BcActor, BcActorCtrl, BoxBcWeakAddr, TerminalState};
 use anyhow::Result;
 use futures_util::{
+    future::BoxFuture,
     future::FutureExt,
-    future::{ready, BoxFuture},
-    stream::{self, FuturesUnordered, StreamExt},
+    stream::{FuturesUnordered, StreamExt},
 };
 use libblkcapt::core::system;
 use once_cell::sync::OnceCell;

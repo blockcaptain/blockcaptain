@@ -189,6 +189,12 @@ impl MountedFilesystem {
         let target_path = path.as_pathbuf(&self.fstree_mountpoint);
         Subvolume::list_subvolumes(&target_path)
     }
+
+    pub fn scrub(&self) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new("btrfs");
+        command.args(&["scrub", "start", "-BRd"]).arg(&self.fstree_mountpoint);
+        command
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]

@@ -2,6 +2,7 @@ pub mod localsndrcv;
 pub mod restic;
 pub mod retention;
 pub mod system;
+use self::localsndrcv::{PoolScrub, SnapshotReceiver, SnapshotSender};
 use crate::model::Entity;
 use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
@@ -20,9 +21,6 @@ use std::path::PathBuf;
 use std::{convert::TryFrom, str::FromStr, sync::Arc};
 use std::{fmt::Debug, fmt::Display, fs};
 use uuid::Uuid;
-
-use self::localsndrcv::{SnapshotReceiver, SnapshotSender};
-//use thiserror::Error;
 
 const BLKCAPT_FS_META_DIR: &str = ".blkcapt";
 
@@ -93,6 +91,11 @@ impl BtrfsPool {
 
     pub fn take_model(self) -> BtrfsPoolEntity {
         self.model
+    }
+
+    pub fn scrub(&self) -> PoolScrub {
+        let command = self.filesystem.scrub();
+        PoolScrub::new(command)
     }
 }
 

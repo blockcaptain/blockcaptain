@@ -147,3 +147,50 @@ impl StartedSnapshotReceiver {
             .snapshot_by_name(self.sending_dataset_id, &final_snapshot_name)
     }
 }
+
+pub struct PoolScrub {
+    command: Command,
+}
+
+impl PoolScrub {
+    pub fn new(mut command: Command) -> Self {
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::null());
+        Self { command }
+    }
+
+    pub fn start(mut self) -> Result<StartedPoolScrub> {
+        self.command
+            .spawn()
+            .map(|process| StartedPoolScrub { process })
+            .context("failed to spawn btrfs scrub process")
+    }
+}
+
+pub struct StartedPoolScrub {
+    process: Child,
+}
+
+impl StartedPoolScrub {
+    pub async fn wait(self) -> Result<(), ScrubError> {
+        let foo = self.process.await.unwrap();
+        match foo.code() {
+            Some(code) => match code {
+                0 => Ok(()),
+                3 => Err(ScrubError::UncorrectableErrors),
+                _ => Err(ScrubError::Unknown),
+            },
+            None => {
+                slog_scope::error!("scrub process terminated");
+                Err(ScrubError::Unknown)
+            }
+        }
+    }
+}
+#[derive(thiserror::Error, Debug)]
+pub enum ScrubError {
+    #[error("scrub process failed to complete")]
+    Unknown,
+    #[error("uncorrectable errors were found during scrub")]
+    UncorrectableErrors,
+}

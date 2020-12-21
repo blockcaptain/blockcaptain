@@ -16,6 +16,8 @@ pub struct BtrfsPoolEntity {
     pub mountpoint_path: PathBuf,
     pub uuid: Uuid,
     pub uuid_subs: Vec<Uuid>,
+    pub scrub_schedule: Option<ScheduleModel>,
+    pub pause_scrubbing: bool,
 
     pub datasets: Vec<BtrfsDatasetEntity>,
     pub containers: Vec<BtrfsContainerEntity>,
@@ -29,6 +31,8 @@ impl BtrfsPoolEntity {
             mountpoint_path: mountpoint,
             uuid,
             uuid_subs,
+            scrub_schedule: None,
+            pause_scrubbing: false,
             datasets: Vec::<BtrfsDatasetEntity>::default(),
             containers: Vec::<BtrfsContainerEntity>::default(),
         })
@@ -70,6 +74,18 @@ impl BtrfsPoolEntity {
         let ds = self.datasets.iter().map(|x| x as &dyn SubvolumeEntity);
         let cs = self.containers.iter().map(|x| x as &dyn SubvolumeEntity);
         ds.chain(cs)
+    }
+
+    pub fn scrubbing_state(&self) -> FeatureState {
+        if self.scrub_schedule.is_some() {
+            if self.pause_scrubbing {
+                FeatureState::Paused
+            } else {
+                FeatureState::Enabled
+            }
+        } else {
+            FeatureState::Unconfigured
+        }
     }
 }
 

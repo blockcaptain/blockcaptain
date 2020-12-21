@@ -195,7 +195,9 @@ impl BcHandler<ScrubMessage> for PoolActor {
                 ctx.stop(None);
                 PoolState::Faulted
             }
-        }
+        };
+
+        self.schedule_next_scrub(log, ctx);
     }
 }
 

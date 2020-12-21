@@ -204,10 +204,7 @@ impl BcHandler<HeartbeatMessage> for HealthchecksActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for HealthchecksActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetActorStatusMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
     ) -> String {
         String::from("ok")
     }

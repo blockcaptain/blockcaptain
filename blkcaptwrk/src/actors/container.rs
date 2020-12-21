@@ -52,9 +52,7 @@ pub struct GetSnapshotReceiverMessage {
 
 impl GetSnapshotReceiverMessage {
     pub fn new<A>(
-        requestor_addr: &Addr<A>,
-        source_dataset_id: Uuid,
-        source_snapshot_handle: SnapshotHandle,
+        requestor_addr: &Addr<A>, source_dataset_id: Uuid, source_snapshot_handle: SnapshotHandle,
     ) -> GetSnapshotReceiverMessage
     where
         A: Handler<ReceiverReadyMessage> + Handler<ReceiverFinishedMessage>,
@@ -73,10 +71,7 @@ pub struct ReceiverReadyMessage(pub Result<Addr<BcActor<LocalReceiverActor>>>);
 
 impl ContainerActor {
     pub fn new(
-        pool_actor: Addr<BcActor<PoolActor>>,
-        pool: &Arc<BtrfsPool>,
-        model: BtrfsContainerEntity,
-        log: &Logger,
+        pool_actor: Addr<BcActor<PoolActor>>, pool: &Arc<BtrfsPool>, model: BtrfsContainerEntity, log: &Logger,
     ) -> Result<BcActor<Self>> {
         let id = model.id();
         BtrfsContainer::validate(pool, model)
@@ -148,10 +143,7 @@ impl BcActorCtrl for ContainerActor {
 #[async_trait::async_trait]
 impl BcHandler<GetContainerSnapshotsMessage> for ContainerActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        msg: GetContainerSnapshotsMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetContainerSnapshotsMessage,
     ) -> ContainerSnapshotsResponse {
         ContainerSnapshotsResponse {
             snapshots: self.snapshots[&msg.source_dataset_id]
@@ -165,10 +157,7 @@ impl BcHandler<GetContainerSnapshotsMessage> for ContainerActor {
 #[async_trait::async_trait]
 impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
     async fn handle(
-        &mut self,
-        log: &Logger,
-        ctx: &mut Context<BcActor<Self>>,
-        msg: GetSnapshotReceiverMessage,
+        &mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: GetSnapshotReceiverMessage,
     ) -> Result<()> {
         if self
             .container
@@ -250,10 +239,7 @@ impl BcHandler<PruneMessage> for ContainerActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for ContainerActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetActorStatusMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
     ) -> String {
         String::from("ok")
     }

@@ -107,9 +107,7 @@ impl ResticRepository {
     }
 
     pub async fn snapshot_by_datetime(
-        self: &Arc<Self>,
-        bind_path: &Path,
-        datetime: DateTime<Utc>,
+        self: &Arc<Self>, bind_path: &Path, datetime: DateTime<Utc>,
     ) -> Result<Option<ResticContainerSnapshot>> {
         let mut command = self.new_command();
         let datetime_tag = ResticBackup::datetime_tag(datetime);

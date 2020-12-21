@@ -73,10 +73,7 @@ struct StartSnapshotSyncCycleMessage;
 
 impl SyncActor {
     pub fn new(
-        dataset: Addr<BcActor<DatasetActor>>,
-        container: SyncToContainer,
-        model: SnapshotSyncEntity,
-        log: &Logger,
+        dataset: Addr<BcActor<DatasetActor>>, container: SyncToContainer, model: SnapshotSyncEntity, log: &Logger,
     ) -> BcActor<Self> {
         let dataset_id = model.dataset_id();
         let container_id = model.container_id();
@@ -155,8 +152,7 @@ impl SyncActor {
     }
 
     async fn _get_container_snapshots<T: Handler<GetContainerSnapshotsMessage>>(
-        &self,
-        addr: &Addr<T>,
+        &self, addr: &Addr<T>,
     ) -> Result<Vec<SnapshotHandle>> {
         addr.call(GetContainerSnapshotsMessage {
             source_dataset_id: self.model.dataset_id(),
@@ -170,11 +166,7 @@ impl SyncActor {
     }
 
     async fn start_transfer_actor(
-        &self,
-        snapshot: &SnapshotHandle,
-        parent: Option<&SnapshotHandle>,
-        ctx: &Context<BcActor<Self>>,
-        log: &Logger,
+        &self, snapshot: &SnapshotHandle, parent: Option<&SnapshotHandle>, ctx: &Context<BcActor<Self>>, log: &Logger,
     ) -> Result<BoxBcAddr> {
         match &self.container {
             SyncToContainer::Btrfs(container) => {
@@ -344,10 +336,7 @@ impl BcHandler<TransferComplete> for SyncActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for SyncActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetActorStatusMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
     ) -> String {
         String::from("ok")
     }

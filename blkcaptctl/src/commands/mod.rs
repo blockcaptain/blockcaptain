@@ -14,8 +14,7 @@ pub mod observer;
 pub mod pool;
 
 pub fn dataset_search<'a>(
-    entities: &'a Entities,
-    query: &str,
+    entities: &'a Entities, query: &str,
 ) -> Result<EntityPath2<'a, BtrfsDatasetEntity, BtrfsPoolEntity>> {
     entity_search2(
         &entities.btrfs_pools,
@@ -26,8 +25,7 @@ pub fn dataset_search<'a>(
 }
 
 pub fn container_search<'a>(
-    entities: &'a Entities,
-    query: &str,
+    entities: &'a Entities, query: &str,
 ) -> Result<EntityPath2<'a, BtrfsContainerEntity, BtrfsPoolEntity>> {
     entity_search2(
         &entities.btrfs_pools,
@@ -60,9 +58,7 @@ pub fn entity_by_type_lookup(entities: &Entities, etype: EntityType, id: Uuid) -
 }
 
 pub fn entity_by_type_search<'a>(
-    entities: &'a Entities,
-    etype: EntityType,
-    query: &str,
+    entities: &'a Entities, etype: EntityType, query: &str,
 ) -> Result<Box<dyn EntityPath + 'a>> {
     match etype {
         EntityType::Pool => {
@@ -88,10 +84,7 @@ where
 }
 
 fn entity_search2<'a, T1, T2, F2, I2>(
-    parent_entities: &'a [T1],
-    get_children: F2,
-    all_children: I2,
-    query: &str,
+    parent_entities: &'a [T1], get_children: F2, all_children: I2, query: &str,
 ) -> Result<EntityPath2<'a, T2, T1>>
 where
     T1: Entity + EntityStatic + 'a,

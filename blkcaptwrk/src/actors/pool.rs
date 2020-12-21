@@ -152,10 +152,7 @@ impl BcActorCtrl for PoolActor {
 #[async_trait::async_trait]
 impl BcHandler<GetChildActorMessage<BcActor<DatasetActor>>> for PoolActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        msg: GetChildActorMessage<BcActor<DatasetActor>>,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetChildActorMessage<BcActor<DatasetActor>>,
     ) -> Option<Addr<BcActor<DatasetActor>>> {
         self.datasets.get(&msg.0).cloned()
     }
@@ -164,10 +161,7 @@ impl BcHandler<GetChildActorMessage<BcActor<DatasetActor>>> for PoolActor {
 #[async_trait::async_trait]
 impl BcHandler<GetChildActorMessage<BcActor<ContainerActor>>> for PoolActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        msg: GetChildActorMessage<BcActor<ContainerActor>>,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetChildActorMessage<BcActor<ContainerActor>>,
     ) -> Option<Addr<BcActor<ContainerActor>>> {
         self.containers.get(&msg.0).cloned()
     }
@@ -221,10 +215,7 @@ impl BcHandler<ScrubCompleteMessage> for PoolActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for PoolActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetActorStatusMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
     ) -> String {
         String::from("fine")
     }
@@ -264,10 +255,7 @@ mod scrub {
 
     impl PoolScrubActor {
         pub fn new(
-            pool: WeakAddr<BcActor<PoolActor>>,
-            scrub: PoolScrub,
-            observation: StartedObservation,
-            log: &Logger,
+            pool: WeakAddr<BcActor<PoolActor>>, scrub: PoolScrub, observation: StartedObservation, log: &Logger,
         ) -> BcActor<Self> {
             BcActor::new(
                 Self {
@@ -342,10 +330,7 @@ mod scrub {
     #[async_trait::async_trait]
     impl BcHandler<GetActorStatusMessage> for PoolScrubActor {
         async fn handle(
-            &mut self,
-            _log: &Logger,
-            _ctx: &mut Context<BcActor<Self>>,
-            _msg: GetActorStatusMessage,
+            &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
         ) -> String {
             self.state.to_string()
         }

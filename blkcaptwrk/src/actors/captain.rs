@@ -38,10 +38,7 @@ impl CaptainActor {
     }
 
     async fn new_sync_actor(
-        &self,
-        entities: &Entities,
-        model: SnapshotSyncEntity,
-        log: &Logger,
+        &self, entities: &Entities, model: SnapshotSyncEntity, log: &Logger,
     ) -> Result<BcActor<SyncActor>> {
         let dataset_pool_id = entities
             .dataset(model.dataset_id())
@@ -214,10 +211,7 @@ impl BcActorCtrl for CaptainActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for CaptainActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetActorStatusMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
     ) -> String {
         String::from("ok")
     }

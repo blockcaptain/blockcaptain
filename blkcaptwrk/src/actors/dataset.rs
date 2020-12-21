@@ -63,9 +63,7 @@ pub struct GetSnapshotSenderMessage {
 
 impl GetSnapshotSenderMessage {
     pub fn new<A>(
-        requestor_addr: &Addr<A>,
-        send_snapshot_handle: SnapshotHandle,
-        parent_snapshot_handle: Option<SnapshotHandle>,
+        requestor_addr: &Addr<A>, send_snapshot_handle: SnapshotHandle, parent_snapshot_handle: Option<SnapshotHandle>,
     ) -> Self
     where
         A: Handler<SenderReadyMessage> + Handler<LocalSenderFinishedMessage>,
@@ -91,9 +89,7 @@ pub struct GetSnapshotHolderMessage {
 
 impl GetSnapshotHolderMessage {
     pub fn new<A>(
-        requestor_addr: &Addr<A>,
-        send_snapshot_handle: SnapshotHandle,
-        parent_snapshot_handle: Option<SnapshotHandle>,
+        requestor_addr: &Addr<A>, send_snapshot_handle: SnapshotHandle, parent_snapshot_handle: Option<SnapshotHandle>,
     ) -> Self
     where
         A: Handler<HolderReadyMessage>,
@@ -115,10 +111,7 @@ pub struct HolderReadyMessage {
 
 impl DatasetActor {
     pub fn new(
-        pool_actor: Addr<BcActor<PoolActor>>,
-        pool: &Arc<BtrfsPool>,
-        model: BtrfsDatasetEntity,
-        log: &Logger,
+        pool_actor: Addr<BcActor<PoolActor>>, pool: &Arc<BtrfsPool>, model: BtrfsDatasetEntity, log: &Logger,
     ) -> Result<BcActor<DatasetActor>> {
         let id = model.id();
         BtrfsDataset::validate(pool, model).map(Arc::new).and_then(|dataset| {
@@ -239,10 +232,7 @@ impl BcHandler<PruneMessage> for DatasetActor {
 #[async_trait::async_trait]
 impl BcHandler<GetDatasetSnapshotsMessage> for DatasetActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetDatasetSnapshotsMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetDatasetSnapshotsMessage,
     ) -> DatasetSnapshotsResponse {
         DatasetSnapshotsResponse {
             snapshots: self.snapshots.iter().map(|s| s.into()).collect(),
@@ -253,10 +243,7 @@ impl BcHandler<GetDatasetSnapshotsMessage> for DatasetActor {
 #[async_trait::async_trait]
 impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
     async fn handle(
-        &mut self,
-        log: &Logger,
-        ctx: &mut Context<BcActor<Self>>,
-        msg: GetSnapshotSenderMessage,
+        &mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: GetSnapshotSenderMessage,
     ) -> Result<()> {
         let send_snapshot = self
             .snapshots
@@ -296,10 +283,7 @@ impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
 #[async_trait::async_trait]
 impl BcHandler<GetSnapshotHolderMessage> for DatasetActor {
     async fn handle(
-        &mut self,
-        log: &Logger,
-        ctx: &mut Context<BcActor<Self>>,
-        msg: GetSnapshotHolderMessage,
+        &mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: GetSnapshotHolderMessage,
     ) -> Result<()> {
         let send_snapshot = self
             .snapshots
@@ -348,10 +332,7 @@ impl BcHandler<LocalSenderFinishedMessage> for DatasetActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for DatasetActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetActorStatusMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
     ) -> String {
         String::from("ok")
     }
@@ -363,9 +344,7 @@ pub struct DatasetHolderActor {
 
 impl DatasetHolderActor {
     fn new(
-        log: &Logger,
-        parent: Sender<LocalSenderFinishedMessage>,
-        send_handle: SnapshotHandle,
+        log: &Logger, parent: Sender<LocalSenderFinishedMessage>, send_handle: SnapshotHandle,
         parent_handle: Option<SnapshotHandle>,
     ) -> BcActor<DatasetHolderActor> {
         let snapshot_id = send_handle.uuid.to_string();
@@ -390,10 +369,7 @@ impl BcActorCtrl for DatasetHolderActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for DatasetHolderActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetActorStatusMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
     ) -> String {
         String::from("ok")
     }

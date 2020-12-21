@@ -70,10 +70,7 @@ impl BcActorCtrl for ServerActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for ServerActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetActorStatusMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
     ) -> String {
         String::from("ok")
     }

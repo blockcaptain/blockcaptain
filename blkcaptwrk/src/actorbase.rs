@@ -53,11 +53,7 @@ fn schedule_next_delay(after: DateTime<Utc>, what: &str, schedule: &Schedule, lo
 }
 
 pub fn schedule_next_message<A: BcActorCtrl + BcHandler<M>, M: Message<Result = ()>>(
-    schedule: Option<&Schedule>,
-    what: &str,
-    message: M,
-    log: &Logger,
-    ctx: &mut Context<BcActor<A>>,
+    schedule: Option<&Schedule>, what: &str, message: M, log: &Logger, ctx: &mut Context<BcActor<A>>,
 ) {
     if let Some(schedule) = schedule {
         if let Some(delay) = schedule_next_delay(Utc::now(), what, schedule, log) {

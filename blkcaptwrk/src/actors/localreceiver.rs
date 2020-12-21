@@ -36,10 +36,8 @@ struct InternalReceiverFinished(Result<BtrfsContainerSnapshot>);
 
 impl LocalReceiverActor {
     pub fn new(
-        parent: Caller<ReceiverFinishedParentMessage>,
-        requestor: Sender<ReceiverFinishedMessage>,
-        receiver: SnapshotReceiver,
-        log: &Logger,
+        parent: Caller<ReceiverFinishedParentMessage>, requestor: Sender<ReceiverFinishedMessage>,
+        receiver: SnapshotReceiver, log: &Logger,
     ) -> BcActor<Self> {
         BcActor::new(
             Self {
@@ -75,10 +73,7 @@ impl BcActorCtrl for LocalReceiverActor {
 #[async_trait::async_trait]
 impl BcHandler<GetWriterMessage> for LocalReceiverActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetWriterMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetWriterMessage,
     ) -> Box<dyn AsyncWrite + Send + Unpin> {
         if let State::Started(Some(reader)) = mem::replace(&mut self.state, State::Faulted) {
             self.state = State::Started(None);
@@ -108,10 +103,7 @@ impl BcHandler<InternalReceiverFinished> for LocalReceiverActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for LocalReceiverActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetActorStatusMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
     ) -> String {
         String::from("ok")
     }

@@ -2,3 +2,4 @@ max_width = 120
 
 ## future 2.0 params
 # fn_params_layout = "Compressed"
+fn_args_layout = "Compressed"

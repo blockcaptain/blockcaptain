@@ -247,8 +247,7 @@ pub fn entity_by_id<'a, T: AsRef<dyn Entity + 'a>>(mut iter: impl Iterator<Item 
 }
 
 pub fn entity_by_name_or_id<'a, T: AsRef<dyn Entity + 'a> + EntityStatic>(
-    iter: impl Iterator<Item = T>,
-    name_or_id: &str,
+    iter: impl Iterator<Item = T>, name_or_id: &str,
 ) -> Result<T> {
     let mut matches = iter
         .filter(|e| e.as_ref().id().to_string().starts_with(name_or_id) || e.as_ref().name() == name_or_id)

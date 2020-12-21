@@ -424,9 +424,7 @@ impl BtrfsContainer {
     }
 
     pub fn snapshot_by_datetime(
-        self: &Arc<Self>,
-        dataset_id: Uuid,
-        datetime: DateTime<Utc>,
+        self: &Arc<Self>, dataset_id: Uuid, datetime: DateTime<Utc>,
     ) -> Result<BtrfsContainerSnapshot> {
         let name = datetime.format("%FT%H-%M-%SZ.bcrcv").to_string();
         self.snapshot_by_name(dataset_id, &name)

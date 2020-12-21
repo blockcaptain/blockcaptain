@@ -188,9 +188,7 @@ impl Handler<Update> for IntelActor {
 #[async_trait::async_trait]
 impl Handler<GetStateMessage> for IntelActor {
     async fn handle(
-        &mut self,
-        _ctx: &mut Context<Self>,
-        _msg: GetStateMessage,
+        &mut self, _ctx: &mut Context<Self>, _msg: GetStateMessage,
     ) -> BoxFuture<'static, system::SystemState> {
         self.actors
             .clone()

@@ -15,9 +15,7 @@ use xactor::message;
 use crate::actorbase::log_result;
 
 pub fn find_ready<'a>(
-    dataset_snapshots: &'a [SnapshotHandle],
-    container_snapshots: &[SnapshotHandle],
-    find_mode: FindMode,
+    dataset_snapshots: &'a [SnapshotHandle], container_snapshots: &[SnapshotHandle], find_mode: FindMode,
 ) -> Option<&'a SnapshotHandle> {
     if dataset_snapshots.is_empty() {
         return None;
@@ -55,9 +53,7 @@ pub enum FindMode {
 }
 
 pub fn find_parent<'a>(
-    child_snapshot: &SnapshotHandle,
-    dataset_snapshots: &'a [SnapshotHandle],
-    container_snapshots: &[SnapshotHandle],
+    child_snapshot: &SnapshotHandle, dataset_snapshots: &'a [SnapshotHandle], container_snapshots: &[SnapshotHandle],
 ) -> Option<&'a SnapshotHandle> {
     if dataset_snapshots.is_empty() {
         return None;
@@ -120,10 +116,7 @@ pub fn clear_deleted<T: Snapshot>(snapshots: &mut Vec<T>, deleted: HashSet<DateT
 }
 
 pub fn prune_btrfs_snapshots<T: BtrfsSnapshot>(
-    snapshots: &mut Vec<T>,
-    holds: &Vec<Uuid>,
-    rules: &RetentionRuleset,
-    log: &Logger,
+    snapshots: &mut Vec<T>, holds: &Vec<Uuid>, rules: &RetentionRuleset, log: &Logger,
 ) -> usize {
     let evaluation = {
         let mut eval = evaluate_retention(snapshots, rules);

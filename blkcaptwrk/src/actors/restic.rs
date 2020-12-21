@@ -111,8 +111,7 @@ mod container {
 
     impl GetBackupMessage {
         pub fn new(
-            requestor_addr: &Addr<BcActor<ResticTransferActor>>,
-            source_dataset_id: Uuid,
+            requestor_addr: &Addr<BcActor<ResticTransferActor>>, source_dataset_id: Uuid,
             source_snapshot_handle: SnapshotHandle,
         ) -> Self {
             Self {
@@ -313,10 +312,7 @@ mod container {
     #[async_trait::async_trait]
     impl BcHandler<GetContainerSnapshotsMessage> for ResticContainerActor {
         async fn handle(
-            &mut self,
-            _log: &Logger,
-            _ctx: &mut Context<BcActor<Self>>,
-            msg: GetContainerSnapshotsMessage,
+            &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetContainerSnapshotsMessage,
         ) -> ContainerSnapshotsResponse {
             ContainerSnapshotsResponse {
                 snapshots: self
@@ -331,10 +327,7 @@ mod container {
     #[async_trait::async_trait]
     impl BcHandler<GetBackupMessage> for ResticContainerActor {
         async fn handle(
-            &mut self,
-            _log: &Logger,
-            _ctx: &mut Context<BcActor<Self>>,
-            msg: GetBackupMessage,
+            &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetBackupMessage,
         ) -> Result<()> {
             match &mut self.state {
                 State::Active { waiting, .. } => {
@@ -458,10 +451,7 @@ mod container {
     #[async_trait::async_trait]
     impl BcHandler<GetActorStatusMessage> for ResticContainerActor {
         async fn handle(
-            &mut self,
-            _log: &Logger,
-            _ctx: &mut Context<BcActor<Self>>,
-            _msg: GetActorStatusMessage,
+            &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
         ) -> String {
             match &self.state {
                 State::Active { active, .. } => match active {
@@ -549,9 +539,7 @@ mod transfer {
 
     impl ResticTransferActor {
         pub fn new(
-            parent: Sender<TransferComplete>,
-            container: Addr<BcActor<ResticContainerActor>>,
-            log: &Logger,
+            parent: Sender<TransferComplete>, container: Addr<BcActor<ResticContainerActor>>, log: &Logger,
         ) -> BcActor<Self> {
             BcActor::new(
                 Self {
@@ -643,10 +631,7 @@ mod transfer {
     #[async_trait::async_trait]
     impl BcHandler<GetActorStatusMessage> for ResticTransferActor {
         async fn handle(
-            &mut self,
-            _log: &Logger,
-            _ctx: &mut Context<BcActor<Self>>,
-            _msg: GetActorStatusMessage,
+            &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
         ) -> String {
             String::from("ok")
         }
@@ -679,10 +664,7 @@ mod prune {
 
     impl ResticPruneActor {
         pub fn new(
-            container: Addr<BcActor<ResticContainerActor>>,
-            forget: ResticForget,
-            prune: ResticPrune,
-            log: &Logger,
+            container: Addr<BcActor<ResticContainerActor>>, forget: ResticForget, prune: ResticPrune, log: &Logger,
         ) -> BcActor<Self> {
             BcActor::new(
                 Self {
@@ -790,10 +772,7 @@ mod prune {
     #[async_trait::async_trait]
     impl BcHandler<GetActorStatusMessage> for ResticPruneActor {
         async fn handle(
-            &mut self,
-            _log: &Logger,
-            _ctx: &mut Context<BcActor<Self>>,
-            _msg: GetActorStatusMessage,
+            &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
         ) -> String {
             String::from("ok")
         }

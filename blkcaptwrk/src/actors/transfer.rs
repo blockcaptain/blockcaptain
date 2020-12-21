@@ -68,8 +68,7 @@ impl TransferActor {
     }
 
     async fn run_transfer(
-        sender_actor: Addr<BcActor<LocalSenderActor>>,
-        receiver_actor: Addr<BcActor<LocalReceiverActor>>,
+        sender_actor: Addr<BcActor<LocalSenderActor>>, receiver_actor: Addr<BcActor<LocalReceiverActor>>,
     ) -> Result<()> {
         let mut reader = sender_actor.call(GetReaderMessage).await?;
         let mut writer = receiver_actor.call(GetWriterMessage).await?;
@@ -256,10 +255,7 @@ impl BcHandler<ReceiverFinishedMessage> for TransferActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for TransferActor {
     async fn handle(
-        &mut self,
-        _log: &Logger,
-        _ctx: &mut Context<BcActor<Self>>,
-        _msg: GetActorStatusMessage,
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
     ) -> String {
         String::from("ok")
     }

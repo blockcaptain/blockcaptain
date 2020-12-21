@@ -1,9 +1,12 @@
 use super::{observation::HealthchecksActor, server::ServerActor, sync::SyncActor};
 use super::{pool::PoolActor, restic::ResticContainerActor, sync::SyncToContainer};
-use crate::xactorext::{
-    join_all_actors, stop_all_actors, BcHandler, GetActorStatusMessage, GetChildActorMessage, TerminalState,
-};
 use crate::xactorext::{BcActor, BcActorCtrl};
+use crate::{
+    actorbase::logged_result,
+    xactorext::{
+        join_all_actors, stop_all_actors, BcHandler, GetActorStatusMessage, GetChildActorMessage, TerminalState,
+    },
+};
 use anyhow::{Context as AnyhowContext, Result};
 use futures_util::{
     future::ready,
@@ -98,13 +101,7 @@ impl BcActorCtrl for CaptainActor {
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
-                .filter_map(|sa| match sa {
-                    Ok(started_actor) => Some(started_actor),
-                    Err(error) => {
-                        error!(log, "Failed to start observer actor: {}", error);
-                        None
-                    }
-                })
+                .filter_map(|sa| logged_result(log, sa.context("failed to start observer actor")).ok())
                 .collect();
         };
 
@@ -122,13 +119,7 @@ impl BcActorCtrl for CaptainActor {
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
-                .filter_map(|sa| match sa {
-                    Ok(started_actor) => Some(started_actor),
-                    Err(error) => {
-                        error!(log, "Failed to start pool actor: {}", error);
-                        None
-                    }
-                })
+                .filter_map(|sa| logged_result(log, sa.context("failed to start pool actor")).ok())
                 .collect();
         }
 
@@ -145,13 +136,7 @@ impl BcActorCtrl for CaptainActor {
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
-                .filter_map(|sa| match sa {
-                    Ok(started_actor) => Some(started_actor),
-                    Err(error) => {
-                        error!(log, "Failed to start restic actor: {}", error);
-                        None
-                    }
-                })
+                .filter_map(|sa| logged_result(log, sa.context("failed to start restic actor")).ok())
                 .collect();
         };
 
@@ -173,17 +158,18 @@ impl BcActorCtrl for CaptainActor {
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
-                .filter_map(|sa| match sa {
-                    Ok(started_actor) => Some(started_actor),
-                    Err(error) => {
-                        error!(log, "Failed to start sync actor: {}", error);
-                        None
-                    }
-                })
+                .filter_map(|sa| logged_result(log, sa.context("failed to start sync actor")).ok())
                 .collect();
         }
 
-        self.server_actor = Some(ServerActor::new(log).start().await.expect("TODO"));
+        self.server_actor = logged_result(
+            log,
+            ServerActor::new(log)
+                .start()
+                .await
+                .context("failed to start server actor"),
+        )
+        .ok();
 
         Ok(())
     }

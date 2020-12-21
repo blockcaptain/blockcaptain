@@ -12,7 +12,7 @@ use libblkcapt::{
     model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
 };
 use slog_scope::*;
-use std::{convert::TryInto, num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc};
+use std::{convert::TryInto, num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc, unimplemented};
 
 use crate::ui::{
     comfy_feature_state_cell, comfy_id_header, comfy_id_value, comfy_id_value_full, comfy_name_value, print_comfy_info,
@@ -107,7 +107,7 @@ pub fn create_pool(options: PoolCreateOptions) -> Result<()> {
     debug!("Command 'create_pool': {:?}", options);
     //let mut entities = storage::load_entity_state();
 
-    todo!();
+    unimplemented!();
     // create filesystem (via fs?)
     // mount (via fs)
     // let new_pool = BtrfsPool::new(options.name, options.mountpoint)?;

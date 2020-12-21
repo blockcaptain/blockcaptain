@@ -1,5 +1,5 @@
 use super::{
-    localsender::{LocalSenderActor, LocalSenderFinishedMessage},
+    localsender::{LocalSenderActor, LocalSenderFinishedMessage, LocalSenderParentFinishedMessage},
     observation::observable_func,
     pool::PoolActor,
 };
@@ -320,8 +320,10 @@ impl BcHandler<GetSnapshotHolderMessage> for DatasetActor {
 }
 
 #[async_trait::async_trait]
-impl BcHandler<LocalSenderFinishedMessage> for DatasetActor {
-    async fn handle(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: LocalSenderFinishedMessage) {
+impl BcHandler<LocalSenderParentFinishedMessage> for DatasetActor {
+    async fn handle(
+        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: LocalSenderParentFinishedMessage,
+    ) {
         self.active_sends_holds.retain(|(x, ..)| x.actor_id() != msg.0);
     }
 }
@@ -336,12 +338,12 @@ impl BcHandler<GetActorStatusMessage> for DatasetActor {
 }
 
 pub struct DatasetHolderActor {
-    parent: Sender<LocalSenderFinishedMessage>,
+    parent: Sender<LocalSenderParentFinishedMessage>,
 }
 
 impl DatasetHolderActor {
     fn new(
-        log: &Logger, parent: Sender<LocalSenderFinishedMessage>, send_handle: SnapshotHandle,
+        log: &Logger, parent: Sender<LocalSenderParentFinishedMessage>, send_handle: SnapshotHandle,
         parent_handle: Option<SnapshotHandle>,
     ) -> BcActor<DatasetHolderActor> {
         let snapshot_id = send_handle.uuid.to_string();
@@ -358,7 +360,7 @@ impl DatasetHolderActor {
 #[async_trait::async_trait]
 impl BcActorCtrl for DatasetHolderActor {
     async fn stopped(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
-        let _ = self.parent.send(LocalSenderFinishedMessage(ctx.actor_id(), Ok(())));
+        let _ = self.parent.send(LocalSenderParentFinishedMessage(ctx.actor_id()));
         TerminalState::Succeeded
     }
 }

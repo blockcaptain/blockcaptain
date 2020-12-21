@@ -86,9 +86,13 @@ impl StartedObservation {
         match result.borrow() {
             Ok(_) => self.succeeded(),
             Err(e) => {
-                self.failed(format!("{:?}", e));
+                self.error::<E, &E>(e);
             }
         };
+    }
+
+    pub fn error<E: Debug, BE: Borrow<E>>(self, error: BE) {
+        self.failed(format!("{:?}", error.borrow()));
     }
 
     fn stop(mut self, stage: ObservableEventStage) {

@@ -1,5 +1,5 @@
 use super::{
-    localreceiver::{LocalReceiverActor, ReceiverFinishedMessage, ReceiverFinishedParentMessage},
+    localreceiver::{LocalReceiverActor, LocalReceiverStoppedMessage, LocalReceiverStoppedParentMessage},
     observation::observable_func,
     pool::PoolActor,
 };
@@ -46,7 +46,7 @@ pub struct GetSnapshotReceiverMessage {
     source_dataset_id: Uuid,
     source_snapshot_handle: SnapshotHandle,
     target_ready: Sender<ReceiverReadyMessage>,
-    target_finished: Sender<ReceiverFinishedMessage>,
+    target_finished: Sender<LocalReceiverStoppedMessage>,
 }
 
 impl GetSnapshotReceiverMessage {
@@ -54,7 +54,7 @@ impl GetSnapshotReceiverMessage {
         requestor_addr: &Addr<A>, source_dataset_id: Uuid, source_snapshot_handle: SnapshotHandle,
     ) -> GetSnapshotReceiverMessage
     where
-        A: Handler<ReceiverReadyMessage> + Handler<ReceiverFinishedMessage>,
+        A: Handler<ReceiverReadyMessage> + Handler<LocalReceiverStoppedMessage>,
     {
         Self {
             source_dataset_id,
@@ -172,7 +172,7 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
 
         let snapshot_receiver = self.container.receive(msg.source_dataset_id);
         let started_receiver_actor = LocalReceiverActor::new(
-            ctx.address().caller(),
+            ctx.address().sender(),
             msg.target_finished,
             snapshot_receiver,
             &log.new(o!("message" => ())),
@@ -197,9 +197,11 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
 }
 
 #[async_trait::async_trait]
-impl BcHandler<ReceiverFinishedParentMessage> for ContainerActor {
-    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: ReceiverFinishedParentMessage) {
-        let ReceiverFinishedParentMessage(actor_id, new_snapshot) = msg;
+impl BcHandler<LocalReceiverStoppedParentMessage> for ContainerActor {
+    async fn handle(
+        &mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: LocalReceiverStoppedParentMessage,
+    ) {
+        let LocalReceiverStoppedParentMessage(actor_id, new_snapshot) = msg;
         let active_receiver = self.active_receivers.remove(&actor_id).expect("FIXME");
 
         let new_snapshot = new_snapshot.unwrap();

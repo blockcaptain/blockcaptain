@@ -6,8 +6,6 @@ use hyper_tls::HttpsConnector;
 use hyperlocal::UnixConnector;
 use std::time::Duration;
 
-// TODO: make a mockable trait for the static net client creator
-
 type HyperClient = Client<TimeoutConnector<HttpsConnector<HttpConnector<GaiResolver>>>>;
 
 pub struct HttpsClient {

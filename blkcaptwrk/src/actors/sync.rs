@@ -36,9 +36,15 @@ pub struct SyncActor {
     model: SnapshotSyncEntity,
 
     state_mode: SyncModeState,
-    state_active_send: Option<(BoxBcAddr, DateTime<Utc>, StartedObservation)>,
+    state_active_send: Option<ActiveSend>,
     last_sent: Option<DateTime<Utc>>,
     sync_cycle_schedule: Option<Schedule>,
+}
+
+struct ActiveSend {
+    actor: BoxBcAddr,
+    sending_snapshot: DateTime<Utc>,
+    active_limit: Option<DateTime<Utc>>,
 }
 
 pub enum SyncToContainer {
@@ -70,6 +76,9 @@ fn get_schedule(mode: &SnapshotSyncMode) -> Option<Result<Schedule>> {
 #[message()]
 #[derive(Clone)]
 struct StartSnapshotSyncCycleMessage;
+
+#[message()]
+struct RetrySnapshotSyncCycleMessage;
 
 impl SyncActor {
     pub fn new(
@@ -103,11 +112,15 @@ impl SyncActor {
         let container_snapshots = self.get_container_snapshots().await?;
 
         let observation = start_observation(self.model.id(), ObservableEvent::SnapshotSync).await;
+        let mut active_limit = None;
         let to_send = match &mut self.state_mode {
-            SyncModeState::LatestScheduled(queue) | SyncModeState::LatestImmediate(queue, _) => queue
-                .pop_front()
-                .and_then(|limit| find_ready(&dataset_snapshots, &container_snapshots, FindMode::LatestBefore(limit))),
-            SyncModeState::AllScheduled(limit) => limit.and_then(|limit| {
+            SyncModeState::LatestScheduled(queue) | SyncModeState::LatestImmediate(queue, _) => {
+                active_limit = queue.pop_front();
+                active_limit.and_then(|limit| {
+                    find_ready(&dataset_snapshots, &container_snapshots, FindMode::LatestBefore(limit))
+                })
+            }
+            SyncModeState::AllScheduled(ref limit) => limit.and_then(|limit| {
                 find_ready(
                     &dataset_snapshots,
                     &container_snapshots,
@@ -127,8 +140,14 @@ impl SyncActor {
 
         let parent = find_parent(to_send, &dataset_snapshots, &container_snapshots);
 
-        let transfer_actor = self.start_transfer_actor(to_send, parent, ctx, log).await?;
-        self.state_active_send = Some((transfer_actor, to_send.datetime, observation));
+        let actor = self
+            .start_transfer_actor(to_send, parent, observation, ctx, log)
+            .await?;
+        self.state_active_send = Some(ActiveSend {
+            actor,
+            sending_snapshot: to_send.datetime,
+            active_limit,
+        });
         Ok(())
     }
 
@@ -166,12 +185,14 @@ impl SyncActor {
     }
 
     async fn start_transfer_actor(
-        &self, snapshot: &SnapshotHandle, parent: Option<&SnapshotHandle>, ctx: &Context<BcActor<Self>>, log: &Logger,
+        &self, snapshot: &SnapshotHandle, parent: Option<&SnapshotHandle>, observation: StartedObservation,
+        ctx: &Context<BcActor<Self>>, log: &Logger,
     ) -> Result<BoxBcAddr> {
         match &self.container {
             SyncToContainer::Btrfs(container) => {
                 let transfer_actor = TransferActor::new(
                     ctx.address().sender::<TransferComplete>(),
+                    observation,
                     &log.new(o!("message" => ())),
                 );
 
@@ -201,6 +222,7 @@ impl SyncActor {
                 let transfer_actor = ResticTransferActor::new(
                     ctx.address().sender::<TransferComplete>(),
                     container.clone(),
+                    observation,
                     &log.new(o!("message" => ())),
                 );
 
@@ -252,10 +274,9 @@ impl BcActorCtrl for SyncActor {
             let _ = ctx.unsubscribe::<ObservableEventMessage>().await;
         }
 
-        if let Some((mut active, _, observation)) = self.state_active_send.take() {
-            let _ = active.stop();
-            active.wait_for_stop().await;
-            observation.cancelled();
+        if let Some(ActiveSend { mut actor, .. }) = self.state_active_send.take() {
+            let _ = actor.stop();
+            actor.wait_for_stop().await;
             TerminalState::Cancelled
         } else {
             TerminalState::Succeeded
@@ -316,17 +337,41 @@ impl BcHandler<StartSnapshotSyncCycleMessage> for SyncActor {
 #[async_trait::async_trait]
 impl BcHandler<TransferComplete> for SyncActor {
     async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: TransferComplete) {
-        if let Some((_, sent_snapshot_datetime, observation)) = self.state_active_send.take() {
-            self.last_sent = Some(sent_snapshot_datetime);
-            match msg.0 {
-                TerminalState::Succeeded => observation.succeeded(),
-                TerminalState::Failed => observation.failed("TODO"),
-                TerminalState::Cancelled => observation.cancelled(),
-                TerminalState::Faulted => observation.failed("actor faulted"),
+        let transfer = msg.0;
+        if let Some(ActiveSend {
+            sending_snapshot,
+            active_limit,
+            ..
+        }) = self.state_active_send.take()
+        {
+            if transfer.succeeded() {
+                self.last_sent = Some(sending_snapshot);
+            } else if let Some(active_limit) = active_limit {
+                match &mut self.state_mode {
+                    SyncModeState::LatestScheduled(queue) | SyncModeState::LatestImmediate(queue, _) => {
+                        queue.push_front(active_limit);
+                    }
+                    SyncModeState::AllScheduled(_) | SyncModeState::AllImmediate => {}
+                };
             }
         }
 
-        // TODO react to failed transfers
+        if transfer.succeeded() {
+            let result = self.run_cycle(ctx, log).await;
+            unhandled_result(log, result);
+        } else {
+            ctx.send_later(RetrySnapshotSyncCycleMessage, Duration::from_secs(300));
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<RetrySnapshotSyncCycleMessage> for SyncActor {
+    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: RetrySnapshotSyncCycleMessage) {
+        if self.state_active_send.is_some() {
+            debug!(log, "received retry snapshot cycle message while in active send state");
+            return;
+        }
 
         let result = self.run_cycle(ctx, log).await;
         unhandled_result(log, result);

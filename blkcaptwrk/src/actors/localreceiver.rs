@@ -1,42 +1,50 @@
 use crate::{
-    actorbase::unhandled_result,
-    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage},
+    actorbase::{state_result, state_result_from_result, unhandled_result},
+    tasks::{WorkerCompleteMessage, WorkerTask},
+    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::Result;
 use libblkcapt::core::{localsndrcv::SnapshotReceiver, BtrfsContainerSnapshot};
 use slog::Logger;
 use std::mem;
+use strum_macros::Display;
 use tokio::io::AsyncWrite;
-use xactor::{message, Caller, Context, Sender};
+use xactor::{message, Context, Sender};
 
 #[message()]
-pub struct ReceiverFinishedMessage(pub Result<()>);
+pub struct LocalReceiverStoppedMessage(pub Result<()>);
 
 #[message()]
-pub struct ReceiverFinishedParentMessage(pub u64, pub Result<BtrfsContainerSnapshot>);
+pub struct LocalReceiverStoppedParentMessage(pub u64, pub Option<BtrfsContainerSnapshot>);
 
 #[message(result = "Box<dyn AsyncWrite + Send + Unpin>")]
 pub struct GetWriterMessage;
 
 pub struct LocalReceiverActor {
-    parent: Caller<ReceiverFinishedParentMessage>,
-    requestor: Sender<ReceiverFinishedMessage>,
+    parent: Sender<LocalReceiverStoppedParentMessage>,
+    requestor: Sender<LocalReceiverStoppedMessage>,
     state: State,
 }
 
+#[derive(Display)]
 enum State {
     Created(SnapshotReceiver),
-    Started(Option<Box<dyn AsyncWrite + Send + Unpin>>),
-    Finished,
+    Running(WorkerTask, Option<Box<dyn AsyncWrite + Send + Unpin>>),
+    Finished(Result<BtrfsContainerSnapshot>),
     Faulted,
 }
 
-#[message()]
-struct InternalReceiverFinished(Result<BtrfsContainerSnapshot>);
+impl State {
+    fn take(&mut self) -> Self {
+        mem::replace(self, State::Faulted)
+    }
+}
+
+type ReceiveWorkerCompleteMessage = WorkerCompleteMessage<Result<BtrfsContainerSnapshot>>;
 
 impl LocalReceiverActor {
     pub fn new(
-        parent: Caller<ReceiverFinishedParentMessage>, requestor: Sender<ReceiverFinishedMessage>,
+        parent: Sender<LocalReceiverStoppedParentMessage>, requestor: Sender<LocalReceiverStoppedMessage>,
         receiver: SnapshotReceiver, log: &Logger,
     ) -> BcActor<Self> {
         BcActor::new(
@@ -52,21 +60,43 @@ impl LocalReceiverActor {
 
 #[async_trait::async_trait]
 impl BcActorCtrl for LocalReceiverActor {
-    async fn started(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         if let State::Created(receiver) = mem::replace(&mut self.state, State::Faulted) {
             let mut receiver = receiver.start()?;
-            let reader = receiver.writer();
-            let internal_callback = ctx.address().sender();
-            tokio::spawn(async move {
-                // TODO cancellation. tokio 0.3 has better process api.
-                let result = receiver.wait().await;
-                let _ = internal_callback.send(InternalReceiverFinished(result));
-            });
-            self.state = State::Started(Some(Box::new(reader)));
+            let writer = receiver.writer();
+            let task = WorkerTask::run(ctx.address(), log, |_| async move { receiver.wait().await.into() });
+            self.state = State::Running(task, Some(Box::new(writer)));
         } else {
             panic!("start called in invalid state");
         }
         Ok(())
+    }
+
+    async fn stopped(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+        let (terminal_state, result): (TerminalState, Result<BtrfsContainerSnapshot>) = match self.state.take() {
+            State::Created(_) => state_result(TerminalState::Cancelled),
+            State::Running(worker, _) => {
+                worker.abort();
+                state_result(TerminalState::Cancelled)
+            }
+            State::Finished(result) => state_result_from_result(result),
+            State::Faulted => state_result(TerminalState::Faulted),
+        };
+
+        let (maybe_snapshot, result) = match result {
+            Ok(snapshot) => (Some(snapshot), Ok(())),
+            Err(error) => (None, Err(error)),
+        };
+        let parent_notify_result = self
+            .parent
+            .send(LocalReceiverStoppedParentMessage(ctx.actor_id(), maybe_snapshot));
+        let requestor_notify_result = self.requestor.send(LocalReceiverStoppedMessage(result));
+        if !matches!(terminal_state, TerminalState::Cancelled) {
+            unhandled_result(log, parent_notify_result);
+            unhandled_result(log, requestor_notify_result);
+        }
+
+        terminal_state
     }
 }
 
@@ -75,28 +105,20 @@ impl BcHandler<GetWriterMessage> for LocalReceiverActor {
     async fn handle(
         &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetWriterMessage,
     ) -> Box<dyn AsyncWrite + Send + Unpin> {
-        if let State::Started(Some(reader)) = mem::replace(&mut self.state, State::Faulted) {
-            self.state = State::Started(None);
-            reader
+        if let State::Running(worker, Some(writer)) = mem::replace(&mut self.state, State::Faulted) {
+            self.state = State::Running(worker, None);
+            writer
         } else {
-            panic!("getreader called in invalid state");
+            panic!("getwriter called in invalid state");
         }
     }
 }
 
 #[async_trait::async_trait]
-impl BcHandler<InternalReceiverFinished> for LocalReceiverActor {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: InternalReceiverFinished) {
-        self.state = State::Finished;
-        let parent_notify_result = self
-            .parent
-            .call(ReceiverFinishedParentMessage(ctx.actor_id(), msg.0))
-            .await;
-        unhandled_result(log, parent_notify_result);
-
-        // TODO need proper error sent below.
-        let requestor_notify_result = self.requestor.send(ReceiverFinishedMessage(Ok(())));
-        unhandled_result(log, requestor_notify_result);
+impl BcHandler<ReceiveWorkerCompleteMessage> for LocalReceiverActor {
+    async fn handle(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: ReceiveWorkerCompleteMessage) {
+        self.state = State::Finished(msg.0);
+        ctx.stop(None);
     }
 }
 
@@ -105,6 +127,6 @@ impl BcHandler<GetActorStatusMessage> for LocalReceiverActor {
     async fn handle(
         &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
     ) -> String {
-        String::from("ok")
+        self.state.to_string()
     }
 }

@@ -76,6 +76,12 @@ pub enum TerminalState {
     Faulted,
 }
 
+impl TerminalState {
+    pub fn succeeded(self) -> bool {
+        matches!(self, Self::Succeeded)
+    }
+}
+
 // impl TerminalState {
 //     fn dnr() -> Self {
 //         TerminalState::Failed(false)

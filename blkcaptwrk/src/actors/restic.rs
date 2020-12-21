@@ -41,11 +41,7 @@ mod container {
     use slog::info;
     use xactor::{Actor, WeakAddr};
 
-    use crate::{
-        actors::observation::{start_observation, StartedObservation},
-        snapshots::clear_deleted,
-        xactorext::BoxBcAddr,
-    };
+    use crate::{actors::observation::start_observation, snapshots::clear_deleted, xactorext::BoxBcAddr};
 
     use super::*;
 
@@ -88,7 +84,6 @@ mod container {
         },
         Prune {
             actor: Addr<BcActor<ResticPruneActor>>,
-            observation: Option<StartedObservation>,
             forgets: Vec<(Uuid, HashSet<DateTime<Utc>>)>,
         },
     }
@@ -200,19 +195,20 @@ mod container {
             let prune = repository.prune();
 
             // start forget+prune actor
-            let actor = ResticPruneActor::new(ctx.address(), forget, prune, log)
+            let actor_result = ResticPruneActor::new(ctx.address(), forget, prune, observation, log)
                 .start()
                 .await
-                .expect("TODO");
-
-            Some(Active::Prune {
-                actor,
-                observation: Some(observation),
-                forgets: evals
-                    .into_iter()
-                    .map(|(id, eval)| (id, eval.drop_snapshots.into_iter().map(|s| s.datetime).collect()))
-                    .collect(),
-            })
+                .context("failed to start prune actor");
+            log_result(log, &actor_result);
+            actor_result
+                .map(|actor| Active::Prune {
+                    actor,
+                    forgets: evals
+                        .into_iter()
+                        .map(|(id, eval)| (id, eval.drop_snapshots.into_iter().map(|s| s.datetime).collect()))
+                        .collect(),
+                })
+                .ok()
         }
 
         async fn start_backup(&self, msg: GetBackupMessage) -> Result<Active> {
@@ -285,16 +281,13 @@ mod container {
         async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
             match self.state.take() {
                 State::Active { active, waiting } => {
-                    let (maybe_actor, maybe_observation): (Option<BoxBcAddr>, _) = match active {
-                        Active::Transfer { actor, .. } => (actor.upgrade().map(|a| a.into()), None),
-                        Active::Prune { actor, observation, .. } => (Some(actor.into()), observation),
+                    let maybe_actor: Option<BoxBcAddr> = match active {
+                        Active::Transfer { actor, .. } => actor.upgrade().map(|a| a.into()),
+                        Active::Prune { actor, .. } => Some(actor.into()),
                     };
                     if let Some(mut actor) = maybe_actor {
                         let _ = actor.stop();
                         actor.wait_for_stop().await;
-                    }
-                    if let Some(observation) = maybe_observation {
-                        observation.cancelled();
                     }
                     for waiter in waiting {
                         if let Some(addr) = waiter.target.upgrade() {
@@ -388,12 +381,10 @@ mod container {
                     active: Active::Transfer { dataset_id, .. },
                     ..
                 } => {
-                    if let Some(snapshot) = msg.1 {
+                    if let Some(snapshot) = msg.0 {
                         info!(log, "snapshot received"; "dataset_id" => %dataset_id, "time" => %snapshot.datetime);
                         self.snapshots.entry(*dataset_id).or_default().push(snapshot);
                     }
-
-                    // TODO deal with failed transfer
 
                     self.process_waiting(log, ctx).await;
                 }
@@ -415,22 +406,16 @@ mod container {
         async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: PruneCompleteMessage) {
             match &mut self.state {
                 State::Active {
-                    active: Active::Prune {
-                        forgets, observation, ..
-                    },
+                    active: Active::Prune { forgets, .. },
                     ..
                 } => {
-                    let PruneCompleteMessage(forgot, result) = msg;
+                    let PruneCompleteMessage(forgot) = msg;
                     if forgot {
                         for (dataset_id, snapshots) in forgets {
                             if let Some(cache) = self.snapshots.get_mut(dataset_id) {
                                 clear_deleted(cache, mem::take(snapshots));
                             }
                         }
-                    }
-
-                    if let Some(observation) = observation.take() {
-                        observation.result(result);
                     }
 
                     self.process_waiting(log, ctx).await;
@@ -467,6 +452,11 @@ mod container {
 }
 
 mod transfer {
+    use crate::{
+        actorbase::{state_result, state_result_from_result},
+        actors::observation::StartedObservation,
+    };
+
     use super::*;
 
     pub struct ResticTransferActor {
@@ -476,8 +466,8 @@ mod transfer {
     }
 
     enum State {
-        WaitingForHoldAndBackup(Option<HolderState>, Option<ResticBackup>),
-        Transferring(Addr<BcActor<DatasetHolderActor>>, WorkerTask),
+        WaitingForHoldAndBackup(Option<HolderState>, Option<ResticBackup>, StartedObservation),
+        Transferring(Addr<BcActor<DatasetHolderActor>>, WorkerTask, StartedObservation),
         Transferred(Result<ResticContainerSnapshot>),
         Faulted,
     }
@@ -509,25 +499,27 @@ mod transfer {
 
         async fn stopped(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
             let (terminal_state, result) = match self.state.take() {
-                State::Transferring(_holder, worker_task) => {
+                State::Transferring(_holder, worker_task, observation) => {
                     warn!(log, "cancelled during transfer");
                     worker_task.abort();
                     debug!(log, "waiting for worker");
                     worker_task.wait().await;
-                    (TerminalState::Cancelled, None)
+                    observation.cancelled();
+                    state_result(TerminalState::Cancelled)
                 }
-                State::WaitingForHoldAndBackup(..) => {
+                State::WaitingForHoldAndBackup(.., observation) => {
                     warn!(log, "cancelled prior to transfer");
-                    (TerminalState::Cancelled, None)
+                    observation.cancelled();
+                    state_result(TerminalState::Cancelled)
                 }
-                State::Transferred(result) => (result.as_ref().into(), result.ok()),
+                State::Transferred(result) => state_result_from_result(result),
                 State::Faulted => {
                     error!(log, "actor faulted");
-                    (TerminalState::Faulted, None)
+                    state_result(TerminalState::Faulted)
                 }
             };
 
-            let container_notify_result = self.parent.send(ParentTransferComplete(terminal_state, result));
+            let container_notify_result = self.parent.send(ParentTransferComplete(result.ok()));
             let requestor_notify_result = self.requestor.send(TransferComplete(terminal_state));
             if !matches!(terminal_state, TerminalState::Cancelled) {
                 unhandled_result(log, container_notify_result);
@@ -539,11 +531,12 @@ mod transfer {
 
     impl ResticTransferActor {
         pub fn new(
-            parent: Sender<TransferComplete>, container: Addr<BcActor<ResticContainerActor>>, log: &Logger,
+            parent: Sender<TransferComplete>, container: Addr<BcActor<ResticContainerActor>>,
+            observation: StartedObservation, log: &Logger,
         ) -> BcActor<Self> {
             BcActor::new(
                 Self {
-                    state: State::WaitingForHoldAndBackup(None, None),
+                    state: State::WaitingForHoldAndBackup(None, None, observation),
                     requestor: parent,
                     parent: container,
                 },
@@ -552,15 +545,16 @@ mod transfer {
         }
 
         fn maybe_start_transfer(incoming: State, ctx: &mut Context<BcActor<Self>>, log: &Logger) -> State {
-            if let State::WaitingForHoldAndBackup(Some(holder_state), Some(backup)) = incoming {
+            if let State::WaitingForHoldAndBackup(Some(holder_state), Some(backup), observation) = incoming {
                 let started_backup = backup.start(&holder_state.snapshot_path);
                 match started_backup {
                     Ok(started) => {
                         let task = WorkerTask::run(ctx.address(), log, |_| async move { started.wait().await.into() });
-                        State::Transferring(holder_state.holder, task)
+                        State::Transferring(holder_state.holder, task, observation)
                     }
                     Err(e) => {
                         ctx.stop(None);
+                        observation.error::<anyhow::Error, _>(&e);
                         State::Transferred(Err(e))
                     }
                 }
@@ -571,17 +565,21 @@ mod transfer {
 
         fn input_ready(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, input: InputReady) {
             self.state = match (self.state.take(), input) {
-                (State::WaitingForHoldAndBackup(maybe_holder, None), InputReady::Backup(Ok(backup))) => {
-                    let updated_state = State::WaitingForHoldAndBackup(maybe_holder, Some(backup));
+                (State::WaitingForHoldAndBackup(maybe_holder, None, observation), InputReady::Backup(Ok(backup))) => {
+                    let updated_state = State::WaitingForHoldAndBackup(maybe_holder, Some(backup), observation);
                     Self::maybe_start_transfer(updated_state, ctx, log)
                 }
-                (State::WaitingForHoldAndBackup(None, maybe_backup), InputReady::Holder(Ok(holder_state))) => {
-                    let updated_state = State::WaitingForHoldAndBackup(Some(holder_state), maybe_backup);
+                (
+                    State::WaitingForHoldAndBackup(None, maybe_backup, observation),
+                    InputReady::Holder(Ok(holder_state)),
+                ) => {
+                    let updated_state = State::WaitingForHoldAndBackup(Some(holder_state), maybe_backup, observation);
                     Self::maybe_start_transfer(updated_state, ctx, log)
                 }
-                (State::WaitingForHoldAndBackup(_, None), InputReady::Backup(Err(e)))
-                | (State::WaitingForHoldAndBackup(None, _), InputReady::Holder(Err(e))) => {
+                (State::WaitingForHoldAndBackup(_, None, observation), InputReady::Backup(Err(e)))
+                | (State::WaitingForHoldAndBackup(None, _, observation), InputReady::Holder(Err(e))) => {
                     ctx.stop(None);
+                    observation.error::<anyhow::Error, _>(&e);
                     State::Transferred(Err(e))
                 }
                 _ => {
@@ -599,7 +597,7 @@ mod transfer {
     }
 
     #[message]
-    pub struct ParentTransferComplete(pub TerminalState, pub Option<ResticContainerSnapshot>);
+    pub struct ParentTransferComplete(pub Option<ResticContainerSnapshot>);
 
     #[async_trait::async_trait]
     impl BcHandler<HolderReadyMessage> for ResticTransferActor {
@@ -621,7 +619,8 @@ mod transfer {
     #[async_trait::async_trait]
     impl BcHandler<BackupWorkerCompleteMessage> for ResticTransferActor {
         async fn handle(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: BackupWorkerCompleteMessage) {
-            if let State::Transferring(..) = self.state.take() {
+            if let State::Transferring(.., observation) = self.state.take() {
+                observation.result(&msg.0);
                 self.state = State::Transferred(msg.0);
             }
             ctx.stop(None);
@@ -639,6 +638,8 @@ mod transfer {
 }
 
 mod prune {
+    use crate::actors::observation::StartedObservation;
+
     use super::*;
     use libblkcapt::core::restic::{ResticForget, ResticPrune};
 
@@ -649,10 +650,10 @@ mod prune {
     }
 
     enum State {
-        Created(ResticForget, ResticPrune),
-        StartedForget(WorkerTask, ResticPrune),
-        StartedPrune(WorkerTask),
-        Pruned(Result<()>),
+        Created(ResticForget, ResticPrune, StartedObservation),
+        StartedForget(WorkerTask, ResticPrune, StartedObservation),
+        StartedPrune(WorkerTask, StartedObservation),
+        Pruned(Result<()>, StartedObservation),
         Faulted,
     }
 
@@ -664,11 +665,12 @@ mod prune {
 
     impl ResticPruneActor {
         pub fn new(
-            container: Addr<BcActor<ResticContainerActor>>, forget: ResticForget, prune: ResticPrune, log: &Logger,
+            container: Addr<BcActor<ResticContainerActor>>, forget: ResticForget, prune: ResticPrune,
+            observation: StartedObservation, log: &Logger,
         ) -> BcActor<Self> {
             BcActor::new(
                 Self {
-                    state: State::Created(forget, prune),
+                    state: State::Created(forget, prune, observation),
                     parent: container,
                     forgot: false,
                 },
@@ -680,52 +682,49 @@ mod prune {
     impl ResticPruneActor {}
 
     #[message]
-    pub struct PruneCompleteMessage(pub bool, pub Result<()>);
+    pub struct PruneCompleteMessage(pub bool);
 
     type PruneWorkerCompleteMessage = WorkerCompleteMessage<Result<()>>;
 
     #[async_trait::async_trait]
     impl BcActorCtrl for ResticPruneActor {
         async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
-            if let State::Created(forget, prune) = self.state.take() {
+            if let State::Created(forget, prune, observation) = self.state.take() {
                 let forgetter = forget.start()?;
                 let task = WorkerTask::run(ctx.address(), log, |_| async move { forgetter.wait().await.into() });
-                self.state = State::StartedForget(task, prune);
+                self.state = State::StartedForget(task, prune, observation);
             }
             Ok(())
         }
 
         async fn stopped(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
-            let (terminal_state, result) = match self.state.take() {
-                State::Created(..) => {
-                    const MSG: &str = "cancelled prior to transfer";
-                    warn!(log, "{}", MSG);
-                    (TerminalState::Cancelled, Err(anyhow!(MSG)))
+            let terminal_state = match self.state.take() {
+                State::Created(.., observation) => {
+                    warn!(log, "cancelled prior to transfer");
+                    observation.cancelled();
+                    TerminalState::Cancelled
                 }
-                State::StartedForget(worker, _) => {
-                    const MSG: &str = "cancelled during forget";
-                    warn!(log, "{}", MSG);
+                State::StartedForget(worker, _, observation) => {
+                    warn!(log, "cancelled during forget");
+                    observation.cancelled();
                     worker.abort();
-                    (TerminalState::Cancelled, Err(anyhow!(MSG)))
+                    TerminalState::Cancelled
                 }
-                State::StartedPrune(worker) => {
-                    const MSG: &str = "cancelled during prune";
-                    warn!(log, "{}", MSG);
+                State::StartedPrune(worker, observation) => {
+                    warn!(log, "cancelled during prune");
+                    observation.cancelled();
                     worker.abort();
-                    (TerminalState::Cancelled, Err(anyhow!(MSG)))
+                    TerminalState::Cancelled
                 }
-                State::Pruned(result) => {
+                State::Pruned(result, observation) => {
                     log_result(log, &result);
-                    (result.as_ref().into(), result)
+                    observation.result(&result);
+                    result.into()
                 }
-                State::Faulted => {
-                    const MSG: &str = "actor faulted";
-                    error!(log, "{}", MSG);
-                    (TerminalState::Faulted, Err(anyhow!(MSG)))
-                }
+                State::Faulted => TerminalState::Faulted,
             };
 
-            let container_notify_result = self.parent.send(PruneCompleteMessage(self.forgot, result));
+            let container_notify_result = self.parent.send(PruneCompleteMessage(self.forgot));
             if !matches!(terminal_state, TerminalState::Cancelled) {
                 unhandled_result(log, container_notify_result);
             }
@@ -737,31 +736,31 @@ mod prune {
     impl BcHandler<PruneWorkerCompleteMessage> for ResticPruneActor {
         async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: PruneWorkerCompleteMessage) {
             self.state = match self.state.take() {
-                State::StartedForget(_, prune) => match msg.0 {
+                State::StartedForget(_, prune, observation) => match msg.0 {
                     Ok(_) => {
                         self.forgot = true;
                         match prune.start() {
                             Ok(pruner) => {
                                 let task =
                                     WorkerTask::run(ctx.address(), log, |_| async move { pruner.wait().await.into() });
-                                State::StartedPrune(task)
+                                State::StartedPrune(task, observation)
                             }
                             Err(e) => {
                                 ctx.stop(None);
-                                State::Pruned(Err(e))
+                                State::Pruned(Err(e), observation)
                             }
                         }
                     }
                     e => {
                         ctx.stop(None);
-                        State::Pruned(e)
+                        State::Pruned(e, observation)
                     }
                 },
-                State::StartedPrune(_) => {
+                State::StartedPrune(_, observation) => {
                     ctx.stop(None);
-                    State::Pruned(msg.0)
+                    State::Pruned(msg.0, observation)
                 }
-                State::Faulted | State::Pruned(_) | State::Created(..) => {
+                State::Faulted | State::Pruned(..) | State::Created(..) => {
                     ctx.stop(None);
                     State::Faulted
                 }

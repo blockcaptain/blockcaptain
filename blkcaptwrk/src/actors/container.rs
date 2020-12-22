@@ -4,7 +4,7 @@ use super::{
     pool::PoolActor,
 };
 use crate::{
-    actorbase::{schedule_next_message, unhandled_result},
+    actorbase::{unhandled_result, ScheduledMessage},
     snapshots::{
         failed_snapshot_deletes_as_result, prune_btrfs_snapshots, ContainerSnapshotsResponse,
         GetContainerSnapshotsMessage, PruneMessage,
@@ -14,7 +14,6 @@ use crate::{
     },
 };
 use anyhow::Result;
-use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
     core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsPool},
@@ -32,7 +31,7 @@ pub struct ContainerActor {
     pool: Addr<BcActor<PoolActor>>,
     container: Arc<BtrfsContainer>,
     snapshots: HashMap<Uuid, Vec<BtrfsContainerSnapshot>>,
-    prune_schedule: Option<Schedule>,
+    prune_schedule: Option<ScheduledMessage>,
     active_receivers: HashMap<u64, ActiveReceiver>,
 }
 
@@ -92,10 +91,6 @@ impl ContainerActor {
                 ))
             })
     }
-
-    fn schedule_next_prune(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
-        schedule_next_message(self.prune_schedule.as_ref(), "prune", PruneMessage(), log, ctx);
-    }
 }
 
 #[async_trait::async_trait]
@@ -115,9 +110,10 @@ impl BcActorCtrl for ContainerActor {
                 .snapshot_retention
                 .as_ref()
                 .map(|r| &r.evaluation_schedule)
-                .map_or(Ok(None), |s| s.try_into().map(Some))?;
-
-            self.schedule_next_prune(log, ctx);
+                .map_or(Ok(None), |s| {
+                    s.try_into()
+                        .map(|schedule| Some(ScheduledMessage::new(schedule, "prune", PruneMessage, log, ctx)))
+                })?;
         }
 
         Ok(())

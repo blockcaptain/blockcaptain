@@ -4,18 +4,16 @@ use super::{
     pool::PoolActor,
 };
 use crate::{
-    actorbase::schedule_next_message,
-    actorbase::unhandled_error,
+    actorbase::unhandled_result,
+    xactorext::{BcActor, BcActorCtrl, BcHandler},
+};
+use crate::{
+    actorbase::{unhandled_error, ScheduledMessage},
     snapshots::PruneMessage,
     snapshots::{failed_snapshot_deletes_as_result, prune_btrfs_snapshots},
     xactorext::{join_all_actors, stop_all_actors, BoxBcWeakAddr, GetActorStatusMessage, TerminalState},
 };
-use crate::{
-    actorbase::unhandled_result,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
-};
 use anyhow::{Context as AnyhowContext, Result};
-use cron::Schedule;
 use futures_util::future::ready;
 use libblkcapt::{
     core::{BtrfsDataset, BtrfsDatasetSnapshot, BtrfsPool, BtrfsSnapshot},
@@ -34,14 +32,14 @@ pub struct DatasetActor {
     pool: Addr<BcActor<PoolActor>>,
     dataset: Arc<BtrfsDataset>,
     snapshots: Vec<BtrfsDatasetSnapshot>,
-    snapshot_schedule: Option<Schedule>,
-    prune_schedule: Option<Schedule>,
+    snapshot_schedule: Option<ScheduledMessage>,
+    prune_schedule: Option<ScheduledMessage>,
     active_sends_holds: Vec<(BoxBcWeakAddr, Uuid, Option<Uuid>)>,
 }
 
 #[message()]
 #[derive(Clone)]
-struct SnapshotMessage();
+struct SnapshotMessage;
 
 #[message(result = "DatasetSnapshotsResponse")]
 pub struct GetDatasetSnapshotsMessage;
@@ -125,28 +123,16 @@ impl DatasetActor {
             ))
         })
     }
-
-    fn schedule_next_snapshot(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
-        schedule_next_message(self.snapshot_schedule.as_ref(), "snapshot", SnapshotMessage(), log, ctx);
-    }
-
-    fn schedule_next_prune(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
-        schedule_next_message(self.prune_schedule.as_ref(), "prune", PruneMessage(), log, ctx);
-    }
 }
 
 #[async_trait::async_trait]
 impl BcActorCtrl for DatasetActor {
     async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
         if self.dataset.model().snapshotting_state() == FeatureState::Enabled {
-            self.snapshot_schedule = self
-                .dataset
-                .model()
-                .snapshot_schedule
-                .as_ref()
-                .map_or(Ok(None), |s| s.try_into().map(Some))?;
-
-            self.schedule_next_snapshot(log, ctx);
+            self.snapshot_schedule = self.dataset.model().snapshot_schedule.as_ref().map_or(Ok(None), |s| {
+                s.try_into()
+                    .map(|schedule| Some(ScheduledMessage::new(schedule, "snapshot", SnapshotMessage, log, ctx)))
+            })?;
         }
 
         if self.dataset.model().pruning_state() == FeatureState::Enabled {
@@ -156,9 +142,10 @@ impl BcActorCtrl for DatasetActor {
                 .snapshot_retention
                 .as_ref()
                 .map(|r| &r.evaluation_schedule)
-                .map_or(Ok(None), |s| s.try_into().map(Some))?;
-
-            self.schedule_next_prune(log, ctx);
+                .map_or(Ok(None), |s| {
+                    s.try_into()
+                        .map(|schedule| Some(ScheduledMessage::new(schedule, "prune", PruneMessage, log, ctx)))
+                })?;
         }
 
         Ok(())
@@ -182,7 +169,7 @@ impl BcActorCtrl for DatasetActor {
 
 #[async_trait::async_trait]
 impl BcHandler<SnapshotMessage> for DatasetActor {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: SnapshotMessage) {
+    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: SnapshotMessage) {
         let result = observable_func(self.dataset.model().id(), ObservableEvent::DatasetSnapshot, || {
             ready(self.dataset.create_local_snapshot())
         })
@@ -196,8 +183,6 @@ impl BcHandler<SnapshotMessage> for DatasetActor {
                 unhandled_error(log, e);
             }
         }
-
-        self.schedule_next_snapshot(log, ctx);
     }
 }
 

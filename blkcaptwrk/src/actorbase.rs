@@ -1,12 +1,11 @@
 use std::time::Duration;
 
+use crate::xactorext::TerminalState;
 use anyhow::{anyhow, Error, Result};
 use chrono::{DateTime, Utc};
 use cron::Schedule;
 use slog::{debug, error, info, Logger};
-use xactor::{Context, Message};
-
-use crate::xactorext::{BcActor, BcActorCtrl, BcHandler, TerminalState};
+use xactor::{Context, Handler, Message};
 
 pub fn unhandled_error(log: &Logger, error: Error) {
     log_error(log, &error);
@@ -37,42 +36,72 @@ pub fn logged_result<T>(log: &Logger, result: Result<T>) -> Result<T> {
     result
 }
 
-fn schedule_next_delay(after: DateTime<Utc>, what: &str, schedule: &Schedule, log: &Logger) -> Option<Duration> {
-    match schedule.after(&after).next() {
-        Some(next_datetime) => {
-            let delay_to_next = (next_datetime - after)
-                .to_std()
-                .expect("time to next schedule can always fit in std duration");
+fn schedule_next_delay(schedule: &Schedule, after: DateTime<Utc>) -> Option<(DateTime<Utc>, Duration)> {
+    schedule.after(&after).next().map(|next_datetime| {
+        let delay_to_next = (next_datetime - after)
+            .to_std()
+            .expect("time to next schedule can always fit in std duration");
+        (next_datetime, delay_to_next)
+    })
+}
 
-            let display_delay = Duration::from_secs(delay_to_next.as_secs());
+pub struct ScheduledMessage {}
 
-            debug!(
-                log,
-                "next {} scheduled at {} (in {})",
-                what,
-                next_datetime,
-                humantime::Duration::from(display_delay)
-            );
-            Some(delay_to_next)
-        }
-        None => {
-            debug!(log, "no next {} in schedule", what);
-            None
-        }
+impl ScheduledMessage {
+    pub fn new<M: Message<Result = ()> + Clone, A: Handler<M>, S: Into<String>>(
+        schedule: Schedule, what: S, message: M, log: &Logger, ctx: &mut Context<A>,
+    ) -> Self {
+        let sender = ctx.address().sender();
+        let what = what.into();
+        let log = log.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Some((next_datetime, interval)) = schedule_next_delay(&schedule, Utc::now()) {
+                    let display_delay = Duration::from_secs(interval.as_secs());
+                    debug!(
+                        log,
+                        "next {} scheduled at {} (in {})",
+                        what,
+                        next_datetime,
+                        humantime::Duration::from(display_delay)
+                    );
+                    tokio::time::delay_for(interval).await;
+                    if sender.send(message.clone()).is_err() {
+                        break;
+                    }
+                } else {
+                    debug!(log, "no next {} in schedule", what);
+                }
+            }
+        });
+        Self {}
     }
 }
 
-pub fn schedule_next_message<A: BcActorCtrl + BcHandler<M>, M: Message<Result = ()>>(
-    schedule: Option<&Schedule>, what: &str, message: M, log: &Logger, ctx: &mut Context<BcActor<A>>,
-) {
-    if let Some(schedule) = schedule {
-        if let Some(delay) = schedule_next_delay(Utc::now(), what, schedule, log) {
-            ctx.send_later(message, delay);
-        }
-    } else {
-        panic!("schedule_next_message called when no schedule was configured")
-    }
-}
+// pub trait ActorContextExt<A> {
+//     fn send_scheduled<T>(&self, msg: T, schedule: Schedule)
+//     where
+//         A: Handler<T>,
+//         T: Message<Result = ()> + Clone + Sync;
+// }
+
+// impl<A> ActorContextExt<A> for Context<A> {
+//     fn send_scheduled<T>(&self, msg: T, schedule: Schedule)
+//     where
+//         A: Handler<T>,
+//         T: Message<Result = ()> + Clone + Sync,
+//     {
+//         let addr = self.address();
+//         tokio::spawn(async move {
+//             loop {
+//                 tokio::time::delay_for(interval).await;
+//                 if addr.send(msg.clone()).is_err() {
+//                     break;
+//                 }
+//             }
+//         });
+//     }
+// }
 
 impl<T> From<TerminalState> for Result<T> {
     fn from(ts: TerminalState) -> Self {

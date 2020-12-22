@@ -1,11 +1,13 @@
 use super::{container::ContainerActor, dataset::DatasetActor, observation::start_observation};
-use crate::xactorext::{GetActorStatusMessage, GetChildActorMessage};
 use crate::{
-    actorbase::{schedule_next_message, unhandled_error},
+    actorbase::unhandled_error,
     xactorext::{BcActor, BcActorCtrl, BcHandler},
 };
+use crate::{
+    actorbase::ScheduledMessage,
+    xactorext::{GetActorStatusMessage, GetChildActorMessage},
+};
 use anyhow::{Context as _, Result};
-use cron::Schedule;
 use futures_util::stream::FuturesUnordered;
 use futures_util::stream::StreamExt;
 use libblkcapt::{
@@ -21,7 +23,7 @@ use xactor::{message, Actor, Addr, Context};
 
 pub struct PoolActor {
     pool: PoolState,
-    scrub_schedule: Option<Schedule>,
+    scrub_schedule: Option<ScheduledMessage>,
     datasets: HashMap<Uuid, Addr<BcActor<DatasetActor>>>,
     containers: HashMap<Uuid, Addr<BcActor<ContainerActor>>>,
     log: Logger,
@@ -45,6 +47,7 @@ impl PoolState {
 }
 
 #[message()]
+#[derive(Clone)]
 struct ScrubMessage;
 
 impl PoolActor {
@@ -59,10 +62,6 @@ impl PoolActor {
             },
             log,
         )
-    }
-
-    fn schedule_next_scrub(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
-        schedule_next_message(self.scrub_schedule.as_ref(), "scrub", ScrubMessage, log, ctx);
     }
 }
 
@@ -135,13 +134,10 @@ impl BcActorCtrl for PoolActor {
             .collect();
 
         if pool.model().scrubbing_state() == FeatureState::Enabled {
-            self.scrub_schedule = pool
-                .model()
-                .scrub_schedule
-                .as_ref()
-                .map_or(Ok(None), |s| s.try_into().map(Some))?;
-
-            self.schedule_next_scrub(log, ctx);
+            self.scrub_schedule = pool.model().scrub_schedule.as_ref().map_or(Ok(None), |s| {
+                s.try_into()
+                    .map(|schedule| Some(ScheduledMessage::new(schedule, "scrub", ScrubMessage, log, ctx)))
+            })?;
         }
 
         self.pool = PoolState::Started(pool, State::Idle);
@@ -196,8 +192,6 @@ impl BcHandler<ScrubMessage> for PoolActor {
                 PoolState::Faulted
             }
         };
-
-        self.schedule_next_scrub(log, ctx);
     }
 }
 

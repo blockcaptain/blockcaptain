@@ -4,7 +4,7 @@ use super::{
 };
 use crate::actorbase::log_result;
 use crate::{
-    actorbase::{schedule_next_message, unhandled_result},
+    actorbase::unhandled_result,
     snapshots::{ContainerSnapshotsResponse, GetContainerSnapshotsMessage, PruneMessage},
     tasks::WorkerCompleteMessage,
     tasks::WorkerTask,
@@ -13,7 +13,6 @@ use crate::{
 use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
 use container::BackupReadyMessage;
 pub use container::{GetBackupMessage, ResticContainerActor};
-use cron::Schedule;
 use derive_more::From;
 use libblkcapt::model::entities::FeatureState;
 use libblkcapt::{
@@ -41,7 +40,10 @@ mod container {
     use slog::info;
     use xactor::{Actor, WeakAddr};
 
-    use crate::{actors::observation::start_observation, snapshots::clear_deleted, xactorext::BoxBcAddr};
+    use crate::{
+        actorbase::ScheduledMessage, actors::observation::start_observation, snapshots::clear_deleted,
+        xactorext::BoxBcAddr,
+    };
 
     use super::*;
 
@@ -49,7 +51,7 @@ mod container {
         container_id: Uuid,
         repository: RepositoryState,
         snapshots: HashMap<Uuid, Vec<ResticContainerSnapshot>>,
-        prune_schedule: Option<Schedule>,
+        prune_schedule: Option<ScheduledMessage>,
         state: State,
     }
 
@@ -130,10 +132,6 @@ mod container {
                 },
                 &log.new(o!("container_id" => id.to_string())),
             )
-        }
-
-        fn schedule_next_prune(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
-            schedule_next_message(self.prune_schedule.as_ref(), "prune", PruneMessage(), log, ctx);
         }
 
         async fn process_waiting(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
@@ -270,9 +268,10 @@ mod container {
                     .snapshot_retention
                     .as_ref()
                     .map(|r| &r.evaluation_schedule)
-                    .map_or(Ok(None), |s| s.try_into().map(Some))?;
-
-                self.schedule_next_prune(log, ctx);
+                    .map_or(Ok(None), |s| {
+                        s.try_into()
+                            .map(|schedule| Some(ScheduledMessage::new(schedule, "prune", PruneMessage, log, ctx)))
+                    })?;
             }
 
             Ok(())

@@ -81,7 +81,7 @@ pub fn find_parent<'a>(
 
 #[message()]
 #[derive(Clone)]
-pub struct PruneMessage();
+pub struct PruneMessage;
 
 pub fn log_evaluation<T: Snapshot>(evaluation: &RetentionEvaluation<T>, log: &Logger) {
     for snapshot in evaluation.keep_interval_buckets.iter().flat_map(|b| b.snapshots.iter()) {

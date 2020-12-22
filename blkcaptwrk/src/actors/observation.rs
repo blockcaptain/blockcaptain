@@ -1,9 +1,8 @@
 use crate::{
-    actorbase::{schedule_next_message, unhandled_result},
+    actorbase::{unhandled_result, ScheduledMessage},
     xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::Result;
-use cron::Schedule;
 use libblkcapt::{
     core::ObservableEventStage,
     core::ObservationEmitter,
@@ -123,7 +122,7 @@ pub struct HealthchecksActor {
     router: ObservationRouter,
     emitter: ObservationEmitter,
     heartbeat_config: Option<HealthchecksHeartbeat>,
-    heartbeat_schedule: Option<Schedule>,
+    heartbeat_schedule: Option<ScheduledMessage>,
 }
 
 impl HealthchecksActor {
@@ -141,16 +140,6 @@ impl HealthchecksActor {
             &log.new(o!("observer_id" => observer_id)),
         )
     }
-
-    fn schedule_next_heartbeat(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
-        schedule_next_message(
-            self.heartbeat_schedule.as_ref(),
-            "heartbeat",
-            HeartbeatMessage,
-            log,
-            ctx,
-        );
-    }
 }
 
 #[async_trait::async_trait]
@@ -159,8 +148,11 @@ impl BcActorCtrl for HealthchecksActor {
         ctx.subscribe::<ObservableEventMessage>().await?;
 
         if let Some(config) = &self.heartbeat_config {
-            self.heartbeat_schedule = Some(ScheduleModel::try_from(config.frequency)?.try_into()?);
-            self.schedule_next_heartbeat(log, ctx);
+            self.heartbeat_schedule = Some(
+                ScheduleModel::try_from(config.frequency)?
+                    .try_into()
+                    .map(|schedule| ScheduledMessage::new(schedule, "heartbeat", HeartbeatMessage, log, ctx))?,
+            );
         }
 
         Ok(())
@@ -188,7 +180,7 @@ impl BcHandler<ObservableEventMessage> for HealthchecksActor {
 
 #[async_trait::async_trait]
 impl BcHandler<HeartbeatMessage> for HealthchecksActor {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: HeartbeatMessage) {
+    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: HeartbeatMessage) {
         let result = self
             .emitter
             .emit(
@@ -201,7 +193,6 @@ impl BcHandler<HeartbeatMessage> for HealthchecksActor {
             .await;
 
         unhandled_result(log, result);
-        self.schedule_next_heartbeat(log, ctx);
     }
 }
 

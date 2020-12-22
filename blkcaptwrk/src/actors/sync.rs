@@ -11,7 +11,7 @@ use super::{
     transfer::TransferComplete,
 };
 use crate::{
-    actorbase::{schedule_next_message, unhandled_result},
+    actorbase::{unhandled_result, ScheduledMessage},
     snapshots::{find_parent, find_ready, FindMode, GetContainerSnapshotsMessage},
     xactorext::BoxBcAddr,
     xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState},
@@ -38,7 +38,7 @@ pub struct SyncActor {
     state_mode: SyncModeState,
     state_active_send: Option<ActiveSend>,
     last_sent: Option<DateTime<Utc>>,
-    sync_cycle_schedule: Option<Schedule>,
+    sync_cycle_schedule: Option<ScheduledMessage>,
 }
 
 struct ActiveSend {
@@ -151,18 +151,6 @@ impl SyncActor {
         Ok(())
     }
 
-    fn schedule_next_cycle(&self, log: &Logger, ctx: &mut Context<BcActor<Self>>) {
-        if self.sync_cycle_schedule.is_some() {
-            schedule_next_message(
-                self.sync_cycle_schedule.as_ref(),
-                "sync_cycle",
-                StartSnapshotSyncCycleMessage,
-                log,
-                ctx,
-            );
-        }
-    }
-
     async fn get_container_snapshots(&self) -> Result<Vec<SnapshotHandle>> {
         match &self.container {
             SyncToContainer::Btrfs(c) => self._get_container_snapshots(c).await,
@@ -259,8 +247,17 @@ impl BcActorCtrl for SyncActor {
             ctx.subscribe::<ObservableEventMessage>().await?;
         }
 
-        self.sync_cycle_schedule = get_schedule(&self.model.sync_mode).map_or(Ok(None), |result| result.map(Some))?;
-        self.schedule_next_cycle(log, ctx);
+        self.sync_cycle_schedule = get_schedule(&self.model.sync_mode).map_or(Ok(None), |s| {
+            s.map(|schedule| {
+                Some(ScheduledMessage::new(
+                    schedule,
+                    "sync_cycle",
+                    StartSnapshotSyncCycleMessage,
+                    log,
+                    ctx,
+                ))
+            })
+        })?;
 
         if matches!(self.model.sync_mode, SnapshotSyncMode::IntervalImmediate(..)) {
             self.last_sent = self.get_container_snapshots().await?.last().map(|s| s.datetime);

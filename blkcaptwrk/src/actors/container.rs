@@ -34,6 +34,7 @@ pub struct ContainerActor {
     snapshots: HashMap<Uuid, Vec<BtrfsContainerSnapshot>>,
     prune_schedule: Option<ScheduledMessage>,
     active_receivers: HashMap<u64, ActiveReceiver>,
+    faulted: bool,
 }
 
 pub struct ActiveReceiver {
@@ -87,6 +88,7 @@ impl ContainerActor {
                         container,
                         prune_schedule: None,
                         active_receivers: Default::default(),
+                        faulted: false,
                     },
                     &log.new(o!("container_id" => id.to_string())),
                 ))
@@ -121,6 +123,10 @@ impl BcActorCtrl for ContainerActor {
     }
 
     async fn stopped(&mut self, _ctx: BcContext<'_, Self>) -> TerminalState {
+        if self.faulted {
+            return TerminalState::Faulted;
+        }
+
         let mut active_actors = self
             .active_receivers
             .drain()
@@ -142,7 +148,10 @@ impl BcHandler<GetContainerSnapshotsMessage> for ContainerActor {
         &mut self, _ctx: BcContext<'_, Self>, msg: GetContainerSnapshotsMessage,
     ) -> ContainerSnapshotsResponse {
         ContainerSnapshotsResponse {
-            snapshots: self.snapshots[&msg.source_dataset_id]
+            snapshots: self
+                .snapshots
+                .entry(msg.source_dataset_id)
+                .or_default()
                 .iter()
                 .map(|s| s.into())
                 .collect(),
@@ -195,14 +204,21 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
 impl BcHandler<LocalReceiverStoppedParentMessage> for ContainerActor {
     async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: LocalReceiverStoppedParentMessage) {
         let LocalReceiverStoppedParentMessage(actor_id, new_snapshot) = msg;
-        let active_receiver = self.active_receivers.remove(&actor_id).expect("FIXME");
+        let active_receiver = match self.active_receivers.remove(&actor_id) {
+            Some(active) => active,
+            None => {
+                self.faulted = true;
+                ctx.stop(None);
+                return;
+            }
+        };
 
         let new_snapshot = new_snapshot.unwrap();
         debug!(ctx.log(), "container received snapshot {}", new_snapshot.datetime(); "received_uuid" => %new_snapshot.received_uuid());
 
         self.snapshots
-            .get_mut(&active_receiver.dataset_id)
-            .expect("FIXME")
+            .entry(active_receiver.dataset_id)
+            .or_default()
             .push(new_snapshot);
     }
 }

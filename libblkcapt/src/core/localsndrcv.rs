@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
+use anyhow::{anyhow, Context as AnyhowContext, Result};
 use std::{fs, process::Stdio, sync::Arc};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader},
@@ -6,6 +6,8 @@ use tokio::{
     task::JoinHandle,
 };
 use uuid::Uuid;
+
+use crate::sys::process::exit_status_as_result;
 
 use super::{BtrfsContainer, BtrfsContainerSnapshot};
 
@@ -41,8 +43,7 @@ impl StartedSnapshotSender {
     }
 
     pub async fn wait(self) -> Result<()> {
-        self.process.await.unwrap();
-        Ok(()) // FIXME
+        exit_status_as_result(self.process.await?)
     }
 }
 
@@ -119,10 +120,7 @@ impl StartedSnapshotReceiver {
     }
 
     pub async fn wait(self) -> Result<BtrfsContainerSnapshot> {
-        let exit_code = self.process.await.unwrap();
-        if !exit_code.success() {
-            bail!("FIXME failed yo, {}.", exit_code);
-        }
+        exit_status_as_result(self.process.await?)?;
         let stdout_result = self.name_reader_stdout.await.unwrap().unwrap();
         let stderr_result = self.name_reader_stderr.await.unwrap().unwrap();
         let incoming_snapshot_name = stdout_result
@@ -173,7 +171,7 @@ pub struct StartedPoolScrub {
 
 impl StartedPoolScrub {
     pub async fn wait(self) -> Result<(), ScrubError> {
-        let exit_status = self.process.await.unwrap();
+        let exit_status = self.process.await.map_err(|_| ScrubError::Unknown)?;
         match exit_status.code() {
             Some(code) => match code {
                 0 => Ok(()),

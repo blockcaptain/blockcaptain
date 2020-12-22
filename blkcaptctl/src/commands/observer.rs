@@ -146,7 +146,8 @@ pub fn update_observer(options: ObserverUpdateOptions) -> Result<()> {
     let observations = build_observation_models(&entities, &options.add)?;
 
     let observer = observer_search(&entities, &options.observer).map(|o| o.id())?;
-    let observer = entity_by_id_mut(entities.observers.as_mut_slice(), observer).context("FIXME")?;
+    let observer =
+        entity_by_id_mut(entities.observers.as_mut_slice(), observer).expect("entity exists, found in search");
 
     let mut removes = options.remove.clone();
     removes.sort_unstable();

@@ -1,7 +1,10 @@
 use super::{parse_snapshot_label, Snapshot, SnapshotHandle};
 use crate::{
     model::{entities::ResticContainerEntity, Entity},
-    sys::fs::{bind_mount, unmount},
+    sys::{
+        fs::{bind_mount, unmount},
+        process::exit_status_as_result,
+    },
 };
 use anyhow::{anyhow, bail, Context, Error, Result};
 use chrono::{DateTime, Utc};
@@ -285,11 +288,10 @@ pub struct StartedResticBackup {
 
 impl StartedResticBackup {
     pub async fn wait(self) -> Result<ResticContainerSnapshot> {
-        let exit_code = self.process.await.unwrap();
+        let exit_status = self.process.await?;
         let _ = unmount(&self.source.bind_path);
-        if !exit_code.success() {
-            bail!("FIXME failed yo, {}.", exit_code);
-        }
+        exit_status_as_result(exit_status)?;
+
         let message_result = self.message_reader.await.unwrap().unwrap();
         let new_snapshot_id = message_result.context("failed to find new snapshot id")?;
 
@@ -326,8 +328,7 @@ pub struct StartedResticPrune {
 
 impl StartedResticPrune {
     pub async fn wait(self) -> Result<()> {
-        self.process.await.unwrap();
-        Ok(()) // FIXME
+        exit_status_as_result(self.process.await?)
     }
 }
 
@@ -356,8 +357,7 @@ pub struct StartedResticForget {
 
 impl StartedResticForget {
     pub async fn wait(self) -> Result<()> {
-        self.process.await.unwrap();
-        Ok(()) // FIXME
+        exit_status_as_result(self.process.await?)
     }
 }
 

@@ -285,7 +285,9 @@ impl BcHandler<ObservableEventMessage> for SyncActor {
             && msg.event == ObservableEvent::DatasetSnapshot
             && msg.stage == ObservableEventStage::Succeeded
         {
-            ctx.address().send(StartSnapshotSyncCycleMessage).expect("FIXME");
+            ctx.address()
+                .send(StartSnapshotSyncCycleMessage)
+                .expect("send to self is infalliable");
         }
     }
 }

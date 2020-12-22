@@ -8,6 +8,7 @@ use heck::SnakeCase;
 use paste::paste;
 use slog::{error, o, trace, Logger};
 use std::{future::Future, marker::PhantomData};
+use strum_macros::Display;
 use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler, Message, WeakAddr};
 
@@ -68,7 +69,8 @@ pub trait BcActorCtrl: BcHandler<GetActorStatusMessage> + Sized + Send + 'static
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Display)]
+#[strum(serialize_all = "snake_case")]
 pub enum TerminalState {
     Succeeded,
     Failed,
@@ -176,7 +178,7 @@ where
         trace!(self.log, "actor stopping");
         let terminal_state = self.inner.stopped(&self.log, ctx).await;
         self.intel_notify_stop(ActorStopMessage::new(self.actor_id, terminal_state));
-        trace!(self.log, "actor stopped");
+        trace!(self.log, "actor stopped"; "terminal_state" => %terminal_state);
     }
 }
 

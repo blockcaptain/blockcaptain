@@ -16,7 +16,7 @@ use crate::{
     xactorext::BoxBcAddr,
     xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState},
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use cron::Schedule;
 use libblkcapt::{
@@ -131,6 +131,16 @@ impl SyncActor {
         };
 
         let to_send = if let Some(handle) = to_send {
+            if let Some(last_datetime) = self.last_sent {
+                if handle.datetime == last_datetime {
+                    let result = Err(anyhow!(
+                        "sanity check failed: snapshot {} was successfully sent, but was selected to be sent again",
+                        last_datetime
+                    ));
+                    observation.result(&result);
+                    return result;
+                }
+            }
             handle
         } else {
             debug!(ctx.log(), "no snapshots ready to send");

@@ -86,7 +86,7 @@ impl WorkerTask {
     }
 
     pub fn abort(&self) {
-        //FIXME abort available in tokio 0.3
+        // TODO_ON_TOKIO03
         //let _ = self.handle.abort()
     }
 }

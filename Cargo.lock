@@ -2575,8 +2575,8 @@ dependencies = [
 
 [[package]]
 name = "xactor"
-version = "0.7.8"
-source = "git+https://github.com/wpbrown/xactor?branch=callerfix#f0994c9c8f2898a376ab4d99990b95c9da9e464c"
+version = "0.7.9"
+source = "git+https://github.com/wpbrown/xactor?branch=master#71b3990178fa8b7aff7dc75f05dedda8895517c5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2591,7 +2591,7 @@ dependencies = [
 [[package]]
 name = "xactor-derive"
 version = "0.7.1"
-source = "git+https://github.com/wpbrown/xactor?branch=callerfix#f0994c9c8f2898a376ab4d99990b95c9da9e464c"
+source = "git+https://github.com/wpbrown/xactor?branch=master#71b3990178fa8b7aff7dc75f05dedda8895517c5"
 dependencies = [
  "proc-macro2",
  "quote",

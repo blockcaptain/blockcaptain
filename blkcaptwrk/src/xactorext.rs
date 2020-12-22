@@ -7,7 +7,7 @@ use futures_util::future::join_all;
 use heck::SnakeCase;
 use paste::paste;
 use slog::{error, o, trace, Logger};
-use std::{future::Future, marker::PhantomData};
+use std::{future::Future, marker::PhantomData, time::Duration};
 use strum_macros::Display;
 use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler, Message, WeakAddr};
@@ -54,17 +54,17 @@ impl<T: Actor> xactor::Message for GetChildActorMessage<T> {
 
 #[async_trait::async_trait]
 pub trait BcHandler<M: Message>: Sized {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: M) -> M::Result;
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: M) -> M::Result;
 }
 
 #[async_trait::async_trait]
 #[allow(unused_variables)]
 pub trait BcActorCtrl: BcHandler<GetActorStatusMessage> + Sized + Send + 'static {
-    async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
         Ok(())
     }
 
-    async fn stopped(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+    async fn stopped(&mut self, ctx: BcContext<'_, Self>) -> TerminalState {
         TerminalState::Succeeded
     }
 }
@@ -151,7 +151,15 @@ where
     async fn handle(&mut self, ctx: &mut Context<Self>, msg: M) -> M::Result {
         let log = self.log.new(o!("message" => snek_type_name::<M>()));
         slog::trace!(log, "message received");
-        self.inner.handle(&log, ctx, msg).await
+        self.inner
+            .handle(
+                BcContext {
+                    log: &self.log,
+                    native: ctx,
+                },
+                msg,
+            )
+            .await
     }
 }
 
@@ -163,7 +171,13 @@ where
     async fn started(&mut self, ctx: &mut Context<Self>) -> Result<()> {
         self.log = self.log.new(o!("actor_id" => ctx.actor_id()));
         trace!(self.log, "actor starting");
-        let result = self.inner.started(&self.log, ctx).await;
+        let result = self
+            .inner
+            .started(BcContext {
+                log: &self.log,
+                native: ctx,
+            })
+            .await;
         if let Err(e) = &result {
             error!(self.log, "actor start failed"; "error" => %e);
         } else {
@@ -176,7 +190,13 @@ where
 
     async fn stopped(&mut self, ctx: &mut Context<Self>) {
         trace!(self.log, "actor stopping");
-        let terminal_state = self.inner.stopped(&self.log, ctx).await;
+        let terminal_state = self
+            .inner
+            .stopped(BcContext {
+                log: &self.log,
+                native: ctx,
+            })
+            .await;
         self.intel_notify_stop(ActorStopMessage::new(self.actor_id, terminal_state));
         trace!(self.log, "actor stopped"; "terminal_state" => %terminal_state);
     }
@@ -350,5 +370,51 @@ impl AnyAddr for BoxBcAddr {
 
     async fn wait_for_stop(self) {
         BcAddr::wait_for_stop(self).await
+    }
+}
+
+pub struct BcContext<'a, A> {
+    native: &'a mut Context<BcActor<A>>,
+    log: &'a Logger,
+}
+
+impl<'a, A> BcContext<'a, A>
+where
+    A: BcActorCtrl,
+{
+    pub fn address(&self) -> Addr<BcActor<A>> {
+        self.native.address()
+    }
+
+    pub fn actor_id(&self) -> u64 {
+        self.native.actor_id()
+    }
+
+    pub fn stop(&self, err: Option<anyhow::Error>) {
+        self.native.stop(err)
+    }
+
+    pub fn send_later<T>(&self, msg: T, after: Duration)
+    where
+        A: BcHandler<T>,
+        T: Message<Result = ()>,
+    {
+        self.native.send_later(msg, after)
+    }
+
+    pub async fn subscribe<T: Message<Result = ()>>(&self) -> Result<()>
+    where
+        A: BcHandler<T>,
+    {
+        self.native.subscribe::<T>().await
+    }
+
+    pub async fn unsubscribe<T: Message<Result = ()>>(&self) -> Result<()> {
+        self.native.unsubscribe::<T>().await
+    }
+
+    // Extensions
+    pub fn log(&self) -> &Logger {
+        self.log
     }
 }

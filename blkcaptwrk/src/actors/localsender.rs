@@ -1,7 +1,7 @@
 use crate::{
     actorbase::{state_result, state_result_from_result, unhandled_result},
     tasks::{WorkerCompleteMessage, WorkerTask},
-    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState},
+    xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::Result;
 use libblkcapt::core::localsndrcv::SnapshotSender;
@@ -9,7 +9,7 @@ use slog::Logger;
 use std::mem;
 use strum_macros::Display;
 use tokio::io::AsyncRead;
-use xactor::{message, Context, Sender};
+use xactor::{message, Sender};
 
 #[message()]
 pub struct LocalSenderFinishedMessage(pub Result<()>);
@@ -60,11 +60,11 @@ impl LocalSenderActor {
 
 #[async_trait::async_trait]
 impl BcActorCtrl for LocalSenderActor {
-    async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
         if let State::Created(sender) = mem::replace(&mut self.state, State::Faulted) {
             let mut sender = sender.start()?;
             let reader = sender.reader();
-            let task = WorkerTask::run(ctx.address(), log, |_| async move { sender.wait().await.into() });
+            let task = WorkerTask::run(ctx.address(), ctx.log(), |_| async move { sender.wait().await.into() });
             self.state = State::Running(task, Some(Box::new(reader)));
         } else {
             panic!("start called in invalid state");
@@ -72,7 +72,7 @@ impl BcActorCtrl for LocalSenderActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+    async fn stopped(&mut self, ctx: BcContext<'_, Self>) -> TerminalState {
         let (terminal_state, result) = match self.state.take() {
             State::Created(_) => state_result(TerminalState::Cancelled),
             State::Running(worker, _) => {
@@ -86,8 +86,8 @@ impl BcActorCtrl for LocalSenderActor {
         let parent_notify_result = self.parent.send(LocalSenderParentFinishedMessage(ctx.actor_id()));
         let requestor_notify_result = self.requestor.send(LocalSenderFinishedMessage(result));
         if !matches!(terminal_state, TerminalState::Cancelled) {
-            unhandled_result(log, parent_notify_result);
-            unhandled_result(log, requestor_notify_result);
+            unhandled_result(ctx.log(), parent_notify_result);
+            unhandled_result(ctx.log(), requestor_notify_result);
         }
 
         terminal_state
@@ -96,9 +96,7 @@ impl BcActorCtrl for LocalSenderActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetReaderMessage> for LocalSenderActor {
-    async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetReaderMessage,
-    ) -> Box<dyn AsyncRead + Send + Unpin> {
+    async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetReaderMessage) -> Box<dyn AsyncRead + Send + Unpin> {
         if let State::Running(worker, Some(reader)) = mem::replace(&mut self.state, State::Faulted) {
             self.state = State::Running(worker, None);
             reader
@@ -110,7 +108,7 @@ impl BcHandler<GetReaderMessage> for LocalSenderActor {
 
 #[async_trait::async_trait]
 impl BcHandler<SendWorkerCompleteMessage> for LocalSenderActor {
-    async fn handle(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: SendWorkerCompleteMessage) {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: SendWorkerCompleteMessage) {
         self.state = State::Finished(msg.0);
         ctx.stop(None);
     }
@@ -118,9 +116,7 @@ impl BcHandler<SendWorkerCompleteMessage> for LocalSenderActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for LocalSenderActor {
-    async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
-    ) -> String {
+    async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
         self.state.to_string()
     }
 }

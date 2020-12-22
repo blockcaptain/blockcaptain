@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use crate::xactorext::TerminalState;
+use crate::xactorext::{BcActorCtrl, BcContext, BcHandler, TerminalState};
 use anyhow::{anyhow, Error, Result};
 use chrono::{DateTime, Utc};
 use cron::Schedule;
 use slog::{debug, error, info, Logger};
-use xactor::{Context, Handler, Message};
+use xactor::Message;
 
 pub fn unhandled_error(log: &Logger, error: Error) {
     log_error(log, &error);
@@ -48,12 +48,12 @@ fn schedule_next_delay(schedule: &Schedule, after: DateTime<Utc>) -> Option<(Dat
 pub struct ScheduledMessage {}
 
 impl ScheduledMessage {
-    pub fn new<M: Message<Result = ()> + Clone, A: Handler<M>, S: Into<String>>(
-        schedule: Schedule, what: S, message: M, log: &Logger, ctx: &mut Context<A>,
+    pub fn new<M: Message<Result = ()> + Clone, A: BcHandler<M> + BcActorCtrl, S: Into<String>>(
+        schedule: Schedule, what: S, message: M, ctx: &BcContext<'_, A>,
     ) -> Self {
         let sender = ctx.address().sender();
         let what = what.into();
-        let log = log.clone();
+        let log = ctx.log().clone();
         tokio::spawn(async move {
             loop {
                 if let Some((next_datetime, interval)) = schedule_next_delay(&schedule, Utc::now()) {

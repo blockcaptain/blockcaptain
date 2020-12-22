@@ -1,12 +1,10 @@
+use crate::xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState};
+use anyhow::Result;
 use futures_util::{FutureExt, TryFutureExt};
 use slog::Logger;
 use std::path::PathBuf;
 use tokio::{net::UnixListener, sync::oneshot, task::JoinHandle};
 use warp::{Filter, Rejection};
-use xactor::Context;
-
-use crate::xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState};
-use anyhow::Result;
 
 use super::intel::{GetStateMessage, IntelActor};
 
@@ -22,7 +20,7 @@ impl ServerActor {
 
 #[async_trait::async_trait]
 impl BcActorCtrl for ServerActor {
-    async fn started(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, _ctx: BcContext<'_, Self>) -> Result<()> {
         let (sender, receiver) = oneshot::channel::<()>();
         let signal = receiver.map(|_| ());
 
@@ -53,7 +51,7 @@ impl BcActorCtrl for ServerActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+    async fn stopped(&mut self, _ctx: BcContext<'_, Self>) -> TerminalState {
         if let Some((handle, sender)) = self.server.take() {
             if sender.send(()).is_ok() {
                 let _ = handle.await;
@@ -66,9 +64,7 @@ impl BcActorCtrl for ServerActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for ServerActor {
-    async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
-    ) -> String {
-        String::from("ok")
+    async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
+        String::from("listening")
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     actorbase::{unhandled_result, ScheduledMessage},
-    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState},
+    xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::Result;
 use libblkcapt::{
@@ -14,7 +14,7 @@ use libblkcapt::{
 use slog::{o, Logger};
 use std::{borrow::Borrow, convert::TryFrom, convert::TryInto, fmt::Debug, future::Future};
 use uuid::Uuid;
-use xactor::{message, Addr, Broker, Context, Service};
+use xactor::{message, Addr, Broker, Service};
 
 #[message()]
 #[derive(Clone, Debug)]
@@ -144,21 +144,21 @@ impl HealthchecksActor {
 
 #[async_trait::async_trait]
 impl BcActorCtrl for HealthchecksActor {
-    async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
         ctx.subscribe::<ObservableEventMessage>().await?;
 
         if let Some(config) = &self.heartbeat_config {
             self.heartbeat_schedule = Some(
                 ScheduleModel::try_from(config.frequency)?
                     .try_into()
-                    .map(|schedule| ScheduledMessage::new(schedule, "heartbeat", HeartbeatMessage, log, ctx))?,
+                    .map(|schedule| ScheduledMessage::new(schedule, "heartbeat", HeartbeatMessage, &ctx))?,
             );
         }
 
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+    async fn stopped(&mut self, ctx: BcContext<'_, Self>) -> TerminalState {
         ctx.unsubscribe::<ObservableEventMessage>()
             .await
             .expect("can always unsubscribe");
@@ -169,18 +169,18 @@ impl BcActorCtrl for HealthchecksActor {
 
 #[async_trait::async_trait]
 impl BcHandler<ObservableEventMessage> for HealthchecksActor {
-    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: ObservableEventMessage) {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: ObservableEventMessage) {
         let observers = self.router.route(msg.source, msg.event);
         for observer in observers {
             let result = self.emitter.emit(observer.healthcheck_id, msg.stage.clone()).await;
-            unhandled_result(log, result);
+            unhandled_result(ctx.log(), result);
         }
     }
 }
 
 #[async_trait::async_trait]
 impl BcHandler<HeartbeatMessage> for HealthchecksActor {
-    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: HeartbeatMessage) {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, _msg: HeartbeatMessage) {
         let result = self
             .emitter
             .emit(
@@ -192,15 +192,13 @@ impl BcHandler<HeartbeatMessage> for HealthchecksActor {
             )
             .await;
 
-        unhandled_result(log, result);
+        unhandled_result(ctx.log(), result);
     }
 }
 
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for HealthchecksActor {
-    async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
-    ) -> String {
+    async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
         String::from("ok")
     }
 }

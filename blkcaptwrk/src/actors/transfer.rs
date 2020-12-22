@@ -11,7 +11,7 @@ use super::{
 use crate::{
     actorbase::unhandled_result,
     tasks::{WorkerCompleteMessage, WorkerTask},
-    xactorext::{BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState},
+    xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::Result;
 use bytes::BytesMut;
@@ -19,7 +19,7 @@ use derive_more::From;
 use slog::{debug, error, warn, Logger};
 use std::mem;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use xactor::{message, Addr, Context, Sender};
+use xactor::{message, Addr, Sender};
 
 pub struct TransferActor {
     requestor: Sender<TransferComplete>,
@@ -87,11 +87,11 @@ impl TransferActor {
         Ok(())
     }
 
-    fn maybe_start_transfer(incoming: State, ctx: &mut Context<BcActor<Self>>, log: &Logger) -> State {
+    fn maybe_start_transfer(incoming: State, ctx: &BcContext<'_, Self>) -> State {
         if let State::WaitingForActors(Some(sender), Some(receiver), observation) = incoming {
             let mv_sender = sender.clone();
             let mv_receiver = receiver.clone();
-            let task = WorkerTask::run(ctx.address(), log, |_| async move {
+            let task = WorkerTask::run(ctx.address(), ctx.log(), |_| async move {
                 Self::run_transfer(mv_sender, mv_receiver).await.into()
             });
             State::Transferring(Default::default(), Actors(task, sender, receiver), observation)
@@ -100,15 +100,15 @@ impl TransferActor {
         }
     }
 
-    fn input_ready(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, input: InputReady) {
+    fn input_ready(&mut self, ctx: &BcContext<'_, Self>, input: InputReady) {
         self.state = match (self.state.take(), input) {
             (State::WaitingForActors(maybe_sender, None, observation), InputReady::Receiver(Ok(receiver))) => {
                 let updated_state = State::WaitingForActors(maybe_sender, Some(receiver), observation);
-                Self::maybe_start_transfer(updated_state, ctx, log)
+                Self::maybe_start_transfer(updated_state, ctx)
             }
             (State::WaitingForActors(None, maybe_receiver, observation), InputReady::Sender(Ok(sender))) => {
                 let updated_state = State::WaitingForActors(Some(sender), maybe_receiver, observation);
-                Self::maybe_start_transfer(updated_state, ctx, log)
+                Self::maybe_start_transfer(updated_state, ctx)
             }
             (State::WaitingForActors(_, None, observation), InputReady::Receiver(Err(e)))
             | (State::WaitingForActors(None, _, observation), InputReady::Sender(Err(e))) => {
@@ -123,25 +123,25 @@ impl TransferActor {
         };
     }
 
-    fn actor_ready(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, result_ready: ResultReady) {
+    fn actor_ready(&mut self, ctx: &BcContext<'_, Self>, result_ready: ResultReady) {
         self.state = match (self.state.take(), result_ready) {
             (State::Transferring(mut completions, actors, observation), ResultReady::Sender(result))
                 if completions.sender.is_none() =>
             {
                 completions.sender = Some(result);
-                Self::maybe_finish_transfer(State::Transferring(completions, actors, observation), log, ctx)
+                Self::maybe_finish_transfer(State::Transferring(completions, actors, observation), ctx)
             }
             (State::Transferring(mut completions, actors, observation), ResultReady::Receiver(result))
                 if completions.receiver.is_none() =>
             {
                 completions.receiver = Some(result);
-                Self::maybe_finish_transfer(State::Transferring(completions, actors, observation), log, ctx)
+                Self::maybe_finish_transfer(State::Transferring(completions, actors, observation), ctx)
             }
             (State::Transferring(mut completions, actors, observation), ResultReady::Transfer(result))
                 if completions.transfer.is_none() =>
             {
                 completions.transfer = Some(result);
-                Self::maybe_finish_transfer(State::Transferring(completions, actors, observation), log, ctx)
+                Self::maybe_finish_transfer(State::Transferring(completions, actors, observation), ctx)
             }
             _ => {
                 ctx.stop(None);
@@ -150,7 +150,7 @@ impl TransferActor {
         };
     }
 
-    fn maybe_finish_transfer(incoming: State, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> State {
+    fn maybe_finish_transfer(incoming: State, ctx: &BcContext<'_, Self>) -> State {
         if let State::Transferring(
             ActorCompletions {
                 sender: Some(sender),
@@ -188,16 +188,16 @@ pub struct TransferComplete(pub TerminalState);
 
 #[async_trait::async_trait]
 impl BcActorCtrl for TransferActor {
-    async fn started(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, _ctx: BcContext<'_, Self>) -> Result<()> {
         Ok(())
     }
 
-    async fn stopped(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+    async fn stopped(&mut self, ctx: BcContext<'_, Self>) -> TerminalState {
         let terminal_state = match self.state.take() {
             State::Transferring(_, mut actors, observation) => {
-                warn!(log, "cancelled during transfer");
+                warn!(ctx.log(), "cancelled during transfer");
                 actors.0.abort();
-                debug!(log, "waiting for worker");
+                debug!(ctx.log(), "waiting for worker");
                 actors.0.wait().await;
                 observation.cancelled();
                 let _ = actors.1.stop(None);
@@ -205,20 +205,20 @@ impl BcActorCtrl for TransferActor {
                 TerminalState::Cancelled
             }
             State::WaitingForActors(.., observation) => {
-                warn!(log, "cancelled prior to transfer");
+                warn!(ctx.log(), "cancelled prior to transfer");
                 observation.cancelled();
                 TerminalState::Cancelled
             }
             State::Transferred(result) => result.as_ref().into(),
             State::Faulted => {
-                error!(log, "actor faulted");
+                error!(ctx.log(), "actor faulted");
                 TerminalState::Faulted
             }
         };
 
         let requestor_notify_result = self.requestor.send(TransferComplete(terminal_state));
         if !matches!(terminal_state, TerminalState::Cancelled) {
-            unhandled_result(log, requestor_notify_result);
+            unhandled_result(ctx.log(), requestor_notify_result);
         }
         terminal_state
     }
@@ -226,44 +226,42 @@ impl BcActorCtrl for TransferActor {
 
 #[async_trait::async_trait]
 impl BcHandler<TransferWorkerCompleteMessage> for TransferActor {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: TransferWorkerCompleteMessage) {
-        self.actor_ready(log, ctx, ResultReady::Transfer(msg.0));
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: TransferWorkerCompleteMessage) {
+        self.actor_ready(&ctx, ResultReady::Transfer(msg.0));
     }
 }
 
 #[async_trait::async_trait]
 impl BcHandler<SenderReadyMessage> for TransferActor {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: SenderReadyMessage) {
-        self.input_ready(log, ctx, msg.0.into());
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: SenderReadyMessage) {
+        self.input_ready(&ctx, msg.0.into());
     }
 }
 
 #[async_trait::async_trait]
 impl BcHandler<ReceiverReadyMessage> for TransferActor {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: ReceiverReadyMessage) {
-        self.input_ready(log, ctx, msg.0.into())
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: ReceiverReadyMessage) {
+        self.input_ready(&ctx, msg.0.into())
     }
 }
 
 #[async_trait::async_trait]
 impl BcHandler<LocalSenderFinishedMessage> for TransferActor {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: LocalSenderFinishedMessage) {
-        self.actor_ready(log, ctx, ResultReady::Sender(msg.0));
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: LocalSenderFinishedMessage) {
+        self.actor_ready(&ctx, ResultReady::Sender(msg.0));
     }
 }
 
 #[async_trait::async_trait]
 impl BcHandler<LocalReceiverStoppedMessage> for TransferActor {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: LocalReceiverStoppedMessage) {
-        self.actor_ready(log, ctx, ResultReady::Receiver(msg.0));
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: LocalReceiverStoppedMessage) {
+        self.actor_ready(&ctx, ResultReady::Receiver(msg.0));
     }
 }
 
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for TransferActor {
-    async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
-    ) -> String {
+    async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
         String::from("ok")
     }
 }

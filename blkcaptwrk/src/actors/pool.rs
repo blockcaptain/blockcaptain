@@ -1,7 +1,7 @@
 use super::{container::ContainerActor, dataset::DatasetActor, observation::start_observation};
 use crate::{
     actorbase::unhandled_error,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
+    xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler},
 };
 use crate::{
     actorbase::ScheduledMessage,
@@ -19,14 +19,13 @@ use scrub::{PoolScrubActor, ScrubCompleteMessage};
 use slog::{error, info, o, Logger};
 use std::{collections::HashMap, convert::TryInto, mem, sync::Arc};
 use uuid::Uuid;
-use xactor::{message, Actor, Addr, Context};
+use xactor::{message, Actor, Addr};
 
 pub struct PoolActor {
     pool: PoolState,
     scrub_schedule: Option<ScheduledMessage>,
     datasets: HashMap<Uuid, Addr<BcActor<DatasetActor>>>,
     containers: HashMap<Uuid, Addr<BcActor<ContainerActor>>>,
-    log: Logger,
 }
 
 enum PoolState {
@@ -52,22 +51,22 @@ struct ScrubMessage;
 
 impl PoolActor {
     pub fn new(model: BtrfsPoolEntity, log: &Logger) -> BcActor<Self> {
+        let id = model.id();
         BcActor::new(
             Self {
-                log: log.new(o!("actor" => "pool", "pool_id" => model.id().to_string())),
                 pool: PoolState::Pending(model),
                 scrub_schedule: None,
                 datasets: HashMap::<_, _>::default(),
                 containers: HashMap::<_, _>::default(),
             },
-            log,
+            &log.new(o!("actor" => "pool", "pool_id" => id.to_string())),
         )
     }
 }
 
 #[async_trait::async_trait]
 impl BcActorCtrl for PoolActor {
-    async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
         let pool = if let PoolState::Pending(model) = self.pool.take() {
             BtrfsPool::validate(model).map(Arc::new)?
         } else {
@@ -78,11 +77,11 @@ impl BcActorCtrl for PoolActor {
             .model()
             .datasets
             .iter()
-            .map(|m| (m.id(), DatasetActor::new(ctx.address(), &pool, m.clone(), &self.log)))
+            .map(|m| (m.id(), DatasetActor::new(ctx.address(), &pool, m.clone(), &ctx.log())))
             .filter_map(|(id, actor)| match actor {
                 Ok(dataset_actor) => Some((id, dataset_actor)),
                 Err(error) => {
-                    error!(self.log, "Failed to create dataset actor: {}", error);
+                    error!(ctx.log(), "Failed to create dataset actor: {}", error);
                     None
                 }
             })
@@ -97,7 +96,7 @@ impl BcActorCtrl for PoolActor {
             .filter_map(|sa| match sa {
                 Ok(started_actor) => Some(started_actor),
                 Err(error) => {
-                    error!(self.log, "Failed to start dataset actor: {}", error);
+                    error!(ctx.log(), "Failed to start dataset actor: {}", error);
                     None
                 }
             })
@@ -108,11 +107,11 @@ impl BcActorCtrl for PoolActor {
             .model()
             .containers
             .iter()
-            .map(|m| (m.id(), ContainerActor::new(ctx.address(), &pool, m.clone(), &self.log)))
+            .map(|m| (m.id(), ContainerActor::new(ctx.address(), &pool, m.clone(), &ctx.log())))
             .filter_map(|(id, actor)| match actor {
                 Ok(container_actor) => Some((id, container_actor)),
                 Err(error) => {
-                    error!(self.log, "Failed to create container actor: {}", error);
+                    error!(ctx.log(), "Failed to create container actor: {}", error);
                     None
                 }
             })
@@ -127,7 +126,7 @@ impl BcActorCtrl for PoolActor {
             .filter_map(|sa| match sa {
                 Ok(started_actor) => Some(started_actor),
                 Err(error) => {
-                    error!(self.log, "Failed to start container actor: {}", error);
+                    error!(ctx.log(), "Failed to start container actor: {}", error);
                     None
                 }
             })
@@ -136,7 +135,7 @@ impl BcActorCtrl for PoolActor {
         if pool.model().scrubbing_state() == FeatureState::Enabled {
             self.scrub_schedule = pool.model().scrub_schedule.as_ref().map_or(Ok(None), |s| {
                 s.try_into()
-                    .map(|schedule| Some(ScheduledMessage::new(schedule, "scrub", ScrubMessage, log, ctx)))
+                    .map(|schedule| Some(ScheduledMessage::new(schedule, "scrub", ScrubMessage, &ctx)))
             })?;
         }
 
@@ -148,7 +147,7 @@ impl BcActorCtrl for PoolActor {
 #[async_trait::async_trait]
 impl BcHandler<GetChildActorMessage<BcActor<DatasetActor>>> for PoolActor {
     async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetChildActorMessage<BcActor<DatasetActor>>,
+        &mut self, _ctx: BcContext<'_, Self>, msg: GetChildActorMessage<BcActor<DatasetActor>>,
     ) -> Option<Addr<BcActor<DatasetActor>>> {
         self.datasets.get(&msg.0).cloned()
     }
@@ -157,7 +156,7 @@ impl BcHandler<GetChildActorMessage<BcActor<DatasetActor>>> for PoolActor {
 #[async_trait::async_trait]
 impl BcHandler<GetChildActorMessage<BcActor<ContainerActor>>> for PoolActor {
     async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetChildActorMessage<BcActor<ContainerActor>>,
+        &mut self, _ctx: BcContext<'_, Self>, msg: GetChildActorMessage<BcActor<ContainerActor>>,
     ) -> Option<Addr<BcActor<ContainerActor>>> {
         self.containers.get(&msg.0).cloned()
     }
@@ -165,26 +164,26 @@ impl BcHandler<GetChildActorMessage<BcActor<ContainerActor>>> for PoolActor {
 
 #[async_trait::async_trait]
 impl BcHandler<ScrubMessage> for PoolActor {
-    async fn handle(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: ScrubMessage) {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, _msg: ScrubMessage) {
         self.pool = match self.pool.take() {
             PoolState::Started(pool, State::Idle) => {
                 let observation = start_observation(pool.model().id(), ObservableEvent::PoolScrub).await;
                 let scrub = pool.scrub();
-                let scrub_actor = PoolScrubActor::new(ctx.address().downgrade(), scrub, observation, log);
+                let scrub_actor = PoolScrubActor::new(ctx.address().downgrade(), scrub, observation, ctx.log());
                 let start_result = scrub_actor.start().await.context("failed to start scrub actor");
                 PoolState::Started(
                     pool,
                     match start_result {
                         Ok(actor) => State::Scrubbing(actor),
                         Err(err) => {
-                            unhandled_error(log, err);
+                            unhandled_error(ctx.log(), err);
                             State::Idle
                         }
                     },
                 )
             }
             PoolState::Started(pool, State::Scrubbing(actor)) => {
-                info!(log, "skipping scrub. scrub already running");
+                info!(ctx.log(), "skipping scrub. scrub already running");
                 PoolState::Started(pool, State::Scrubbing(actor))
             }
             PoolState::Pending(_) | PoolState::Faulted => {
@@ -197,7 +196,7 @@ impl BcHandler<ScrubMessage> for PoolActor {
 
 #[async_trait::async_trait]
 impl BcHandler<ScrubCompleteMessage> for PoolActor {
-    async fn handle(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>, _msg: ScrubCompleteMessage) {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, _msg: ScrubCompleteMessage) {
         self.pool = match self.pool.take() {
             PoolState::Started(pool, State::Scrubbing(_)) => PoolState::Started(pool, State::Idle),
             PoolState::Pending(_) | PoolState::Started(..) | PoolState::Faulted => {
@@ -210,9 +209,7 @@ impl BcHandler<ScrubCompleteMessage> for PoolActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for PoolActor {
-    async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
-    ) -> String {
+    async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
         String::from("fine")
     }
 }
@@ -270,7 +267,7 @@ mod scrub {
 
     #[async_trait::async_trait]
     impl BcActorCtrl for PoolScrubActor {
-        async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+        async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
             if let State::Created(scrub, observation) = self.state.take() {
                 let scrub = match scrub.start() {
                     Ok(scrub) => scrub,
@@ -279,7 +276,7 @@ mod scrub {
                         return result.map(|_| ());
                     }
                 };
-                let task = WorkerTask::run(ctx.address(), log, |_| async move { scrub.wait().await.into() });
+                let task = WorkerTask::run(ctx.address(), ctx.log(), |_| async move { scrub.wait().await.into() });
                 self.state = State::Scrubbing(task, observation);
                 Ok(())
             } else {
@@ -287,7 +284,7 @@ mod scrub {
             }
         }
 
-        async fn stopped(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+        async fn stopped(&mut self, ctx: BcContext<'_, Self>) -> TerminalState {
             let terminal_state = match self.state.take() {
                 State::Created(_, observation) | State::Scrubbing(_, observation) => {
                     observation.cancelled();
@@ -300,7 +297,7 @@ mod scrub {
             if let Some(actor) = self.parent.upgrade() {
                 let pool_notify_result = actor.send(ScrubCompleteMessage);
                 if !matches!(terminal_state, TerminalState::Cancelled) {
-                    unhandled_result(log, pool_notify_result);
+                    unhandled_result(ctx.log(), pool_notify_result);
                 }
             }
 
@@ -310,7 +307,7 @@ mod scrub {
 
     #[async_trait::async_trait]
     impl BcHandler<ScrubWorkerCompleteMessage> for PoolScrubActor {
-        async fn handle(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: ScrubWorkerCompleteMessage) {
+        async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: ScrubWorkerCompleteMessage) {
             ctx.stop(None);
             let result = msg.0;
             self.state = match self.state.take() {
@@ -325,9 +322,7 @@ mod scrub {
 
     #[async_trait::async_trait]
     impl BcHandler<GetActorStatusMessage> for PoolScrubActor {
-        async fn handle(
-            &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
-        ) -> String {
+        async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
             self.state.to_string()
         }
     }

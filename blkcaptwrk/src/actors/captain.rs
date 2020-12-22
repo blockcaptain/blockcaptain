@@ -1,6 +1,6 @@
 use super::{observation::HealthchecksActor, server::ServerActor, sync::SyncActor};
 use super::{pool::PoolActor, restic::ResticContainerActor, sync::SyncToContainer};
-use crate::xactorext::{BcActor, BcActorCtrl};
+use crate::xactorext::{BcActor, BcActorCtrl, BcContext};
 use crate::{
     actorbase::logged_result,
     xactorext::{
@@ -16,7 +16,7 @@ use libblkcapt::model::{entities::SnapshotSyncEntity, storage, Entities, Entity}
 use slog::{error, trace, Logger};
 use std::{collections::HashMap, mem};
 use uuid::Uuid;
-use xactor::{Actor, Addr, Context};
+use xactor::{Actor, Addr};
 
 pub struct CaptainActor {
     healthcheck_actors: Vec<Addr<BcActor<HealthchecksActor>>>,
@@ -89,28 +89,28 @@ impl CaptainActor {
 
 #[async_trait::async_trait]
 impl BcActorCtrl for CaptainActor {
-    async fn started(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
         let mut entities = storage::load_entity_state();
         if !entities.observers.is_empty() {
-            trace!(log, "building observer actors");
+            trace!(ctx.log(), "building observer actors");
             self.healthcheck_actors = entities
                 .observers
                 .drain(..)
-                .map(|m| HealthchecksActor::new(m, &log).start())
+                .map(|m| HealthchecksActor::new(m, ctx.log()).start())
                 .collect::<FuturesUnordered<_>>()
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
-                .filter_map(|sa| logged_result(log, sa.context("failed to start observer actor")).ok())
+                .filter_map(|sa| logged_result(ctx.log(), sa.context("failed to start observer actor")).ok())
                 .collect();
         };
 
         if !entities.btrfs_pools.is_empty() {
-            trace!(log, "building pool actors");
+            trace!(ctx.log(), "building pool actors");
             self.pool_actors = entities
                 .btrfs_pools
                 .iter()
-                .map(|m| (m.id(), PoolActor::new(m.clone(), &log)))
+                .map(|m| (m.id(), PoolActor::new(m.clone(), ctx.log())))
                 .map(|(id, actor)| async move {
                     let addr = actor.start().await?;
                     Result::<_>::Ok((id, addr))
@@ -119,36 +119,39 @@ impl BcActorCtrl for CaptainActor {
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
-                .filter_map(|sa| logged_result(log, sa.context("failed to start pool actor")).ok())
+                .filter_map(|sa| logged_result(ctx.log(), sa.context("failed to start pool actor")).ok())
                 .collect();
         }
 
         if !entities.restic_containers.is_empty() {
-            trace!(log, "building restic actors");
+            trace!(ctx.log(), "building restic actors");
             self.restic_actors = entities
                 .restic_containers
                 .iter()
-                .map(|m| async move {
-                    let addr = ResticContainerActor::new(m.clone(), &log).start().await?;
-                    Result::<_>::Ok((m.id(), addr))
+                .map(|m| {
+                    let log = ctx.log();
+                    async move {
+                        let addr = ResticContainerActor::new(m.clone(), log).start().await?;
+                        Result::<_>::Ok((m.id(), addr))
+                    }
                 })
                 .collect::<FuturesUnordered<_>>()
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
-                .filter_map(|sa| logged_result(log, sa.context("failed to start restic actor")).ok())
+                .filter_map(|sa| logged_result(ctx.log(), sa.context("failed to start restic actor")).ok())
                 .collect();
         };
 
         if !entities.snapshot_syncs.is_empty() {
-            trace!(log, "building sync actors");
+            trace!(ctx.log(), "building sync actors");
             self.sync_actors = stream::iter(mem::take(&mut entities.snapshot_syncs).into_iter())
-                .then(|m| self.new_sync_actor(&entities, m, log))
+                .then(|m| self.new_sync_actor(&entities, m, ctx.log()))
                 .filter_map(|s| {
                     let actor = match s {
                         Ok(sync_actor) => Some(sync_actor),
                         Err(error) => {
-                            error!(log, "Failed to create sync actor: {}", error);
+                            error!(ctx.log(), "Failed to create sync actor: {}", error);
                             None
                         }
                     };
@@ -158,13 +161,13 @@ impl BcActorCtrl for CaptainActor {
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
-                .filter_map(|sa| logged_result(log, sa.context("failed to start sync actor")).ok())
+                .filter_map(|sa| logged_result(ctx.log(), sa.context("failed to start sync actor")).ok())
                 .collect();
         }
 
         self.server_actor = logged_result(
-            log,
-            ServerActor::new(log)
+            ctx.log(),
+            ServerActor::new(ctx.log())
                 .start()
                 .await
                 .context("failed to start server actor"),
@@ -174,7 +177,7 @@ impl BcActorCtrl for CaptainActor {
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+    async fn stopped(&mut self, _ctx: BcContext<'_, Self>) -> TerminalState {
         stop_all_actors(&mut self.healthcheck_actors);
         stop_all_actors(&mut self.sync_actors);
         stop_all_actors(self.pool_actors.values_mut());
@@ -196,9 +199,7 @@ impl BcActorCtrl for CaptainActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for CaptainActor {
-    async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
-    ) -> String {
+    async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
         String::from("ok")
     }
 }

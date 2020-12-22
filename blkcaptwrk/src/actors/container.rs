@@ -10,7 +10,8 @@ use crate::{
         GetContainerSnapshotsMessage, PruneMessage,
     },
     xactorext::{
-        join_all_actors, stop_all_actors, BcActor, BcActorCtrl, BcHandler, GetActorStatusMessage, TerminalState,
+        join_all_actors, stop_all_actors, BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage,
+        TerminalState,
     },
 };
 use anyhow::Result;
@@ -25,7 +26,7 @@ use libblkcapt::{
 use slog::{debug, o, trace, Logger};
 use std::{collections::HashMap, convert::TryInto, sync::Arc};
 use uuid::Uuid;
-use xactor::{message, Actor, Addr, Context, Handler, Sender, WeakAddr};
+use xactor::{message, Actor, Addr, Handler, Sender, WeakAddr};
 
 pub struct ContainerActor {
     pool: Addr<BcActor<PoolActor>>,
@@ -95,9 +96,9 @@ impl ContainerActor {
 
 #[async_trait::async_trait]
 impl BcActorCtrl for ContainerActor {
-    async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
         trace!(
-            log,
+            ctx.log(),
             "Starting container with {} snapshots from {} datasets.",
             self.snapshots.values().fold(0, |acc, v| acc + v.len()),
             self.snapshots.len()
@@ -112,14 +113,14 @@ impl BcActorCtrl for ContainerActor {
                 .map(|r| &r.evaluation_schedule)
                 .map_or(Ok(None), |s| {
                     s.try_into()
-                        .map(|schedule| Some(ScheduledMessage::new(schedule, "prune", PruneMessage, log, ctx)))
+                        .map(|schedule| Some(ScheduledMessage::new(schedule, "prune", PruneMessage, &ctx)))
                 })?;
         }
 
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+    async fn stopped(&mut self, _ctx: BcContext<'_, Self>) -> TerminalState {
         let mut active_actors = self
             .active_receivers
             .drain()
@@ -138,7 +139,7 @@ impl BcActorCtrl for ContainerActor {
 #[async_trait::async_trait]
 impl BcHandler<GetContainerSnapshotsMessage> for ContainerActor {
     async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: GetContainerSnapshotsMessage,
+        &mut self, _ctx: BcContext<'_, Self>, msg: GetContainerSnapshotsMessage,
     ) -> ContainerSnapshotsResponse {
         ContainerSnapshotsResponse {
             snapshots: self.snapshots[&msg.source_dataset_id]
@@ -151,9 +152,7 @@ impl BcHandler<GetContainerSnapshotsMessage> for ContainerActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
-    async fn handle(
-        &mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: GetSnapshotReceiverMessage,
-    ) -> Result<()> {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: GetSnapshotReceiverMessage) -> Result<()> {
         if self
             .container
             .snapshot_by_datetime(msg.source_dataset_id, msg.source_snapshot_handle.datetime)
@@ -171,7 +170,7 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
             ctx.address().sender(),
             msg.target_finished,
             snapshot_receiver,
-            &log.new(o!("message" => ())),
+            &ctx.log().new(o!("message" => ())),
         )
         .start()
         .await;
@@ -194,14 +193,12 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
 
 #[async_trait::async_trait]
 impl BcHandler<LocalReceiverStoppedParentMessage> for ContainerActor {
-    async fn handle(
-        &mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: LocalReceiverStoppedParentMessage,
-    ) {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: LocalReceiverStoppedParentMessage) {
         let LocalReceiverStoppedParentMessage(actor_id, new_snapshot) = msg;
         let active_receiver = self.active_receivers.remove(&actor_id).expect("FIXME");
 
         let new_snapshot = new_snapshot.unwrap();
-        debug!(log, "container received snapshot {}", new_snapshot.datetime(); "received_uuid" => %new_snapshot.received_uuid());
+        debug!(ctx.log(), "container received snapshot {}", new_snapshot.datetime(); "received_uuid" => %new_snapshot.received_uuid());
 
         self.snapshots
             .get_mut(&active_receiver.dataset_id)
@@ -212,7 +209,7 @@ impl BcHandler<LocalReceiverStoppedParentMessage> for ContainerActor {
 
 #[async_trait::async_trait]
 impl BcHandler<PruneMessage> for ContainerActor {
-    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: PruneMessage) {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, _msg: PruneMessage) {
         let result = observable_func(self.container.model().id(), ObservableEvent::ContainerPrune, || {
             let rules = self
                 .container
@@ -222,22 +219,20 @@ impl BcHandler<PruneMessage> for ContainerActor {
                 .expect("retention exist based on message scheduling in started");
 
             let failed_deletes = self.snapshots.iter_mut().fold(0, |acc, (dataset_id, snapshots)| {
-                trace!(log, "prune container"; "dataset_id" => %dataset_id);
-                acc + prune_btrfs_snapshots(snapshots, &[], rules, log)
+                trace!(ctx.log(), "prune container"; "dataset_id" => %dataset_id);
+                acc + prune_btrfs_snapshots(snapshots, &[], rules, ctx.log())
             });
             ready(failed_snapshot_deletes_as_result(failed_deletes))
         })
         .await;
 
-        unhandled_result(log, result);
+        unhandled_result(ctx.log(), result);
     }
 }
 
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for ContainerActor {
-    async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
-    ) -> String {
+    async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
         String::from("ok")
     }
 }

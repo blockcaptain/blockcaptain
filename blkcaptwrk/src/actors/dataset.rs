@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     actorbase::unhandled_result,
-    xactorext::{BcActor, BcActorCtrl, BcHandler},
+    xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler},
 };
 use crate::{
     actorbase::{unhandled_error, ScheduledMessage},
@@ -26,7 +26,7 @@ use libblkcapt::{
 use slog::{info, o, Logger};
 use std::{convert::TryInto, iter::once, path::PathBuf, sync::Arc};
 use uuid::Uuid;
-use xactor::{message, Actor, Addr, Context, Handler, Sender};
+use xactor::{message, Actor, Addr, Handler, Sender};
 
 pub struct DatasetActor {
     pool: Addr<BcActor<PoolActor>>,
@@ -127,11 +127,11 @@ impl DatasetActor {
 
 #[async_trait::async_trait]
 impl BcActorCtrl for DatasetActor {
-    async fn started(&mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>) -> Result<()> {
+    async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
         if self.dataset.model().snapshotting_state() == FeatureState::Enabled {
             self.snapshot_schedule = self.dataset.model().snapshot_schedule.as_ref().map_or(Ok(None), |s| {
                 s.try_into()
-                    .map(|schedule| Some(ScheduledMessage::new(schedule, "snapshot", SnapshotMessage, log, ctx)))
+                    .map(|schedule| Some(ScheduledMessage::new(schedule, "snapshot", SnapshotMessage, &ctx)))
             })?;
         }
 
@@ -144,14 +144,14 @@ impl BcActorCtrl for DatasetActor {
                 .map(|r| &r.evaluation_schedule)
                 .map_or(Ok(None), |s| {
                     s.try_into()
-                        .map(|schedule| Some(ScheduledMessage::new(schedule, "prune", PruneMessage, log, ctx)))
+                        .map(|schedule| Some(ScheduledMessage::new(schedule, "prune", PruneMessage, &ctx)))
                 })?;
         }
 
         Ok(())
     }
 
-    async fn stopped(&mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+    async fn stopped(&mut self, _ctx: BcContext<'_, Self>) -> TerminalState {
         let mut active_actors = self
             .active_sends_holds
             .drain(..)
@@ -169,18 +169,18 @@ impl BcActorCtrl for DatasetActor {
 
 #[async_trait::async_trait]
 impl BcHandler<SnapshotMessage> for DatasetActor {
-    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: SnapshotMessage) {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, _msg: SnapshotMessage) {
         let result = observable_func(self.dataset.model().id(), ObservableEvent::DatasetSnapshot, || {
             ready(self.dataset.create_local_snapshot())
         })
         .await;
         match result {
             Ok(snapshot) => {
-                info!(log, "snapshot created"; "time" => %snapshot.datetime());
+                info!(ctx.log(), "snapshot created"; "time" => %snapshot.datetime());
                 self.snapshots.push(snapshot);
             }
             Err(e) => {
-                unhandled_error(log, e);
+                unhandled_error(ctx.log(), e);
             }
         }
     }
@@ -188,7 +188,7 @@ impl BcHandler<SnapshotMessage> for DatasetActor {
 
 #[async_trait::async_trait]
 impl BcHandler<PruneMessage> for DatasetActor {
-    async fn handle(&mut self, log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: PruneMessage) {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, _msg: PruneMessage) {
         let result = observable_func(self.dataset.model().id(), ObservableEvent::DatasetPrune, || {
             let rules = self
                 .dataset
@@ -202,19 +202,19 @@ impl BcHandler<PruneMessage> for DatasetActor {
                 .iter()
                 .flat_map(|a| once(a.1).chain(a.2.into_iter()))
                 .collect();
-            let failed_deletes = prune_btrfs_snapshots(&mut self.snapshots, &holds, rules, log);
+            let failed_deletes = prune_btrfs_snapshots(&mut self.snapshots, &holds, rules, ctx.log());
             ready(failed_snapshot_deletes_as_result(failed_deletes))
         })
         .await;
 
-        unhandled_result(log, result);
+        unhandled_result(ctx.log(), result);
     }
 }
 
 #[async_trait::async_trait]
 impl BcHandler<GetDatasetSnapshotsMessage> for DatasetActor {
     async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetDatasetSnapshotsMessage,
+        &mut self, _ctx: BcContext<'_, Self>, _msg: GetDatasetSnapshotsMessage,
     ) -> DatasetSnapshotsResponse {
         DatasetSnapshotsResponse {
             snapshots: self.snapshots.iter().map(|s| s.into()).collect(),
@@ -224,9 +224,7 @@ impl BcHandler<GetDatasetSnapshotsMessage> for DatasetActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
-    async fn handle(
-        &mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: GetSnapshotSenderMessage,
-    ) -> Result<()> {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: GetSnapshotSenderMessage) -> Result<()> {
         let send_snapshot = self
             .snapshots
             .iter()
@@ -247,7 +245,7 @@ impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
             ctx.address().sender(),
             msg.target_finished,
             snapshot_sender,
-            &log.new(o!("message" => ())),
+            &ctx.log().new(o!("message" => ())),
         )
         .start()
         .await;
@@ -264,9 +262,7 @@ impl BcHandler<GetSnapshotSenderMessage> for DatasetActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetSnapshotHolderMessage> for DatasetActor {
-    async fn handle(
-        &mut self, log: &Logger, ctx: &mut Context<BcActor<Self>>, msg: GetSnapshotHolderMessage,
-    ) -> Result<()> {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: GetSnapshotHolderMessage) -> Result<()> {
         let send_snapshot = self
             .snapshots
             .iter()
@@ -283,7 +279,7 @@ impl BcHandler<GetSnapshotHolderMessage> for DatasetActor {
         };
 
         let started_holder_actor = DatasetHolderActor::new(
-            log,
+            ctx.log(),
             ctx.address().sender(),
             msg.send_snapshot_handle,
             msg.parent_snapshot_handle,
@@ -306,18 +302,14 @@ impl BcHandler<GetSnapshotHolderMessage> for DatasetActor {
 
 #[async_trait::async_trait]
 impl BcHandler<LocalSenderParentFinishedMessage> for DatasetActor {
-    async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, msg: LocalSenderParentFinishedMessage,
-    ) {
+    async fn handle(&mut self, _ctx: BcContext<'_, Self>, msg: LocalSenderParentFinishedMessage) {
         self.active_sends_holds.retain(|(x, ..)| x.actor_id() != msg.0);
     }
 }
 
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for DatasetActor {
-    async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
-    ) -> String {
+    async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
         String::from("ok")
     }
 }
@@ -344,7 +336,7 @@ impl DatasetHolderActor {
 
 #[async_trait::async_trait]
 impl BcActorCtrl for DatasetHolderActor {
-    async fn stopped(&mut self, _log: &Logger, ctx: &mut Context<BcActor<Self>>) -> TerminalState {
+    async fn stopped(&mut self, ctx: BcContext<'_, Self>) -> TerminalState {
         let _ = self.parent.send(LocalSenderParentFinishedMessage(ctx.actor_id()));
         TerminalState::Succeeded
     }
@@ -352,9 +344,7 @@ impl BcActorCtrl for DatasetHolderActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for DatasetHolderActor {
-    async fn handle(
-        &mut self, _log: &Logger, _ctx: &mut Context<BcActor<Self>>, _msg: GetActorStatusMessage,
-    ) -> String {
+    async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
         String::from("ok")
     }
 }

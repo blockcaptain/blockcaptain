@@ -26,7 +26,7 @@ async fn async_main(log: Logger) -> Result<()> {
         captain.stop(None)?;
         captain.wait_for_stop().await;
     }
-    tokio::time::delay_for(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
     intel.stop(None)?;
     intel.wait_for_stop().await;
     Ok(())

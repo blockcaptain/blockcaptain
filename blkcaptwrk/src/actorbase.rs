@@ -65,7 +65,7 @@ impl ScheduledMessage {
                         next_datetime,
                         humantime::Duration::from(display_delay)
                     );
-                    tokio::time::delay_for(interval).await;
+                    tokio::time::sleep(interval).await;
                     if sender.send(message.clone()).is_err() {
                         break;
                     }
@@ -77,31 +77,6 @@ impl ScheduledMessage {
         Self {}
     }
 }
-
-// pub trait ActorContextExt<A> {
-//     fn send_scheduled<T>(&self, msg: T, schedule: Schedule)
-//     where
-//         A: Handler<T>,
-//         T: Message<Result = ()> + Clone + Sync;
-// }
-
-// impl<A> ActorContextExt<A> for Context<A> {
-//     fn send_scheduled<T>(&self, msg: T, schedule: Schedule)
-//     where
-//         A: Handler<T>,
-//         T: Message<Result = ()> + Clone + Sync,
-//     {
-//         let addr = self.address();
-//         tokio::spawn(async move {
-//             loop {
-//                 tokio::time::delay_for(interval).await;
-//                 if addr.send(msg.clone()).is_err() {
-//                     break;
-//                 }
-//             }
-//         });
-//     }
-// }
 
 impl<T> From<TerminalState> for Result<T> {
     fn from(ts: TerminalState) -> Self {

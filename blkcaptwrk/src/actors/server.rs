@@ -21,33 +21,33 @@ impl ServerActor {
 #[async_trait::async_trait]
 impl BcActorCtrl for ServerActor {
     async fn started(&mut self, _ctx: BcContext<'_, Self>) -> Result<()> {
-        let (sender, receiver) = oneshot::channel::<()>();
-        let signal = receiver.map(|_| ());
+        // let (sender, receiver) = oneshot::channel::<()>();
+        // let signal = receiver.map(|_| ());
 
-        let socket_path = PathBuf::from("/var/lib/blkcapt/wrk.sock");
-        if socket_path.exists() {
-            std::fs::remove_file(&socket_path)?;
-        }
-        let mut listener = UnixListener::bind(socket_path)?;
+        // let socket_path = PathBuf::from("/var/lib/blkcapt/wrk.sock");
+        // if socket_path.exists() {
+        //     std::fs::remove_file(&socket_path)?;
+        // }
+        // let mut listener = UnixListener::bind(socket_path)?;
 
-        let handle = tokio::spawn(async move {
-            let incoming = listener.incoming();
+        // let handle = tokio::spawn(async move {
+        //     let incoming = listener;
 
-            let routes = warp::any().and_then(|| async {
-                let addr = IntelActor::addr();
-                let state = addr
-                    .call(GetStateMessage)
-                    .and_then(|fut| fut.map(Ok))
-                    .await
-                    .map_err(|_| warp::reject())?;
-                Ok::<_, Rejection>(warp::reply::json(&state))
-            });
+        //     let routes = warp::any().and_then(|| async {
+        //         let addr = IntelActor::addr();
+        //         let state = addr
+        //             .call(GetStateMessage)
+        //             .and_then(|fut| fut.map(Ok))
+        //             .await
+        //             .map_err(|_| warp::reject())?;
+        //         Ok::<_, Rejection>(warp::reply::json(&state))
+        //     });
 
-            warp::serve(routes)
-                .serve_incoming_with_graceful_shutdown(incoming, signal)
-                .await;
-        });
-        self.server = Some((handle, sender));
+        //     warp::serve(routes)
+        //         .serve_incoming_with_graceful_shutdown(incoming, signal)
+        //         .await;
+        // });
+        // self.server = Some((handle, sender));
         Ok(())
     }
 

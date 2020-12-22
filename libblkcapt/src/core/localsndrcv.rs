@@ -42,8 +42,8 @@ impl StartedSnapshotSender {
             .expect("child did not have a handle to stdout")
     }
 
-    pub async fn wait(self) -> Result<()> {
-        exit_status_as_result(self.process.await?)
+    pub async fn wait(mut self) -> Result<()> {
+        exit_status_as_result(self.process.wait().await?)
     }
 }
 
@@ -119,8 +119,8 @@ impl StartedSnapshotReceiver {
             .expect("child did not have a handle to stdout")
     }
 
-    pub async fn wait(self) -> Result<BtrfsContainerSnapshot> {
-        exit_status_as_result(self.process.await?)?;
+    pub async fn wait(mut self) -> Result<BtrfsContainerSnapshot> {
+        exit_status_as_result(self.process.wait().await?)?;
         let stdout_result = self.name_reader_stdout.await.unwrap().unwrap();
         let stderr_result = self.name_reader_stderr.await.unwrap().unwrap();
         let incoming_snapshot_name = stdout_result
@@ -170,8 +170,8 @@ pub struct StartedPoolScrub {
 }
 
 impl StartedPoolScrub {
-    pub async fn wait(self) -> Result<(), ScrubError> {
-        let exit_status = self.process.await.map_err(|_| ScrubError::Unknown)?;
+    pub async fn wait(mut self) -> Result<(), ScrubError> {
+        let exit_status = self.process.wait().await.map_err(|_| ScrubError::Unknown)?;
         match exit_status.code() {
             Some(code) => match code {
                 0 => Ok(()),
@@ -185,6 +185,7 @@ impl StartedPoolScrub {
         }
     }
 }
+
 #[derive(thiserror::Error, Debug)]
 pub enum ScrubError {
     #[error("scrub process failed to complete")]

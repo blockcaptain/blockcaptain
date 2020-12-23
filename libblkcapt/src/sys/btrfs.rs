@@ -3,8 +3,6 @@ use crate::parsing::{parse_key_value_pair_lines, StringPair};
 use crate::process::read_with_stderr_context;
 use anyhow::{anyhow, bail, Context, Result};
 use fs::{DevicePathBuf, FsPathBuf};
-use lazy_static::lazy_static;
-use regex::Regex;
 use serde::Deserialize;
 use std::convert::TryFrom;
 use std::string::String;
@@ -18,6 +16,13 @@ macro_rules! btrfs_cmd {
     ( $( $arg:expr ),+ ) => {
         read_with_stderr_context(duct_cmd!("btrfs", $($arg),+).stdout_capture())
     };
+}
+
+macro_rules! once_regex {
+    ($re:literal $(,)?) => {{
+        static RE: once_cell::sync::OnceCell<regex::Regex> = once_cell::sync::OnceCell::new();
+        RE.get_or_init(|| regex::Regex::new($re).unwrap())
+    }};
 }
 
 #[derive(Debug, PartialEq)]
@@ -62,12 +67,11 @@ impl Filesystem {
     fn query_raw(identifier: &OsStr) -> Result<QueriedFilesystem> {
         let output_data = btrfs_cmd!("filesystem", "show", "--raw", identifier)?;
 
-        lazy_static! {
-            static ref RE_UUID: Regex = Regex::new(r"(?m)\buuid:\s+(.*?)\s*$").unwrap();
-            static ref RE_DEVS: Regex = Regex::new(r"(?m)^\s+devid\b.+\bpath\s+(.*?)\s*$").unwrap();
-        }
-        let uuid_match = RE_UUID.captures(&output_data);
-        let device_matches = RE_DEVS.captures_iter(&output_data);
+        let uuid_regex = once_regex!(r"(?m)\buuid:\s+(.*?)\s*$");
+        let devs_regex = once_regex!(r"(?m)^\s+devid\b.+\bpath\s+(.*?)\s*$");
+
+        let uuid_match = uuid_regex.captures(&output_data);
+        let device_matches = devs_regex.captures_iter(&output_data);
 
         let devices = device_matches
             .map(|m| {
@@ -214,14 +218,10 @@ impl Subvolume {
     }
 
     pub fn list_subvolumes(path: &Path) -> Result<Vec<Subvolume>> {
-        lazy_static! {
-            static ref RE_PATHS: Regex =
-                Regex::new(r"(?m)\bparent_uuid\s+(.*?)\s+received_uuid\s+(.*?)\s+uuid\s+(.*?)\s+path\s+(.*?)\s*$")
-                    .unwrap();
-        }
-
+        let paths_regex =
+            once_regex!(r"(?m)\bparent_uuid\s+(.*?)\s+received_uuid\s+(.*?)\s+uuid\s+(.*?)\s+path\s+(.*?)\s*$");
         let output_data = btrfs_cmd!("subvolume", "list", "-uqRo", path)?;
-        let path_matches = RE_PATHS.captures_iter(&output_data);
+        let path_matches = paths_regex.captures_iter(&output_data);
         let parse_uuid = |m| Uuid::parse_str(m).expect("Should always have parsable UUID in btrfs list.");
         Ok(path_matches
             .map(|m| Self {

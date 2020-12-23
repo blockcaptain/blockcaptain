@@ -1,21 +1,22 @@
 use super::fs::{self, BtrfsMountEntry};
+#[mockall_double::double]
+use super::process::world;
+use world::run_command_as_result;
+
 use crate::parsing::{parse_key_value_pair_lines, StringPair};
-use crate::process::read_with_stderr_context;
 use anyhow::{anyhow, bail, Context, Result};
 use fs::{DevicePathBuf, FsPathBuf};
 use serde::Deserialize;
-use std::convert::TryFrom;
 use std::string::String;
+use std::{convert::TryFrom, process::Command};
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
 
-macro_rules! btrfs_cmd {
-    ( $( $arg:expr ),+ ) => {
-        read_with_stderr_context(duct_cmd!("btrfs", $($arg),+).stdout_capture())
-    };
+fn btrfs_command() -> Command {
+    Command::new("btrfs")
 }
 
 macro_rules! once_regex {
@@ -65,7 +66,11 @@ impl Filesystem {
     }
 
     fn query_raw(identifier: &OsStr) -> Result<QueriedFilesystem> {
-        let output_data = btrfs_cmd!("filesystem", "show", "--raw", identifier)?;
+        let output_data = run_command_as_result({
+            let mut command = btrfs_command();
+            command.args(&["filesystem", "show", "--raw"]).arg(identifier);
+            command
+        })?;
 
         let uuid_regex = once_regex!(r"(?m)\buuid:\s+(.*?)\s*$");
         let devs_regex = once_regex!(r"(?m)^\s+devid\b.+\bpath\s+(.*?)\s*$");
@@ -112,17 +117,15 @@ impl Filesystem {
 
 impl MountedFilesystem {
     pub fn subvolume_by_uuid(&self, uuid: &Uuid) -> Result<Subvolume> {
-        let output_data = String::from("path: ")
-            + btrfs_cmd!(
-                "subvolume",
-                "show",
-                "--raw",
-                "-u",
-                uuid.to_string(),
-                &self.fstree_mountpoint
-            )?
-            .as_ref();
-        Subvolume::_parse(output_data)
+        let output_data = run_command_as_result({
+            let mut command = btrfs_command();
+            command
+                .args(&["subvolume", "show", "--raw", "-u"])
+                .arg(uuid.to_string())
+                .arg(&self.fstree_mountpoint);
+            command
+        })?;
+        Subvolume::_parse(String::from("path: ") + &output_data)
     }
 
     pub fn subvolume_by_path(&self, path: &FsPathBuf) -> Result<Subvolume> {
@@ -134,13 +137,14 @@ impl MountedFilesystem {
         if target_path.exists() {
             bail!("Path to new snapshot, {:?}, already exists!", &target_path)
         }
-        btrfs_cmd!(
-            "subvolume",
-            "snapshot",
-            "-r",
-            subvolume.path.as_pathbuf(&self.fstree_mountpoint),
-            target_path
-        )
+        run_command_as_result({
+            let mut command = btrfs_command();
+            command
+                .args(&["subvolume", "snapshot", "-r"])
+                .arg(subvolume.path.as_pathbuf(&self.fstree_mountpoint))
+                .arg(target_path);
+            command
+        })
         .context(format!("Failed to create btrfs snapshot at {:?}.", path))
         .map(|_| ())
     }
@@ -150,9 +154,13 @@ impl MountedFilesystem {
         if target_path.exists() {
             bail!("Path to new subvolume, {:?}, already exists!", &target_path)
         }
-        btrfs_cmd!("subvolume", "create", target_path)
-            .context(format!("Failed to create btrfs subvolume at {:?}.", path))
-            .map(|_| ())
+        run_command_as_result({
+            let mut command = btrfs_command();
+            command.args(&["subvolume", "create"]).arg(target_path);
+            command
+        })
+        .context(format!("Failed to create btrfs subvolume at {:?}.", path))
+        .map(|_| ())
     }
 
     pub fn delete_subvolume(&self, path: &FsPathBuf) -> Result<()> {
@@ -160,9 +168,13 @@ impl MountedFilesystem {
         if !target_path.exists() {
             bail!("Path to subvolume, {:?}, is non-existant!", &target_path)
         }
-        btrfs_cmd!("subvolume", "delete", target_path)
-            .context(format!("Failed to delete btrfs subvolume at {:?}.", path))
-            .map(|_| ())
+        run_command_as_result({
+            let mut command = btrfs_command();
+            command.args(&["subvolume", "delete"]).arg(target_path);
+            command
+        })
+        .context(format!("Failed to delete btrfs subvolume at {:?}.", path))
+        .map(|_| ())
     }
 
     pub fn send_subvolume(&self, path: &FsPathBuf, parent: Option<&FsPathBuf>) -> tokio::process::Command {
@@ -213,14 +225,22 @@ pub struct Subvolume {
 
 impl Subvolume {
     pub fn from_path(path: &Path) -> Result<Self> {
-        let output_data = String::from("path: ") + btrfs_cmd!("subvolume", "show", "--raw", path)?.as_ref();
-        Self::_parse(output_data)
+        let output_data = run_command_as_result({
+            let mut command = btrfs_command();
+            command.args(&["subvolume", "show", "--raw"]).arg(path);
+            command
+        })?;
+        Self::_parse(String::from("path: ") + &output_data)
     }
 
     pub fn list_subvolumes(path: &Path) -> Result<Vec<Subvolume>> {
         let paths_regex =
             once_regex!(r"(?m)\bparent_uuid\s+(.*?)\s+received_uuid\s+(.*?)\s+uuid\s+(.*?)\s+path\s+(.*?)\s*$");
-        let output_data = btrfs_cmd!("subvolume", "list", "-uqRo", path)?;
+        let output_data = run_command_as_result({
+            let mut command = btrfs_command();
+            command.args(&["subvolume", "list", "-uqRo"]).arg(path);
+            command
+        })?;
         let path_matches = paths_regex.captures_iter(&output_data);
         let parse_uuid = |m| Uuid::parse_str(m).expect("Should always have parsable UUID in btrfs list.");
         Ok(path_matches
@@ -258,7 +278,7 @@ impl Subvolume {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::mocks::MockFakeCmd;
+    use crate::sys::process::mock_world;
     use indoc::indoc;
     use serial_test::serial;
 
@@ -272,8 +292,8 @@ mod tests {
             	devid    1 size 2000398934016 used 381220290560 path /dev/sdb 
             	devid    2 size 2000398934016 used 381220290560 path /dev/sdd"#
         );
-        let ctx = MockFakeCmd::data_context();
-        ctx.expect().returning(|| BTRFS_DATA.to_string());
+        let ctx = mock_world::run_command_as_result_context();
+        ctx.expect().returning(|_| Ok(BTRFS_DATA.to_string()));
 
         if let QueriedFilesystem::Unmounted(fs) =
             Filesystem::query_device(&DevicePathBuf::try_from("/dev/sdb").unwrap()).unwrap()
@@ -315,8 +335,8 @@ mod tests {
 				            .blkcapt/snapshots/8a7ae0b5-b28c-b240-8c07-0015431d58d8/2020-08-23T17-24-02Z
 				            .blkcapt/snapshots/8a7ae0b5-b28c-b240-8c07-0015431d58d8/2020-08-23T20-14-53Z"#
         );
-        let ctx = MockFakeCmd::data_context();
-        ctx.expect().returning(|| BTRFS_DATA.to_string());
+        let ctx = mock_world::run_command_as_result_context();
+        ctx.expect().returning(|_| Ok(BTRFS_DATA.to_string()));
 
         assert_eq!(
             Subvolume::from_path(&PathBuf::from("/mnt/os_pool")).unwrap(),
@@ -340,8 +360,8 @@ mod tests {
             ID 284 gen 50 cgen 47 parent 273 top level 273 parent_uuid -                                    received_uuid -                                    uuid 0cdd2cd3-8e63-4749-adb5-e63a1050b3ea path .blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7
             ID 285 gen 48 cgen 48 parent 284 top level 284 parent_uuid 8a7ae0b5-b28c-b240-8c07-0015431d58d8 received_uuid -                                    uuid 269b40d7-e072-954e-9138-04cbef62a13f path .blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7/2020-08-26T21-25-26Z"#
         );
-        let ctx = MockFakeCmd::data_context();
-        ctx.expect().returning(|| BTRFS_DATA.to_string());
+        let ctx = mock_world::run_command_as_result_context();
+        ctx.expect().returning(|_| Ok(BTRFS_DATA.to_string()));
 
         assert_eq!(
             Subvolume::list_subvolumes(&PathBuf::from("/mnt/data_pool")).unwrap(),

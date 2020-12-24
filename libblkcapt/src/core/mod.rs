@@ -167,11 +167,18 @@ impl BtrfsDataset {
                         .to_string_lossy(),
                     "%FT%H-%M-%SZ",
                 ) {
-                    Ok(d) => Some(BtrfsDatasetSnapshot {
-                        subvolume: s,
-                        datetime: DateTime::<Utc>::from_utc(d, Utc),
-                        dataset: Arc::clone(self),
-                    }),
+                    Ok(d) => {
+                        if s.parent_uuid.is_none() && s.received_uuid.is_none() {
+                            slog_scope::trace!("invalid dataset snapshot. subvolume {} has no parent", s.uuid);
+                            None
+                        } else {
+                            Some(BtrfsDatasetSnapshot {
+                                subvolume: s,
+                                datetime: DateTime::<Utc>::from_utc(d, Utc),
+                                dataset: Arc::clone(self),
+                            })
+                        }
+                    }
                     Err(_) => None,
                 }
             })
@@ -480,10 +487,19 @@ impl BtrfsContainer {
                 .expect("Snapshot path always has filename.")
                 .to_string_lossy(),
         )
-        .map(|datetime| BtrfsContainerSnapshot {
-            subvolume,
-            datetime,
-            container: Arc::clone(self),
+        .and_then(|datetime| {
+            if subvolume.received_uuid.is_some() {
+                Ok(BtrfsContainerSnapshot {
+                    subvolume,
+                    datetime,
+                    container: Arc::clone(self),
+                })
+            } else {
+                Err(anyhow!(
+                    "invalid container snapshot. subvolume {} was not received",
+                    subvolume.uuid
+                ))
+            }
         })
     }
 }

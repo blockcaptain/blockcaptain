@@ -171,6 +171,7 @@ dependencies = [
  "heck",
  "humantime",
  "libblkcapt",
+ "nix",
  "once_cell",
  "paste",
  "slog",

@@ -15,9 +15,10 @@ pub fn evaluate_retention<'a, T: Snapshot>(snapshots: &'a [T], rules: &Retention
     let mut keep_interval_buckets = rules
         .interval
         .iter()
-        .flat_map(|m| repeat(m).take(usize::try_from(m.repeat.get()).unwrap()))
+        .flat_map(|m| repeat(m).take(usize::try_from(m.repeat.get()).expect("u32 always fits in usize")))
         .scan(begin_time, |end_time_state, sm| {
-            *end_time_state = *end_time_state - chrono::Duration::from_std(sm.duration).unwrap();
+            *end_time_state = *end_time_state
+                - chrono::Duration::from_std(sm.duration).expect("interval duration always fits in chrono duration");
             Some(RetainBucket::new(sm.keep, *end_time_state))
         })
         .collect::<Vec<_>>();
@@ -37,7 +38,9 @@ pub fn evaluate_retention<'a, T: Snapshot>(snapshots: &'a [T], rules: &Retention
 
         match current_bucket {
             Some(ref mut bucket) if bucket.snapshots.len() < bucket.max_fill.get() => bucket.snapshots.push(snapshot),
-            _ if index < usize::try_from(rules.newest_count.get()).unwrap() => keep_minimum_snapshots.push(snapshot),
+            _ if index < usize::try_from(rules.newest_count.get()).expect("u32 always fits in usize") => {
+                keep_minimum_snapshots.push(snapshot)
+            }
             _ => drop_snapshots.push(snapshot),
         }
     }
@@ -73,8 +76,9 @@ impl<'a, T> RetainBucket<'a, T> {
         Self {
             snapshots: Default::default(),
             max_fill: match keep {
-                KeepSpec::Newest(n) => NonZeroUsize::new(usize::try_from(n.get()).unwrap()).unwrap(),
-                KeepSpec::All => NonZeroUsize::new(usize::MAX).unwrap(),
+                KeepSpec::Newest(n) => NonZeroUsize::new(usize::try_from(n.get()).expect("u32 always fits in usize"))
+                    .expect("nonzero can always init nonzero"),
+                KeepSpec::All => NonZeroUsize::new(usize::MAX).expect("usize always fits in usize"),
             },
             end_time,
         }

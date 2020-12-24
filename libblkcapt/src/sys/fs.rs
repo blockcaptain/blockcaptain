@@ -168,7 +168,7 @@ impl BtrfsMountEntry {
         let prefix = format!("{}=", key);
         self.0.mntops.iter().find_map(|x| match x {
             mnt::MntOps::Extra(extra) if extra.starts_with(prefix.as_str()) => {
-                Some(extra.splitn(2, '=').nth(1).unwrap().parse::<T>().unwrap())
+                extra.splitn(2, '=').nth(1).and_then(|s| s.parse::<T>().ok())
             }
             _ => None,
         })

@@ -231,7 +231,7 @@ impl ResticBackup {
                 anyhow!(e)
             })
             .map(|mut process| {
-                let message_reader = Self::spawn_message_reader(process.stdout.take().unwrap());
+                let message_reader = Self::spawn_message_reader(process.stdout.take().expect("only taken once"));
                 StartedResticBackup {
                     process,
                     message_reader,
@@ -292,7 +292,7 @@ impl StartedResticBackup {
         let _ = unmount(&self.source.bind_path);
         exit_status_as_result(exit_status)?;
 
-        let message_result = self.message_reader.await.unwrap().unwrap();
+        let message_result = self.message_reader.await.expect("task doesn't panic")?;
         let new_snapshot_id = message_result.context("failed to find new snapshot id")?;
 
         Ok(ResticContainerSnapshot {

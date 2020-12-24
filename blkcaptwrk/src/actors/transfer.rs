@@ -80,7 +80,7 @@ impl TransferActor {
             if size == 0 {
                 break;
             }
-            writer.write_all(&buf).await.unwrap();
+            writer.write_all(&buf).await?;
             buf.clear();
         }
 

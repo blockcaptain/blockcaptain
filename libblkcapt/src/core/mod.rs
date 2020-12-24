@@ -633,7 +633,7 @@ impl ObservationEmitter {
             ObservableEventStage::Failed(_) => "/fail",
         };
         let uri_string = format!("{}{}", &self.url, healthcheck_id.to_hyphenated());
-        let uri = Uri::from_str((uri_string + suffix).as_str()).unwrap();
+        let uri = Uri::from_str((uri_string + suffix).as_str()).context("parsing healtcheck uri failed")?;
 
         slog_scope::trace!("Emitting health check to url: {}", uri);
         let result = match stage {

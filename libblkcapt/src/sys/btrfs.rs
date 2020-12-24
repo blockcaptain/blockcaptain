@@ -336,8 +336,8 @@ mod operations {
 
         pub fn start(mut self) -> Result<StartedSnapshotReceiver> {
             self.command.spawn().map_err(|e| anyhow!(e)).map(|mut process| {
-                let name_reader_stdout = Self::spawn_name_reader(process.stdout.take().unwrap());
-                let name_reader_stderr = Self::spawn_name_reader(process.stderr.take().unwrap());
+                let name_reader_stdout = Self::spawn_name_reader(process.stdout.take().expect("only taken once"));
+                let name_reader_stderr = Self::spawn_name_reader(process.stderr.take().expect("only taken once"));
                 StartedSnapshotReceiver {
                     process,
                     name_reader_stdout,
@@ -386,11 +386,11 @@ mod operations {
 
         pub async fn wait(self) -> Result<String> {
             exit_status_as_result(self.process.await?)?;
-            let stdout_result = self.name_reader_stdout.await.unwrap().unwrap();
-            let stderr_result = self.name_reader_stderr.await.unwrap().unwrap();
+            let stdout_result = self.name_reader_stdout.await.expect("task doesn't panic")?;
+            let stderr_result = self.name_reader_stderr.await.expect("task doesn't panic")?;
             let incoming_snapshot_name = stdout_result
                 .or(stderr_result)
-                .context("Failed to find incoming subvol name.")?;
+                .context("failed to find incoming subvol name")?;
             Ok(incoming_snapshot_name)
         }
     }

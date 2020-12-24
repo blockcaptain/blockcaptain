@@ -254,7 +254,7 @@ pub fn entity_by_name_or_id<'a, T: AsRef<dyn Entity + 'a> + EntityStatic>(
         .collect::<Vec<_>>();
     match matches.len() {
         0 => Err(anyhow!("{} '{}' not found", T::entity_type_static(), name_or_id)),
-        1 => Ok(matches.pop().unwrap()),
+        1 => Ok(matches.pop().expect("length verified can't fail")),
         _ => Err(anyhow!(
             "'{}' identifies multiple {}s",
             T::entity_type_static(),

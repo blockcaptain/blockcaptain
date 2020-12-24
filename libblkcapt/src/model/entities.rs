@@ -408,8 +408,9 @@ impl Default for RetentionRuleset {
     fn default() -> Self {
         Self {
             interval: Default::default(),
-            newest_count: NonZeroU32::new(1).unwrap(),
-            evaluation_schedule: ScheduleModel::try_from(Duration::from_secs(3600 * 24)).unwrap(),
+            newest_count: NonZeroU32::new(1).expect("nonzero valid constant"),
+            evaluation_schedule: ScheduleModel::try_from(Duration::from_secs(3600 * 24))
+                .expect("schedulemodel valid constant"),
         }
     }
 }

@@ -6,6 +6,7 @@ use world::run_command_as_result;
 use crate::parsing::{parse_key_value_pair_lines, StringPair};
 use anyhow::{anyhow, bail, Context, Result};
 use fs::{DevicePathBuf, FsPathBuf};
+pub use operations::*;
 use serde::Deserialize;
 use std::string::String;
 use std::{convert::TryFrom, process::Command};
@@ -177,7 +178,7 @@ impl MountedFilesystem {
         .map(|_| ())
     }
 
-    pub fn send_subvolume(&self, path: &FsPathBuf, parent: Option<&FsPathBuf>) -> tokio::process::Command {
+    pub fn send_subvolume(&self, path: &FsPathBuf, parent: Option<&FsPathBuf>) -> SnapshotSender {
         let mut command = tokio::process::Command::new("btrfs");
         let source_snap_path = path.as_pathbuf(&self.fstree_mountpoint);
         match parent {
@@ -191,14 +192,14 @@ impl MountedFilesystem {
             }
             None => command.arg("send").arg(source_snap_path),
         };
-        command
+        SnapshotSender::new(command)
     }
 
-    pub fn receive_subvolume(&self, into_path: &FsPathBuf) -> tokio::process::Command {
+    pub fn receive_subvolume(&self, into_path: &FsPathBuf) -> SnapshotReceiver {
         let mut command = tokio::process::Command::new("btrfs");
         let target_into_path = into_path.as_pathbuf(&self.fstree_mountpoint);
         command.arg("receive").arg(target_into_path);
-        command
+        SnapshotReceiver::new(command)
     }
 
     pub fn list_subvolumes(&self, path: &FsPathBuf) -> Result<Vec<Subvolume>> {
@@ -206,10 +207,10 @@ impl MountedFilesystem {
         Subvolume::list_subvolumes(&target_path)
     }
 
-    pub fn scrub(&self) -> tokio::process::Command {
+    pub fn scrub(&self) -> PoolScrub {
         let mut command = tokio::process::Command::new("btrfs");
         command.args(&["scrub", "start", "-BRd"]).arg(&self.fstree_mountpoint);
-        command
+        PoolScrub::new(command)
     }
 }
 
@@ -272,6 +273,173 @@ impl Subvolume {
         }))
         .context("Failed loading information from btrfs subvolume output.")?;
         Ok(subvolume)
+    }
+}
+
+mod operations {
+    use crate::sys::process::exit_status_as_result;
+    use anyhow::{anyhow, Context as AnyhowContext, Result};
+    use std::process::Stdio;
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader},
+        process::{Child, Command},
+        task::JoinHandle,
+    };
+
+    pub struct SnapshotSender {
+        command: Command,
+    }
+
+    impl SnapshotSender {
+        pub(super) fn new(mut command: Command) -> Self {
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::null());
+            Self { command }
+        }
+
+        pub fn start(mut self) -> Result<StartedSnapshotSender> {
+            self.command
+                .spawn()
+                .map(|process| StartedSnapshotSender { process })
+                .map_err(|e| anyhow!(e))
+        }
+    }
+
+    pub struct StartedSnapshotSender {
+        process: Child,
+    }
+
+    impl StartedSnapshotSender {
+        pub fn reader(&mut self) -> impl AsyncRead {
+            self.process
+                .stdout
+                .take()
+                .expect("child did not have a handle to stdout")
+        }
+
+        pub async fn wait(self) -> Result<()> {
+            exit_status_as_result(self.process.await?)
+        }
+    }
+
+    pub struct SnapshotReceiver {
+        command: Command,
+    }
+
+    impl SnapshotReceiver {
+        pub(super) fn new(mut command: Command) -> Self {
+            command.stdin(Stdio::piped());
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::piped());
+            Self { command }
+        }
+
+        pub fn start(mut self) -> Result<StartedSnapshotReceiver> {
+            self.command.spawn().map_err(|e| anyhow!(e)).map(|mut process| {
+                let name_reader_stdout = Self::spawn_name_reader(process.stdout.take().unwrap());
+                let name_reader_stderr = Self::spawn_name_reader(process.stderr.take().unwrap());
+                StartedSnapshotReceiver {
+                    process,
+                    name_reader_stdout,
+                    name_reader_stderr,
+                }
+            })
+        }
+
+        fn spawn_name_reader(handle: impl AsyncRead + Unpin + Send + 'static) -> JoinHandle<Result<Option<String>>> {
+            tokio::spawn(async move {
+                const PREFIX1: &str = "At subvol ";
+                const PREFIX1_LEN: usize = PREFIX1.len();
+                const PREFIX2: &str = "At snapshot ";
+                const PREFIX2_LEN: usize = PREFIX2.len();
+                let mut reader = BufReader::new(handle);
+                let mut buffer = String::new();
+                let mut result = None;
+                while reader.read_line(&mut buffer).await? > 0 {
+                    if result.is_none() {
+                        if buffer.starts_with(PREFIX1) && buffer.len() > PREFIX1_LEN {
+                            result = Some(buffer[PREFIX1_LEN..].trim().to_string());
+                        } else if buffer.starts_with(PREFIX2) && buffer.len() > PREFIX2_LEN {
+                            result = Some(buffer[PREFIX2_LEN..].trim().to_string());
+                        }
+                    }
+                    buffer.clear();
+                }
+                Ok(result)
+            })
+        }
+    }
+
+    pub struct StartedSnapshotReceiver {
+        process: Child,
+        name_reader_stdout: JoinHandle<Result<Option<String>>>,
+        name_reader_stderr: JoinHandle<Result<Option<String>>>,
+    }
+
+    impl StartedSnapshotReceiver {
+        pub fn writer(&mut self) -> impl AsyncWrite {
+            self.process
+                .stdin
+                .take()
+                .expect("child did not have a handle to stdout")
+        }
+
+        pub async fn wait(self) -> Result<String> {
+            exit_status_as_result(self.process.await?)?;
+            let stdout_result = self.name_reader_stdout.await.unwrap().unwrap();
+            let stderr_result = self.name_reader_stderr.await.unwrap().unwrap();
+            let incoming_snapshot_name = stdout_result
+                .or(stderr_result)
+                .context("Failed to find incoming subvol name.")?;
+            Ok(incoming_snapshot_name)
+        }
+    }
+
+    pub struct PoolScrub {
+        command: Command,
+    }
+
+    impl PoolScrub {
+        pub fn new(mut command: Command) -> Self {
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::null());
+            Self { command }
+        }
+
+        pub fn start(mut self) -> Result<StartedPoolScrub> {
+            self.command
+                .spawn()
+                .map(|process| StartedPoolScrub { process })
+                .context("failed to spawn btrfs scrub process")
+        }
+    }
+
+    pub struct StartedPoolScrub {
+        process: Child,
+    }
+
+    impl StartedPoolScrub {
+        pub async fn wait(self) -> Result<(), ScrubError> {
+            let exit_status = self.process.await.map_err(|_| ScrubError::Unknown)?;
+            match exit_status.code() {
+                Some(code) => match code {
+                    0 => Ok(()),
+                    3 => Err(ScrubError::UncorrectableErrors),
+                    _ => Err(ScrubError::Unknown),
+                },
+                None => {
+                    slog_scope::error!("scrub process terminated");
+                    Err(ScrubError::Unknown)
+                }
+            }
+        }
+    }
+    #[derive(thiserror::Error, Debug)]
+    pub enum ScrubError {
+        #[error("scrub process failed to complete")]
+        Unknown,
+        #[error("uncorrectable errors were found during scrub")]
+        UncorrectableErrors,
     }
 }
 

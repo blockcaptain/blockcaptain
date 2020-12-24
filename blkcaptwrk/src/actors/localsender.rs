@@ -4,7 +4,7 @@ use crate::{
     xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::Result;
-use libblkcapt::core::localsndrcv::SnapshotSender;
+use libblkcapt::sys::btrfs::SnapshotSender;
 use slog::Logger;
 use std::mem;
 use strum_macros::Display;

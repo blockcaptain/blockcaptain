@@ -1,9 +1,6 @@
-pub mod localsndrcv;
 pub mod restic;
 pub mod retention;
 pub mod system;
-use self::localsndrcv::{PoolScrub, SnapshotReceiver, SnapshotSender};
-use crate::model::Entity;
 use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
 use crate::{
@@ -12,6 +9,10 @@ use crate::{
         SubvolumeEntity,
     },
     sys::net::HttpsClient,
+};
+use crate::{
+    model::Entity,
+    sys::btrfs::{PoolScrub, SnapshotReceiver, SnapshotSender},
 };
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
@@ -94,8 +95,7 @@ impl BtrfsPool {
     }
 
     pub fn scrub(&self) -> PoolScrub {
-        let command = self.filesystem.scrub();
-        PoolScrub::new(command)
+        self.filesystem.scrub()
     }
 }
 
@@ -284,12 +284,10 @@ impl BtrfsDatasetSnapshot {
     }
 
     pub fn send(&self, parent: Option<&BtrfsDatasetSnapshot>) -> SnapshotSender {
-        SnapshotSender::new(
-            self.dataset
-                .pool
-                .filesystem
-                .send_subvolume(self.path(), parent.map(|s| s.path())),
-        )
+        self.dataset
+            .pool
+            .filesystem
+            .send_subvolume(self.path(), parent.map(|s| s.path()))
     }
 
     pub fn state(&self) -> BtrfsDatasetSnapshotState {
@@ -442,13 +440,27 @@ impl BtrfsContainer {
     }
 
     pub fn receive(self: &Arc<Self>, dataset_id: Uuid) -> SnapshotReceiver {
-        SnapshotReceiver::new(
-            self.pool
-                .filesystem
-                .receive_subvolume(&self.snapshot_container_path(dataset_id)),
-            dataset_id,
-            Arc::clone(self),
-        )
+        self.pool
+            .filesystem
+            .receive_subvolume(&self.snapshot_container_path(dataset_id))
+    }
+
+    pub fn seal_snapshot(self: &Arc<Self>, dataset_id: Uuid, incoming_name: &str) -> Result<BtrfsContainerSnapshot> {
+        let final_name = incoming_name.to_owned() + ".bcrcv";
+        let container_path = self
+            .snapshot_container_path(dataset_id)
+            .as_pathbuf(&self.pool.filesystem.fstree_mountpoint);
+
+        let source_path = container_path.join(incoming_name);
+        let destination_path = container_path.join(&final_name);
+        fs::rename(&source_path, &destination_path).with_context(|| {
+            format!(
+                "Failed to rename the snapshot from '{:?}' to '{:?}' after successfully receiving it.",
+                source_path, destination_path
+            )
+        })?;
+
+        self.snapshot_by_name(dataset_id, &final_name)
     }
 
     pub fn validate(pool: &Arc<BtrfsPool>, model: BtrfsContainerEntity) -> Result<Self> {

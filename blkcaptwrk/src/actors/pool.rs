@@ -221,7 +221,7 @@ mod scrub {
         tasks::{WorkerCompleteMessage, WorkerTask},
         xactorext::TerminalState,
     };
-    use libblkcapt::core::localsndrcv::{PoolScrub, ScrubError};
+    use libblkcapt::sys::btrfs::{PoolScrub, ScrubError};
     use strum_macros::Display;
     use xactor::WeakAddr;
 

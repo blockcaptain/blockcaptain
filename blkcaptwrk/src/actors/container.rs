@@ -4,7 +4,7 @@ use super::{
     pool::PoolActor,
 };
 use crate::{
-    actorbase::{unhandled_result, ScheduledMessage},
+    actorbase::{log_result, unhandled_result, ScheduledMessage},
     snapshots::{
         failed_snapshot_deletes_as_result, prune_btrfs_snapshots, ContainerSnapshotsResponse,
         GetContainerSnapshotsMessage, PruneMessage,
@@ -14,7 +14,7 @@ use crate::{
         TerminalState,
     },
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use futures_util::future::ready;
 use libblkcapt::{
     core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsPool},
@@ -203,7 +203,7 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
 #[async_trait::async_trait]
 impl BcHandler<LocalReceiverStoppedParentMessage> for ContainerActor {
     async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: LocalReceiverStoppedParentMessage) {
-        let LocalReceiverStoppedParentMessage(actor_id, new_snapshot) = msg;
+        let LocalReceiverStoppedParentMessage(actor_id, maybe_snapshot_name) = msg;
         let active_receiver = match self.active_receivers.remove(&actor_id) {
             Some(active) => active,
             None => {
@@ -213,13 +213,21 @@ impl BcHandler<LocalReceiverStoppedParentMessage> for ContainerActor {
             }
         };
 
-        let new_snapshot = new_snapshot.unwrap();
-        debug!(ctx.log(), "container received snapshot {}", new_snapshot.datetime(); "received_uuid" => %new_snapshot.received_uuid());
+        if let Some(new_snapshot_name) = maybe_snapshot_name {
+            let sealed_snapshot = self
+                .container
+                .seal_snapshot(active_receiver.dataset_id, &new_snapshot_name)
+                .with_context(|| format!("received snapshot {} but failed to seal it", new_snapshot_name));
+            log_result(ctx.log(), &sealed_snapshot);
+            if let Ok(new_snapshot) = sealed_snapshot {
+                debug!(ctx.log(), "container received snapshot {}", new_snapshot.datetime(); "received_uuid" => %new_snapshot.received_uuid());
 
-        self.snapshots
-            .entry(active_receiver.dataset_id)
-            .or_default()
-            .push(new_snapshot);
+                self.snapshots
+                    .entry(active_receiver.dataset_id)
+                    .or_default()
+                    .push(new_snapshot);
+            }
+        }
     }
 }
 

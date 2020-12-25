@@ -137,7 +137,7 @@ pub fn prune_btrfs_snapshots<T: BtrfsSnapshot>(
 }
 
 pub fn failed_snapshot_deletes_as_result(failed_count: usize) -> Result<()> {
-    if failed_count > 0 {
+    if failed_count == 0 {
         Ok(())
     } else {
         Err(anyhow!("{} snapshots failed to delete", failed_count))

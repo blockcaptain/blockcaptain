@@ -3,7 +3,7 @@ use super::fs::{self, BtrfsMountEntry};
 use super::process::world;
 use world::run_command_as_result;
 
-use crate::parsing::{parse_key_value_pair_lines, StringPair};
+use crate::parsing::{parse_key_value_pair_lines, parse_uuid, StringPair};
 use anyhow::{anyhow, bail, Context, Result};
 use fs::{DevicePathBuf, FsPathBuf};
 pub use operations::*;
@@ -243,7 +243,7 @@ impl Subvolume {
             command
         })?;
         let path_matches = paths_regex.captures_iter(&output_data);
-        let parse_uuid = |m| Uuid::parse_str(m).expect("Should always have parsable UUID in btrfs list.");
+        let parse_uuid = |m| parse_uuid(m).expect("Should always have parsable UUID in btrfs list.");
         Ok(path_matches
             .map(|m| Self {
                 uuid: parse_uuid(m.get(3).unwrap().as_str()),

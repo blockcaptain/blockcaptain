@@ -8,18 +8,20 @@ use libblkcapt::{
     core::ObservationEmitter,
     core::ObservationRouter,
     model::entities::HealthchecksHeartbeat,
-    model::entities::{HealthchecksObserverEntity, ObservableEvent, ScheduleModel},
     model::Entity,
+    model::{
+        entities::{HealthchecksObserverEntity, ObservableEvent, ScheduleModel},
+        EntityId,
+    },
 };
 use slog::{o, Logger};
 use std::{borrow::Borrow, convert::TryFrom, convert::TryInto, fmt::Debug, future::Future};
-use uuid::Uuid;
 use xactor::{message, Addr, Broker, Service};
 
 #[message()]
 #[derive(Clone, Debug)]
 pub struct ObservableEventMessage {
-    pub source: Uuid,
+    pub source: EntityId,
     pub event: ObservableEvent,
     pub stage: ObservableEventStage,
 }
@@ -28,7 +30,7 @@ pub struct ObservableEventMessage {
 #[derive(Clone)]
 struct HeartbeatMessage;
 
-pub async fn observable_func<F, T, E, R>(source: Uuid, event: ObservableEvent, func: F) -> std::result::Result<T, E>
+pub async fn observable_func<F, T, E, R>(source: EntityId, event: ObservableEvent, func: F) -> std::result::Result<T, E>
 where
     F: FnOnce() -> R,
     R: Future<Output = std::result::Result<T, E>>,
@@ -40,7 +42,7 @@ where
     result
 }
 
-pub async fn start_observation(source: Uuid, event: ObservableEvent) -> StartedObservation {
+pub async fn start_observation(source: EntityId, event: ObservableEvent) -> StartedObservation {
     let mut broker = Broker::from_registry().await.expect("broker is always available");
     broker
         .publish(ObservableEventMessage {
@@ -59,7 +61,7 @@ pub async fn start_observation(source: Uuid, event: ObservableEvent) -> StartedO
 }
 
 pub struct StartedObservation {
-    source: Uuid,
+    source: EntityId,
     event: ObservableEvent,
     stopped: bool,
     broker: Addr<Broker<ObservableEventMessage>>,

@@ -1,7 +1,6 @@
 pub mod restic;
 pub mod retention;
 pub mod system;
-use crate::sys::btrfs::{Filesystem, MountedFilesystem, Subvolume};
 use crate::sys::fs::{lookup_mountentry, BlockDeviceIds, BtrfsMountEntry, FsPathBuf};
 use crate::{
     model::entities::{
@@ -13,6 +12,10 @@ use crate::{
 use crate::{
     model::Entity,
     sys::btrfs::{PoolScrub, SnapshotReceiver, SnapshotSender},
+};
+use crate::{
+    model::EntityId,
+    sys::btrfs::{Filesystem, MountedFilesystem, Subvolume},
 };
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
@@ -405,17 +408,17 @@ impl BtrfsContainer {
         Ok(dataset)
     }
 
-    pub fn source_dataset_ids(&self) -> Result<Vec<Uuid>> {
+    pub fn source_dataset_ids(&self) -> Result<Vec<EntityId>> {
         Ok(self
             .pool
             .filesystem
             .list_subvolumes(&self.subvolume.path)?
             .into_iter()
-            .filter_map(|s| Uuid::parse_str(&s.path.file_name().unwrap_or_default().to_string_lossy()).ok())
+            .filter_map(|s| EntityId::from_str(&s.path.file_name().unwrap_or_default().to_string_lossy()).ok())
             .collect::<Vec<_>>())
     }
 
-    pub fn snapshots(self: &Arc<Self>, dataset_id: Uuid) -> Result<Vec<BtrfsContainerSnapshot>> {
+    pub fn snapshots(self: &Arc<Self>, dataset_id: EntityId) -> Result<Vec<BtrfsContainerSnapshot>> {
         let mut snapshots = self
             .pool
             .filesystem
@@ -429,23 +432,25 @@ impl BtrfsContainer {
     }
 
     pub fn snapshot_by_datetime(
-        self: &Arc<Self>, dataset_id: Uuid, datetime: DateTime<Utc>,
+        self: &Arc<Self>, dataset_id: EntityId, datetime: DateTime<Utc>,
     ) -> Result<BtrfsContainerSnapshot> {
         let name = datetime.format("%FT%H-%M-%SZ.bcrcv").to_string();
         self.snapshot_by_name(dataset_id, &name)
     }
 
-    pub fn snapshot_container_path(&self, dataset_id: Uuid) -> FsPathBuf {
+    pub fn snapshot_container_path(&self, dataset_id: EntityId) -> FsPathBuf {
         self.subvolume.path.join(dataset_id.to_string())
     }
 
-    pub fn receive(self: &Arc<Self>, dataset_id: Uuid) -> SnapshotReceiver {
+    pub fn receive(self: &Arc<Self>, dataset_id: EntityId) -> SnapshotReceiver {
         self.pool
             .filesystem
             .receive_subvolume(&self.snapshot_container_path(dataset_id))
     }
 
-    pub fn seal_snapshot(self: &Arc<Self>, dataset_id: Uuid, incoming_name: &str) -> Result<BtrfsContainerSnapshot> {
+    pub fn seal_snapshot(
+        self: &Arc<Self>, dataset_id: EntityId, incoming_name: &str,
+    ) -> Result<BtrfsContainerSnapshot> {
         let final_name = incoming_name.to_owned() + ".bcrcv";
         let container_path = self
             .snapshot_container_path(dataset_id)
@@ -484,7 +489,7 @@ impl BtrfsContainer {
         self.model
     }
 
-    fn snapshot_by_name(self: &Arc<Self>, dataset_id: Uuid, name: &str) -> Result<BtrfsContainerSnapshot> {
+    fn snapshot_by_name(self: &Arc<Self>, dataset_id: EntityId, name: &str) -> Result<BtrfsContainerSnapshot> {
         self.pool
             .filesystem
             .subvolume_by_path(&self.snapshot_container_path(dataset_id).join(name))
@@ -603,7 +608,7 @@ impl ObservationRouter {
         Self { observerations: model }
     }
 
-    pub fn route(&self, source: Uuid, event: ObservableEvent) -> Vec<&HealthchecksObservation> {
+    pub fn route(&self, source: EntityId, event: ObservableEvent) -> Vec<&HealthchecksObservation> {
         self.observerations
             .iter()
             .filter(|obs| obs.observation.entity_id == source && obs.observation.event == event)

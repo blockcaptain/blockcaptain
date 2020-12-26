@@ -12,20 +12,22 @@ use futures_util::stream::FuturesUnordered;
 use futures_util::stream::StreamExt;
 use libblkcapt::{
     core::BtrfsPool,
-    model::entities::{BtrfsPoolEntity, FeatureState, ObservableEvent},
     model::Entity,
+    model::{
+        entities::{BtrfsPoolEntity, FeatureState, ObservableEvent},
+        EntityId,
+    },
 };
 use scrub::{PoolScrubActor, ScrubCompleteMessage};
 use slog::{error, info, o, Logger};
 use std::{collections::HashMap, convert::TryInto, mem, sync::Arc};
-use uuid::Uuid;
 use xactor::{message, Actor, Addr};
 
 pub struct PoolActor {
     pool: PoolState,
     scrub_schedule: Option<ScheduledMessage>,
-    datasets: HashMap<Uuid, Addr<BcActor<DatasetActor>>>,
-    containers: HashMap<Uuid, Addr<BcActor<ContainerActor>>>,
+    datasets: HashMap<EntityId, Addr<BcActor<DatasetActor>>>,
+    containers: HashMap<EntityId, Addr<BcActor<ContainerActor>>>,
 }
 
 enum PoolState {
@@ -145,18 +147,18 @@ impl BcActorCtrl for PoolActor {
 }
 
 #[async_trait::async_trait]
-impl BcHandler<GetChildActorMessage<BcActor<DatasetActor>>> for PoolActor {
+impl BcHandler<GetChildActorMessage<EntityId, BcActor<DatasetActor>>> for PoolActor {
     async fn handle(
-        &mut self, _ctx: BcContext<'_, Self>, msg: GetChildActorMessage<BcActor<DatasetActor>>,
+        &mut self, _ctx: BcContext<'_, Self>, msg: GetChildActorMessage<EntityId, BcActor<DatasetActor>>,
     ) -> Option<Addr<BcActor<DatasetActor>>> {
         self.datasets.get(&msg.0).cloned()
     }
 }
 
 #[async_trait::async_trait]
-impl BcHandler<GetChildActorMessage<BcActor<ContainerActor>>> for PoolActor {
+impl BcHandler<GetChildActorMessage<EntityId, BcActor<ContainerActor>>> for PoolActor {
     async fn handle(
-        &mut self, _ctx: BcContext<'_, Self>, msg: GetChildActorMessage<BcActor<ContainerActor>>,
+        &mut self, _ctx: BcContext<'_, Self>, msg: GetChildActorMessage<EntityId, BcActor<ContainerActor>>,
     ) -> Option<Addr<BcActor<ContainerActor>>> {
         self.containers.get(&msg.0).cloned()
     }

@@ -20,18 +20,20 @@ use libblkcapt::{
     core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsPool},
     core::{Snapshot, SnapshotHandle},
     model::entities::FeatureState,
-    model::entities::{BtrfsContainerEntity, ObservableEvent},
     model::Entity,
+    model::{
+        entities::{BtrfsContainerEntity, ObservableEvent},
+        EntityId,
+    },
 };
 use slog::{debug, o, trace, Logger};
 use std::{collections::HashMap, convert::TryInto, sync::Arc};
-use uuid::Uuid;
 use xactor::{message, Actor, Addr, Handler, Sender, WeakAddr};
 
 pub struct ContainerActor {
     pool: Addr<BcActor<PoolActor>>,
     container: Arc<BtrfsContainer>,
-    snapshots: HashMap<Uuid, Vec<BtrfsContainerSnapshot>>,
+    snapshots: HashMap<EntityId, Vec<BtrfsContainerSnapshot>>,
     prune_schedule: Option<ScheduledMessage>,
     active_receivers: HashMap<u64, ActiveReceiver>,
     faulted: bool,
@@ -39,12 +41,12 @@ pub struct ContainerActor {
 
 pub struct ActiveReceiver {
     actor: WeakAddr<BcActor<LocalReceiverActor>>,
-    dataset_id: Uuid,
+    dataset_id: EntityId,
 }
 
 #[message(result = "Result<()>")]
 pub struct GetSnapshotReceiverMessage {
-    source_dataset_id: Uuid,
+    source_dataset_id: EntityId,
     source_snapshot_handle: SnapshotHandle,
     target_ready: Sender<ReceiverReadyMessage>,
     target_finished: Sender<LocalReceiverStoppedMessage>,
@@ -52,7 +54,7 @@ pub struct GetSnapshotReceiverMessage {
 
 impl GetSnapshotReceiverMessage {
     pub fn new<A>(
-        requestor_addr: &Addr<A>, source_dataset_id: Uuid, source_snapshot_handle: SnapshotHandle,
+        requestor_addr: &Addr<A>, source_dataset_id: EntityId, source_snapshot_handle: SnapshotHandle,
     ) -> GetSnapshotReceiverMessage
     where
         A: Handler<ReceiverReadyMessage> + Handler<LocalReceiverStoppedMessage>,

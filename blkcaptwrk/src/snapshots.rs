@@ -5,7 +5,7 @@ use libblkcapt::{
         retention::{evaluate_retention, RetentionEvaluation},
         BtrfsSnapshot, Snapshot, SnapshotHandle,
     },
-    model::entities::RetentionRuleset,
+    model::{entities::RetentionRuleset, EntityId},
 };
 use slog::{debug, info, trace, Logger};
 use std::collections::HashSet;
@@ -146,7 +146,7 @@ pub fn failed_snapshot_deletes_as_result(failed_count: usize) -> Result<()> {
 
 #[message(result = "ContainerSnapshotsResponse")]
 pub struct GetContainerSnapshotsMessage {
-    pub source_dataset_id: Uuid,
+    pub source_dataset_id: EntityId,
 }
 
 pub struct ContainerSnapshotsResponse {

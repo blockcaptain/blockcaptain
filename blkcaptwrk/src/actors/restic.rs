@@ -30,14 +30,16 @@ use std::convert::TryInto;
 use std::{collections::HashMap, hash::Hash, mem, panic, path::PathBuf, sync::Arc};
 use transfer::ParentTransferComplete;
 pub use transfer::ResticTransferActor;
-use uuid::Uuid;
 use xactor::{message, Addr, Sender};
 
 mod container {
     use std::collections::{HashSet, VecDeque};
 
     use chrono::{DateTime, Utc};
-    use libblkcapt::{core::retention::evaluate_retention, model::entities::ObservableEvent};
+    use libblkcapt::{
+        core::retention::evaluate_retention,
+        model::{entities::ObservableEvent, EntityId},
+    };
     use slog::info;
     use xactor::{Actor, WeakAddr};
 
@@ -46,9 +48,9 @@ mod container {
     use super::*;
 
     pub struct ResticContainerActor {
-        container_id: Uuid,
+        container_id: EntityId,
         repository: RepositoryState,
-        snapshots: HashMap<Uuid, Vec<ResticContainerSnapshot>>,
+        snapshots: HashMap<EntityId, Vec<ResticContainerSnapshot>>,
         prune_schedule: Option<ScheduledMessage>,
         state: State,
     }
@@ -79,12 +81,12 @@ mod container {
     enum Active {
         Transfer {
             actor: WeakAddr<BcActor<ResticTransferActor>>,
-            dataset_id: Uuid,
+            dataset_id: EntityId,
             prune_pending: bool,
         },
         Prune {
             actor: Addr<BcActor<ResticPruneActor>>,
-            forgets: Vec<(Uuid, HashSet<DateTime<Utc>>)>,
+            forgets: Vec<(EntityId, HashSet<DateTime<Utc>>)>,
         },
     }
 
@@ -96,7 +98,7 @@ mod container {
 
     #[message(result = "Result<()>")]
     pub struct GetBackupMessage {
-        source_dataset_id: Uuid,
+        source_dataset_id: EntityId,
         source_snapshot_handle: SnapshotHandle,
         target: WeakAddr<BcActor<ResticTransferActor>>,
     }
@@ -106,7 +108,7 @@ mod container {
 
     impl GetBackupMessage {
         pub fn new(
-            requestor_addr: &Addr<BcActor<ResticTransferActor>>, source_dataset_id: Uuid,
+            requestor_addr: &Addr<BcActor<ResticTransferActor>>, source_dataset_id: EntityId,
             source_snapshot_handle: SnapshotHandle,
         ) -> Self {
             Self {

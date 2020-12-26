@@ -9,7 +9,6 @@ use paste::paste;
 use slog::{crit, error, o, trace, Logger};
 use std::{future::Future, marker::PhantomData, panic::AssertUnwindSafe, time::Duration};
 use strum_macros::Display;
-use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler, Message, WeakAddr};
 
 // pub trait ActorAddrExt<T: Actor> {
@@ -40,15 +39,15 @@ pub fn join_all_actors<V: IntoIterator<Item = A>, A: AnyAddr + 'static>(actors: 
     join_all(futures_iter)
 }
 
-pub struct GetChildActorMessage<T>(pub Uuid, PhantomData<T>);
+pub struct GetChildActorMessage<I, T>(pub I, PhantomData<T>);
 
-impl<T> GetChildActorMessage<T> {
-    pub fn new(id: Uuid) -> Self {
+impl<I, T> GetChildActorMessage<I, T> {
+    pub fn new(id: I) -> Self {
         Self(id, PhantomData)
     }
 }
 
-impl<T: Actor> xactor::Message for GetChildActorMessage<T> {
+impl<I: Send + 'static, T: Actor> xactor::Message for GetChildActorMessage<I, T> {
     type Result = Option<Addr<T>>;
 }
 

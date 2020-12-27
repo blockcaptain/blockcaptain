@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  clippy:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup Environment
+        run: eng/ci/setup.sh
+      - name: Run Clippy
+        run: eng/ci/clippy.sh
+  test:
+    runs-on: ubuntu-20.04
+    env:
+      CARGO_CARGO_TARPAULIN_VERSION: 0.16.0
+      CARGO_CARGO2JUNIT_VERSION: 0.1.6
+    steps:
+      - name: Cache cargo-tarpaulin
+        uses: actions/cache@v2
+        with:
+          path: ~/.cargo/bin/cargo-tarpaulin
+          key: ${{ runner.os }}-cargo-cargo-tarpaulin-${{ env.CARGO_CARGO_TARPAULIN_VERSION }}
+      - name: Cache cargo2junit
+        uses: actions/cache@v2
+        with:
+          path: ~/.cargo/bin/cargo2junit
+          key: ${{ runner.os }}-cargo-cargo2junit-${{ env.CARGO_CARGO2JUNIT_VERSION }}
+      - uses: actions/checkout@v2
+      - name: Setup Environment
+        run: eng/ci/setup.sh
+      - name: Setup Test Environment
+        run: eng/ci/setup-test.sh
+      - name: Run Tests
+        env:
+          COVERALLS_KEY: ${{ secrets.COVERALLS_KEY }}
+        run: eng/ci/test-run.sh
+      - name: Test Report
+        run: eng/ci/test-report.sh
+      - name: Publish Test Report
+        uses: docker://ghcr.io/enricomi/publish-unit-test-result-action:v1.6
+        if: always()
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          files: test-results.xml

@@ -27,7 +27,7 @@ pub fn output_as_result(output: Output) -> Result<String> {
 }
 
 #[cfg_attr(test, mockall::automock)]
-pub mod world {
+pub mod double {
     use super::*;
 
     pub fn run_command(mut command: Command) -> std::io::Result<Output> {

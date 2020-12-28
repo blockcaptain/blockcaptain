@@ -1,12 +1,11 @@
-use super::fs::{self, BtrfsMountEntry};
-#[mockall_double::double]
-use super::process::world;
-use world::run_command_as_result;
-
+use super::fs::{BtrfsMountEntry, DevicePathBuf, FsPathBuf};
 use crate::parsing::{parse_key_value_pair_lines, parse_uuid, StringPair};
+#[mockall_double::double]
+use crate::sys::{fs::double as fs_double, process::double as process_double};
 use anyhow::{anyhow, bail, Context, Result};
-use fs::{DevicePathBuf, FsPathBuf};
+use fs_double::lookup_mountentries_by_devices;
 pub use operations::*;
+use process_double::run_command_as_result;
 use serde::Deserialize;
 use std::string::String;
 use std::{convert::TryFrom, process::Command};
@@ -39,6 +38,7 @@ pub struct MountedFilesystem {
     pub fstree_mountpoint: PathBuf,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum QueriedFilesystem {
     Unmounted(Filesystem),
     Mounted(MountedFilesystem),
@@ -90,7 +90,7 @@ impl Filesystem {
             .collect::<Vec<_>>();
 
         let fstree_mountpoint =
-            fs::lookup_mountentries_by_devices(&devices).find_map(|m| match BtrfsMountEntry::try_from(m) {
+            lookup_mountentries_by_devices(&devices).find_map(|m| match BtrfsMountEntry::try_from(m) {
                 Ok(bm) if bm.is_toplevel_subvolume() => Some(bm.mount_entry().file.to_owned()),
                 _ => None,
             });
@@ -444,15 +444,64 @@ mod operations {
 }
 
 #[cfg(test)]
-mod tests {
+mod filesystem_tests {
     use super::*;
-    use crate::sys::process::mock_world;
-    use indoc::indoc;
-    use serial_test::serial;
+    use crate::tests::prelude::*;
 
     #[test]
     #[serial(fakecmd)]
-    fn btrfs_filesystem_show_parses() {
+    fn filesystem_query_unmounted() {
+        let _process_ctx = process_context();
+        let fs_ctx = fs_double::lookup_mountentries_by_devices_context();
+        fs_ctx.expect().returning(|_| Box::new(Vec::default().into_iter()));
+
+        let result = Filesystem::query_device(&DevicePathBuf::try_from("/dev/sdb").unwrap()).unwrap();
+        assert_eq!(result, QueriedFilesystem::Unmounted(expected_filesystem()));
+    }
+
+    #[test]
+    #[serial(fakecmd)]
+    fn filesystem_query_mounted_subvol() {
+        let _process_ctx = process_context();
+        let fs_ctx = fs_double::lookup_mountentries_by_devices_context();
+        fs_ctx.expect().returning(|_| {
+            Box::new(
+                vec!["/dev/sdd /mnt/test btrfs rw,noatime,subvolid=360,subvol=/data 0 0"
+                    .parse()
+                    .unwrap()]
+                .into_iter(),
+            )
+        });
+
+        let result = Filesystem::query_device(&DevicePathBuf::try_from("/dev/sdb").unwrap()).unwrap();
+        assert_eq!(result, QueriedFilesystem::Unmounted(expected_filesystem()));
+    }
+
+    #[test]
+    #[serial(fakecmd)]
+    fn filesystem_query_mounted_entire_fs() {
+        let _process_ctx = process_context();
+        let fs_ctx = fs_double::lookup_mountentries_by_devices_context();
+        fs_ctx.expect().returning(|_| {
+            Box::new(
+                vec!["/dev/sdd /mnt/test btrfs rw,noatime,subvolid=5,subvol=/ 0 0"
+                    .parse()
+                    .unwrap()]
+                .into_iter(),
+            )
+        });
+
+        let result = Filesystem::query_device(&DevicePathBuf::try_from("/dev/sdb").unwrap()).unwrap();
+        assert_eq!(
+            result,
+            QueriedFilesystem::Mounted(MountedFilesystem {
+                filesystem: expected_filesystem(),
+                fstree_mountpoint: "/mnt/test".into(),
+            })
+        );
+    }
+
+    fn process_context() -> process_double::__run_command_as_result::Context {
         const BTRFS_DATA: &str = indoc!(
             r#"
             Label: 'nas_mirrored'  uuid: 338a0b41-e857-4e5b-6544-6fd617277722
@@ -460,30 +509,30 @@ mod tests {
             	devid    1 size 2000398934016 used 381220290560 path /dev/sdb 
             	devid    2 size 2000398934016 used 381220290560 path /dev/sdd"#
         );
-        let ctx = mock_world::run_command_as_result_context();
-        ctx.expect().returning(|_| Ok(BTRFS_DATA.to_string()));
+        let process_ctx = process_double::run_command_as_result_context();
+        process_ctx.expect().returning(|_| Ok(BTRFS_DATA.to_string()));
+        process_ctx
+    }
 
-        if let QueriedFilesystem::Unmounted(fs) =
-            Filesystem::query_device(&DevicePathBuf::try_from("/dev/sdb").unwrap()).unwrap()
-        {
-            assert_eq!(
-                fs,
-                Filesystem {
-                    uuid: Uuid::parse_str("338a0b41-e857-4e5b-6544-6fd617277722").unwrap(),
-                    devices: vec![
-                        DevicePathBuf::try_from("/dev/sdb").unwrap(),
-                        DevicePathBuf::try_from("/dev/sdd").unwrap()
-                    ]
-                }
-            );
-        } else {
-            assert!(false, "Test fs should be unmounted.")
+    fn expected_filesystem() -> Filesystem {
+        Filesystem {
+            uuid: Uuid::parse_str("338a0b41-e857-4e5b-6544-6fd617277722").unwrap(),
+            devices: vec![
+                DevicePathBuf::try_from("/dev/sdb").unwrap(),
+                DevicePathBuf::try_from("/dev/sdd").unwrap(),
+            ],
         }
     }
+}
+
+#[cfg(test)]
+mod subvolume_tests {
+    use super::*;
+    use crate::tests::prelude::*;
 
     #[test]
     #[serial(fakecmd)]
-    fn btrfs_subvolume_show_parses() {
+    fn subvolume_from_path() {
         const BTRFS_DATA: &str = indoc!(
             r#"
             @
@@ -503,7 +552,7 @@ mod tests {
 				            .blkcapt/snapshots/8a7ae0b5-b28c-b240-8c07-0015431d58d8/2020-08-23T17-24-02Z
 				            .blkcapt/snapshots/8a7ae0b5-b28c-b240-8c07-0015431d58d8/2020-08-23T20-14-53Z"#
         );
-        let ctx = mock_world::run_command_as_result_context();
+        let ctx = process_double::run_command_as_result_context();
         ctx.expect().returning(|_| Ok(BTRFS_DATA.to_string()));
 
         assert_eq!(
@@ -519,7 +568,7 @@ mod tests {
 
     #[test]
     #[serial(fakecmd)]
-    fn btrfs_subvolume_list_parses() {
+    fn subvolume_list() {
         const BTRFS_DATA: &str = indoc!(
             r#"
             ID 260 gen 48 cgen 8 parent 5 top level 5 parent_uuid -                                    received_uuid -                                    uuid 8a7ae0b5-b28c-b240-8c07-0015431d58d8 path test4
@@ -528,7 +577,7 @@ mod tests {
             ID 284 gen 50 cgen 47 parent 273 top level 273 parent_uuid -                                    received_uuid -                                    uuid 0cdd2cd3-8e63-4749-adb5-e63a1050b3ea path .blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7
             ID 285 gen 48 cgen 48 parent 284 top level 284 parent_uuid 8a7ae0b5-b28c-b240-8c07-0015431d58d8 received_uuid -                                    uuid 269b40d7-e072-954e-9138-04cbef62a13f path .blkcapt/snapshots/b99a584c-72c0-4cbe-9c6d-0c32274563f7/2020-08-26T21-25-26Z"#
         );
-        let ctx = mock_world::run_command_as_result_context();
+        let ctx = process_double::run_command_as_result_context();
         ctx.expect().returning(|_| Ok(BTRFS_DATA.to_string()));
 
         assert_eq!(

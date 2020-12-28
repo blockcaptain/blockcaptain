@@ -1,9 +1,10 @@
-#[mockall_double::double]
-use super::process::world;
 use crate::parsing::{parse_key_value_data, StringPair};
+#[mockall_double::double]
+use crate::sys::process::double as process_double;
 use anyhow::{anyhow, Context, Error, Result};
 use mnt::{MountEntry, MountIter};
 use nix::mount::{mount, MsFlags};
+use process_double::run_command_as_result;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 use std::ffi::OsStr;
@@ -11,7 +12,6 @@ use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::{collections::HashMap, process::Command};
 use uuid::Uuid;
-use world::run_command_as_result;
 
 // ## Filesystem Relative PathBuf ####################################################################################
 
@@ -97,34 +97,41 @@ impl FromStr for DevicePathBuf {
 }
 
 // ## Filesystem Mounting ############################################################################################
-
+pub use double::*;
 const MOUNT_EXPECTATION: &str = "All entries in mount list must be parsable.";
 
-/// Lookup an exact mount entry at target.
-pub fn lookup_mountentry(target: &Path) -> Option<MountEntry> {
-    let mut iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
-    iter.find_map(|m| match m.expect(MOUNT_EXPECTATION) {
-        m if m.file == target => Some(m),
-        _ => None,
-    })
-}
+#[cfg_attr(test, mockall::automock)]
+pub mod double {
+    use super::*;
 
-pub fn lookup_mountentries_by_devices(devices: &[DevicePathBuf]) -> impl Iterator<Item = MountEntry> + '_ {
-    let iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
-    iter.filter_map(move |m| match m.expect(MOUNT_EXPECTATION) {
-        m if DevicePathBuf::try_from(&m.spec)
-            .map(|dp| devices.contains(&dp))
-            .unwrap_or_default() =>
-        {
-            Some(m)
-        }
-        _ => None,
-    })
-}
+    /// Lookup an exact mount entry at target.
+    pub fn lookup_mountentry(target: &Path) -> Option<MountEntry> {
+        let mut iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
+        iter.find_map(|m| match m.expect(MOUNT_EXPECTATION) {
+            m if m.file == target => Some(m),
+            _ => None,
+        })
+    }
 
-/// Find the mount entry at target or the mount that contains target.
-pub fn find_mountentry(target: &Path) -> Option<MountEntry> {
-    mnt::get_mount(target).expect(MOUNT_EXPECTATION)
+    pub fn lookup_mountentries_by_devices(devices: &[DevicePathBuf]) -> impl Iterator<Item = MountEntry> {
+        let iter = MountIter::new_from_proc().expect(MOUNT_EXPECTATION);
+        iter.filter_map(move |m| match m.expect(MOUNT_EXPECTATION) {
+            m if DevicePathBuf::try_from(&m.spec)
+                .map(|dp| devices.contains(&dp))
+                .unwrap_or_default() =>
+            {
+                Some(m)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+    }
+
+    /// Find the mount entry at target or the mount that contains target.
+    pub fn find_mountentry(target: &Path) -> Option<MountEntry> {
+        mnt::get_mount(target).expect(MOUNT_EXPECTATION)
+    }
 }
 
 pub fn bind_mount(from: &Path, to: &Path) -> Result<()> {
@@ -268,7 +275,6 @@ impl BlockDeviceIds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sys::process::mock_world;
     use indoc::indoc;
     use serial_test::serial;
 
@@ -345,7 +351,7 @@ mod tests {
             ID_VENDOR_FROM_DATABASE=Samsung Electronics Co Ltd
             ID_MODEL_FROM_DATABASE=NVMe SSD Controller SM981/PM981/PM983"#
         );
-        let ctx = mock_world::run_command_as_result_context();
+        let ctx = process_double::run_command_as_result_context();
         ctx.expect().returning(|_| Ok(UDEVADM_DATA.to_string()));
 
         assert!(BlockDeviceInfo::lookup("/dev/nvme0")
@@ -377,7 +383,7 @@ mod tests {
             ID_PART_TABLE_TYPE=gpt
             DEVLINKS=/dev/disk/by-id/nvme-eui.00253851014037ac /dev/disk/by-id/nvme-Samsung_SSD_970_EVO_Plus_500GB_S58SNJ0N104090N /dev/disk/by-path/pci-0000:01:00.0-nvme-1"#
         );
-        let ctx = mock_world::run_command_as_result_context();
+        let ctx = process_double::run_command_as_result_context();
         ctx.expect().returning(|_| Ok(UDEVADM_DATA.to_string()));
 
         assert_eq!(
@@ -429,7 +435,7 @@ mod tests {
             DEVLINKS=/dev/disk/by-uuid/3FE0-C9D7 /dev/disk/by-id/nvme-eui.00253851014037ac-part1 /dev/disk/by-partuuid/dce5a86a-ca34-48e6-904d-aa3020ba5afb /dev/disk/by-path/pci-0000:01:00.0-nvme-1-part1 /dev/disk/by-id/nvme-Samsung_SSD_970_EVO_Plus_500GB_S58SNJ0N104090N-part1
             TAGS=:systemd:"#
         );
-        let ctx = mock_world::run_command_as_result_context();
+        let ctx = process_double::run_command_as_result_context();
         ctx.expect().returning(|_| Ok(UDEVADM_DATA.to_string()));
 
         assert_eq!(
@@ -456,7 +462,7 @@ mod tests {
             TYPE=btrfs
             PARTUUID=725de4b5-9235-4d5d-b7e0-73d87d9c11fd"#
         );
-        let ctx = mock_world::run_command_as_result_context();
+        let ctx = process_double::run_command_as_result_context();
         ctx.expect().returning(|_| Ok(BLKID_DATA.to_string()));
         assert_eq!(
             BlockDeviceIds::lookup(&DevicePathBuf::try_from("/dev/nvme0n1p2").unwrap()).unwrap(),

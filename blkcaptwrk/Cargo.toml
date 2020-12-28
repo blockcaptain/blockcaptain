@@ -17,7 +17,7 @@ async-trait = "0.1"
 xactor = { git = "https://github.com/wpbrown/xactor", branch = "master", features = ["runtime-tokio"], default-features = false }
 uuid = { version = "0.8", features = ["serde", "v4"] }
 bytes = "0.5"
-heck = "0.3.1"
+heck = "0.3.2"
 slog = { version = "2.5.2", features = ["max_level_trace", "release_max_level_warn"] }
 slog-scope = "4.3.0"
 cron = "0.6.1"

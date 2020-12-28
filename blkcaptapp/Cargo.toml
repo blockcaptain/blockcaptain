@@ -6,7 +6,6 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0.31"
-human-panic = "1.0"
 tokio = { version = "0.2", features = ["full"] }
 log = { version = "0.4", features = ["std"] }
 slog = { version = "2.5.2", features = ["max_level_trace", "release_max_level_warn"] }
@@ -16,3 +15,4 @@ slog-scope = "4.3.0"
 slog-atomic = "3.0.0"
 
 [dev-dependencies]
+mockall = "0.9.0"

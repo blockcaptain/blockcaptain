@@ -286,3 +286,60 @@ impl log::Log for SlogLogLogger {
 
     fn flush(&self) {}
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fmt::Display;
+
+    use super::*;
+    use mockall::mock;
+    use slog::{info, o, Key, Never, Serializer};
+
+    mock! {
+        pub Drain {}
+        impl slog::Drain for Drain {
+            type Ok=();
+            type Err=Never;
+
+            fn log<'a>(
+                &self,
+                record: &Record<'a>,
+                values: &OwnedKVList,
+            ) -> std::result::Result<(), Never>;
+        }
+    }
+    #[derive(Default)]
+    struct TestSerializer(pub Vec<String>);
+
+    impl Display for TestSerializer {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}", self.0.join(" "))
+        }
+    }
+
+    impl Serializer for TestSerializer {
+        fn emit_arguments(&mut self, key: Key, value: &fmt::Arguments) -> slog::Result {
+            self.0.push(format!("{}={}", key, value));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn dedup_drain_dedups_owned_kv() {
+        let mut mock = MockDrain::new();
+        mock.expect_log()
+            .withf(|record: &Record, values: &OwnedKVList| {
+                let mut serializer = TestSerializer::default();
+                let _ = values.serialize(record, &mut serializer);
+                let _ = record.kv().serialize(record, &mut serializer);
+                serializer.to_string() == "second=2 first=2 third=1 third=3"
+            })
+            .returning(|_, _| Ok(()));
+
+        let drain = DedupDrain::new(mock);
+        let logger = Logger::root(drain, o!("first" => 1, "second" => 1, "third" => 1));
+        let logger = logger.new(o!("first" => 2));
+        let logger = logger.new(o!("second" => 2));
+        info!(logger, "test"; "third" => 3);
+    }
+}

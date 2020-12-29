@@ -4,7 +4,7 @@ use super::{
     pool::PoolActor,
 };
 use crate::{
-    actorbase::{unhandled_result, ScheduledMessage},
+    actorbase::{log_result, unhandled_result, ScheduledMessage},
     snapshots::{
         failed_snapshot_deletes_as_result, prune_btrfs_snapshots, ContainerSnapshotsResponse,
         GetContainerSnapshotsMessage, PruneMessage,
@@ -14,24 +14,26 @@ use crate::{
         TerminalState,
     },
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use futures_util::future::ready;
 use libblkcapt::{
     core::{BtrfsContainer, BtrfsContainerSnapshot, BtrfsPool},
     core::{Snapshot, SnapshotHandle},
     model::entities::FeatureState,
-    model::entities::{BtrfsContainerEntity, ObservableEvent},
     model::Entity,
+    model::{
+        entities::{BtrfsContainerEntity, ObservableEvent},
+        EntityId,
+    },
 };
 use slog::{debug, o, trace, Logger};
 use std::{collections::HashMap, convert::TryInto, sync::Arc};
-use uuid::Uuid;
 use xactor::{message, Actor, Addr, Handler, Sender, WeakAddr};
 
 pub struct ContainerActor {
     pool: Addr<BcActor<PoolActor>>,
     container: Arc<BtrfsContainer>,
-    snapshots: HashMap<Uuid, Vec<BtrfsContainerSnapshot>>,
+    snapshots: HashMap<EntityId, Vec<BtrfsContainerSnapshot>>,
     prune_schedule: Option<ScheduledMessage>,
     active_receivers: HashMap<u64, ActiveReceiver>,
     faulted: bool,
@@ -39,12 +41,12 @@ pub struct ContainerActor {
 
 pub struct ActiveReceiver {
     actor: WeakAddr<BcActor<LocalReceiverActor>>,
-    dataset_id: Uuid,
+    dataset_id: EntityId,
 }
 
 #[message(result = "Result<()>")]
 pub struct GetSnapshotReceiverMessage {
-    source_dataset_id: Uuid,
+    source_dataset_id: EntityId,
     source_snapshot_handle: SnapshotHandle,
     target_ready: Sender<ReceiverReadyMessage>,
     target_finished: Sender<LocalReceiverStoppedMessage>,
@@ -52,7 +54,7 @@ pub struct GetSnapshotReceiverMessage {
 
 impl GetSnapshotReceiverMessage {
     pub fn new<A>(
-        requestor_addr: &Addr<A>, source_dataset_id: Uuid, source_snapshot_handle: SnapshotHandle,
+        requestor_addr: &Addr<A>, source_dataset_id: EntityId, source_snapshot_handle: SnapshotHandle,
     ) -> GetSnapshotReceiverMessage
     where
         A: Handler<ReceiverReadyMessage> + Handler<LocalReceiverStoppedMessage>,
@@ -203,7 +205,7 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
 #[async_trait::async_trait]
 impl BcHandler<LocalReceiverStoppedParentMessage> for ContainerActor {
     async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: LocalReceiverStoppedParentMessage) {
-        let LocalReceiverStoppedParentMessage(actor_id, new_snapshot) = msg;
+        let LocalReceiverStoppedParentMessage(actor_id, maybe_snapshot_name) = msg;
         let active_receiver = match self.active_receivers.remove(&actor_id) {
             Some(active) => active,
             None => {
@@ -213,13 +215,21 @@ impl BcHandler<LocalReceiverStoppedParentMessage> for ContainerActor {
             }
         };
 
-        let new_snapshot = new_snapshot.unwrap();
-        debug!(ctx.log(), "container received snapshot {}", new_snapshot.datetime(); "received_uuid" => %new_snapshot.received_uuid());
+        if let Some(new_snapshot_name) = maybe_snapshot_name {
+            let sealed_snapshot = self
+                .container
+                .seal_snapshot(active_receiver.dataset_id, &new_snapshot_name)
+                .with_context(|| format!("received snapshot {} but failed to seal it", new_snapshot_name));
+            log_result(ctx.log(), &sealed_snapshot);
+            if let Ok(new_snapshot) = sealed_snapshot {
+                debug!(ctx.log(), "container received snapshot {}", new_snapshot.datetime(); "received_uuid" => %new_snapshot.received_uuid());
 
-        self.snapshots
-            .entry(active_receiver.dataset_id)
-            .or_default()
-            .push(new_snapshot);
+                self.snapshots
+                    .entry(active_receiver.dataset_id)
+                    .or_default()
+                    .push(new_snapshot);
+            }
+        }
     }
 }
 

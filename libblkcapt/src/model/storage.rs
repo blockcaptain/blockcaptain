@@ -9,10 +9,10 @@ pub fn load_entity_state() -> model::Entities {
         return model::Entities::default();
     }
 
-    let file = File::open(path).unwrap();
+    let file = File::open(path).expect("FIXME");
     let reader = BufReader::new(file);
 
-    serde_json::from_reader(reader).unwrap()
+    serde_json::from_reader(reader).expect("FIXME")
 }
 
 pub fn store_entity_state(entities: model::Entities) {
@@ -22,10 +22,10 @@ pub fn store_entity_state(entities: model::Entities) {
 
     let path = Path::new("/etc/blkcapt");
     if !path.exists() {
-        fs::create_dir(path).unwrap();
+        fs::create_dir(path).expect("FIXME");
     }
-    let file = File::create("/etc/blkcapt/entities.json").unwrap();
+    let file = File::create("/etc/blkcapt/entities.json").expect("FIXME");
     let writer = BufWriter::new(file);
 
-    serde_json::to_writer_pretty(writer, &entities).unwrap()
+    serde_json::to_writer_pretty(writer, &entities).expect("FIXME");
 }

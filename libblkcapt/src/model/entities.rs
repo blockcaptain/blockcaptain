@@ -1,4 +1,4 @@
-use super::{Entity, EntityStatic, EntityType};
+use super::{Entity, EntityId, EntityStatic, EntityType};
 use crate::sys::fs::FsPathBuf;
 use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
 use cron::Schedule;
@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsPoolEntity {
-    id: Uuid,
+    id: EntityId,
     name: String,
     pub mountpoint_path: PathBuf,
     pub uuid: Uuid,
@@ -26,7 +26,7 @@ pub struct BtrfsPoolEntity {
 impl BtrfsPoolEntity {
     pub fn new(name: String, mountpoint: PathBuf, uuid: Uuid, uuid_subs: Vec<Uuid>) -> Result<Self> {
         Ok(Self {
-            id: Uuid::new_v4(),
+            id: EntityId::new(),
             name,
             mountpoint_path: mountpoint,
             uuid,
@@ -93,7 +93,7 @@ impl Entity for BtrfsPoolEntity {
     fn name(&self) -> &str {
         &self.name
     }
-    fn id(&self) -> Uuid {
+    fn id(&self) -> EntityId {
         self.id
     }
     fn entity_type(&self) -> EntityType {
@@ -129,7 +129,7 @@ pub enum FeatureState {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsDatasetEntity {
-    id: Uuid,
+    id: EntityId,
     name: String,
     pub path: FsPathBuf,
     pub uuid: Uuid,
@@ -152,7 +152,7 @@ impl Entity for BtrfsDatasetEntity {
     fn name(&self) -> &str {
         &self.name
     }
-    fn id(&self) -> Uuid {
+    fn id(&self) -> EntityId {
         self.id
     }
     fn entity_type(&self) -> EntityType {
@@ -248,7 +248,7 @@ impl TryFrom<Duration> for ScheduleModel {
 impl BtrfsDatasetEntity {
     pub fn new(name: String, subvolume_path: FsPathBuf, subvolume_uuid: Uuid) -> Result<Self> {
         Ok(Self {
-            id: Uuid::new_v4(),
+            id: EntityId::new(),
             name,
             path: subvolume_path,
             uuid: subvolume_uuid,
@@ -286,7 +286,7 @@ impl BtrfsDatasetEntity {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsContainerEntity {
-    id: Uuid,
+    id: EntityId,
     name: String,
     pub path: FsPathBuf,
     pub uuid: Uuid,
@@ -297,7 +297,7 @@ pub struct BtrfsContainerEntity {
 impl BtrfsContainerEntity {
     pub fn new(name: String, subvolume_path: FsPathBuf, subvolume_uuid: Uuid) -> Result<Self> {
         Ok(Self {
-            id: Uuid::new_v4(),
+            id: EntityId::new(),
             name,
             path: subvolume_path,
             uuid: subvolume_uuid,
@@ -332,7 +332,7 @@ impl Entity for BtrfsContainerEntity {
     fn name(&self) -> &str {
         &self.name
     }
-    fn id(&self) -> Uuid {
+    fn id(&self) -> EntityId {
         self.id
     }
     fn entity_type(&self) -> EntityType {
@@ -348,10 +348,10 @@ impl EntityStatic for BtrfsContainerEntity {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SnapshotSyncEntity {
-    id: Uuid,
+    id: EntityId,
     name: String,
-    dataset: Uuid,
-    container: Uuid,
+    dataset: EntityId,
+    container: EntityId,
     pub sync_mode: SnapshotSyncMode,
 }
 
@@ -371,10 +371,10 @@ pub enum SnapshotSyncMode {
 }
 
 impl SnapshotSyncEntity {
-    pub fn dataset_id(&self) -> Uuid {
+    pub fn dataset_id(&self) -> EntityId {
         self.dataset
     }
-    pub fn container_id(&self) -> Uuid {
+    pub fn container_id(&self) -> EntityId {
         self.container
     }
 }
@@ -383,7 +383,7 @@ impl Entity for SnapshotSyncEntity {
     fn name(&self) -> &str {
         &self.name
     }
-    fn id(&self) -> Uuid {
+    fn id(&self) -> EntityId {
         self.id
     }
     fn entity_type(&self) -> EntityType {
@@ -408,8 +408,9 @@ impl Default for RetentionRuleset {
     fn default() -> Self {
         Self {
             interval: Default::default(),
-            newest_count: NonZeroU32::new(1).unwrap(),
-            evaluation_schedule: ScheduleModel::try_from(Duration::from_secs(3600 * 24)).unwrap(),
+            newest_count: NonZeroU32::new(1).expect("nonzero valid constant"),
+            evaluation_schedule: ScheduleModel::try_from(Duration::from_secs(3600 * 24))
+                .expect("schedulemodel valid constant"),
         }
     }
 }
@@ -433,7 +434,7 @@ pub enum KeepSpec {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HealthchecksObserverEntity {
-    id: Uuid,
+    id: EntityId,
     name: String,
     pub custom_url: Option<String>,
     pub observations: Vec<HealthchecksObservation>,
@@ -468,7 +469,7 @@ impl HealthchecksHeartbeat {
 impl HealthchecksObserverEntity {
     pub fn new(name: String, observations: Vec<HealthchecksObservation>) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id: EntityId::new(),
             name,
             custom_url: None,
             observations,
@@ -496,7 +497,7 @@ impl Entity for HealthchecksObserverEntity {
     fn name(&self) -> &str {
         &self.name
     }
-    fn id(&self) -> Uuid {
+    fn id(&self) -> EntityId {
         self.id
     }
     fn entity_type(&self) -> EntityType {
@@ -518,7 +519,7 @@ impl<'a> AsRef<dyn Entity + 'a> for HealthchecksObserverEntity {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Observation {
-    pub entity_id: Uuid,
+    pub entity_id: EntityId,
     pub event: ObservableEvent,
 }
 
@@ -549,7 +550,7 @@ impl ObservableEvent {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ResticContainerEntity {
-    id: Uuid,
+    id: EntityId,
     name: String,
     pub repository: ResticRepository,
     pub custom_environment: HashMap<String, String>,
@@ -575,7 +576,7 @@ impl Entity for ResticContainerEntity {
     fn name(&self) -> &str {
         &self.name
     }
-    fn id(&self) -> Uuid {
+    fn id(&self) -> EntityId {
         self.id
     }
     fn entity_type(&self) -> EntityType {

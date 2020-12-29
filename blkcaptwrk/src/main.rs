@@ -23,7 +23,7 @@ async fn async_main(log: Logger) -> Result<()> {
         let mut captain = CaptainActor::new(&log).start().await?;
         tokio::signal::ctrl_c().await?;
         info!(log, "process signaled");
-        captain.stop(None)?;
+        let _ = captain.stop(None);
         captain.wait_for_stop().await;
     }
     tokio::time::sleep(Duration::from_millis(100)).await;

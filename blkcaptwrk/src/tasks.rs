@@ -1,6 +1,7 @@
 use super::actorbase::unhandled_result;
+use crate::xactorext::halt_and_catch_fire_on_panic;
 use anyhow::Context as AnyhowContext;
-use slog::{debug, Logger};
+use slog::{crit, debug, Logger};
 use std::{cell::Cell, future::Future, marker::PhantomData, panic};
 use tokio::{sync::oneshot, task::JoinHandle};
 use xactor::{Actor, Addr, Handler, Message, WeakAddr};
@@ -40,25 +41,27 @@ impl WorkerTask {
         let handle = tokio::spawn(async move {
             let parent = context.parent.clone();
             let log = context.log.clone();
-            // I can't figure out lifetimes if i pass &mut context here :'(
-            // Since we await the future here, it should make sense that context
-            // reference is gone in this scope, but the future needs to be static
-            // go it can live in the future.
-            let maybe_cancelled = func(context).await;
-            match maybe_cancelled {
-                CancellableResult::Ok(result) => match parent.upgrade() {
-                    Some(strong_parent) => {
-                        unhandled_result(
-                            &log,
-                            strong_parent
-                                .send(WorkerCompleteMessage(result))
-                                .context("work task finished but failed to send completion message to parent"),
-                        );
+
+            let maybe_result = halt_and_catch_fire_on_panic(func(context)).await;
+            match maybe_result {
+                Ok(maybe_cancelled) => match maybe_cancelled {
+                    CancellableResult::Ok(result) => match parent.upgrade() {
+                        Some(strong_parent) => {
+                            unhandled_result(
+                                &log,
+                                strong_parent
+                                    .send(WorkerCompleteMessage(result))
+                                    .context("work task finished but failed to send completion message to parent"),
+                            );
+                        }
+                        None => debug!(log, "worker task finished but parent is gone"),
+                    },
+                    CancellableResult::Cancelled(_) => {
+                        debug!(log, "task cancelled");
                     }
-                    None => debug!(log, "worker task finished but parent is gone"),
                 },
-                CancellableResult::Cancelled(_) => {
-                    debug!(log, "task cancelled");
+                Err(error) => {
+                    crit!(log, "worker paniced"; "error" => %error);
                 }
             }
         });
@@ -70,11 +73,8 @@ impl WorkerTask {
 
     pub async fn wait(self) {
         if let Err(err) = self.handle.await {
-            // Joinhandle should never be cancelled because we own the handle on self
-            // rework ^ not true if we allow abort.
-            match err.try_into_panic() {
-                Ok(reason) => panic::resume_unwind(reason),
-                Err(err) => panic!(err),
+            if let Ok(reason) = err.try_into_panic() {
+                panic::resume_unwind(reason)
             }
         }
     }
@@ -86,7 +86,7 @@ impl WorkerTask {
     }
 
     pub fn abort(&self) {
-        //FIXME abort available in tokio 0.3
+        // TODO_ON_TOKIO03
         //let _ = self.handle.abort()
     }
 }

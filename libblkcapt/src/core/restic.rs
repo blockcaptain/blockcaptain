@@ -1,6 +1,6 @@
 use super::{parse_snapshot_label, Snapshot, SnapshotHandle};
 use crate::{
-    model::{entities::ResticContainerEntity, Entity},
+    model::{entities::ResticContainerEntity, Entity, EntityId},
     sys::{
         fs::{bind_mount, unmount},
         process::exit_status_as_result,
@@ -21,7 +21,7 @@ use uuid::Uuid;
 #[derive(Debug, PartialEq, Eq)]
 pub struct ResticContainerSnapshot {
     pub datetime: DateTime<Utc>,
-    pub dataset_id: Uuid,
+    pub dataset_id: EntityId,
     pub uuid: ResticId,
     pub received_uuid: Uuid,
 }
@@ -92,7 +92,7 @@ impl ResticRepository {
         Ok(Self { model })
     }
 
-    pub fn backup(self: &Arc<Self>, bind_at: PathBuf, dataset_id: Uuid, snapshot: SnapshotHandle) -> ResticBackup {
+    pub fn backup(self: &Arc<Self>, bind_at: PathBuf, dataset_id: EntityId, snapshot: SnapshotHandle) -> ResticBackup {
         let command = self.new_command();
         ResticBackup::new(command, bind_at, dataset_id, snapshot)
     }
@@ -141,7 +141,7 @@ impl ResticRepository {
         command
     }
 
-    fn parse_snapshots(output: &[u8], expected_container_id: Uuid) -> Result<Vec<ResticContainerSnapshot>> {
+    fn parse_snapshots(output: &[u8], expected_container_id: EntityId) -> Result<Vec<ResticContainerSnapshot>> {
         const UUID_TAG: &str = "uuid=";
         const TS_TAG: &str = "ts=";
 
@@ -155,7 +155,7 @@ impl ResticRepository {
                         let container_id = path
                             .and_then(|p| p.parent().and_then(|p| p.file_name()))
                             .and_then(|f| f.to_str())
-                            .and_then(|s| s.parse::<Uuid>().ok());
+                            .and_then(|s| s.parse::<EntityId>().ok());
 
                         if container_id.unwrap_or_default() != expected_container_id {
                             return None;
@@ -198,13 +198,13 @@ pub struct ResticBackup {
 }
 
 struct SnapshotSource {
-    dataset_id: Uuid,
+    dataset_id: EntityId,
     snapshot: SnapshotHandle,
     bind_path: PathBuf,
 }
 
 impl ResticBackup {
-    fn new(mut repo_command: Command, bind_path: PathBuf, dataset_id: Uuid, snapshot: SnapshotHandle) -> Self {
+    fn new(mut repo_command: Command, bind_path: PathBuf, dataset_id: EntityId, snapshot: SnapshotHandle) -> Self {
         repo_command.args(&["backup", "--json", "--tag", Self::snapshot_tags(&snapshot).as_str()]);
 
         ResticBackup {
@@ -231,7 +231,7 @@ impl ResticBackup {
                 anyhow!(e)
             })
             .map(|mut process| {
-                let message_reader = Self::spawn_message_reader(process.stdout.take().unwrap());
+                let message_reader = Self::spawn_message_reader(process.stdout.take().expect("only taken once"));
                 StartedResticBackup {
                     process,
                     message_reader,
@@ -292,7 +292,7 @@ impl StartedResticBackup {
         let _ = unmount(&self.source.bind_path);
         exit_status_as_result(exit_status)?;
 
-        let message_result = self.message_reader.await.unwrap().unwrap();
+        let message_result = self.message_reader.await.expect("task doesn't panic")?;
         let new_snapshot_id = message_result.context("failed to find new snapshot id")?;
 
         Ok(ResticContainerSnapshot {

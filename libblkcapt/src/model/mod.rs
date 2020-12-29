@@ -7,10 +7,41 @@ use entities::{
     SnapshotSyncEntity,
 };
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::{fmt::Debug, iter::repeat};
+use std::{path::Path, str::FromStr};
 use strum_macros::Display;
 use uuid::Uuid;
+
+use crate::parsing::parse_uuid;
+
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct EntityId(Uuid);
+
+impl EntityId {
+    fn new() -> Self {
+        EntityId(Uuid::new_v4())
+    }
+}
+
+impl FromStr for EntityId {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        parse_uuid(value).map(EntityId)
+    }
+}
+
+impl std::fmt::Display for EntityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.to_hyphenated_ref())
+    }
+}
+
+impl From<EntityId> for Uuid {
+    fn from(id: EntityId) -> Self {
+        id.0
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Entities {
@@ -67,15 +98,15 @@ impl Entities {
         entity_by_name(&self.btrfs_pools, name)
     }
 
-    pub fn pool(&self, id: Uuid) -> Option<&BtrfsPoolEntity> {
+    pub fn pool(&self, id: EntityId) -> Option<&BtrfsPoolEntity> {
         entity_by_id(self.btrfs_pools.iter(), id)
     }
 
-    pub fn observer(&self, id: Uuid) -> Option<&HealthchecksObserverEntity> {
+    pub fn observer(&self, id: EntityId) -> Option<&HealthchecksObserverEntity> {
         entity_by_id(self.observers.iter(), id)
     }
 
-    pub fn snapshot_sync(&self, id: Uuid) -> Option<&SnapshotSyncEntity> {
+    pub fn snapshot_sync(&self, id: EntityId) -> Option<&SnapshotSyncEntity> {
         entity_by_id(self.snapshot_syncs.iter(), id)
     }
 
@@ -89,7 +120,7 @@ impl Entities {
             })
     }
 
-    pub fn dataset(&self, id: Uuid) -> Option<EntityPath2<BtrfsDatasetEntity, BtrfsPoolEntity>> {
+    pub fn dataset(&self, id: EntityId) -> Option<EntityPath2<BtrfsDatasetEntity, BtrfsPoolEntity>> {
         entity_by_id(self.datasets(), id)
     }
 
@@ -103,11 +134,11 @@ impl Entities {
             })
     }
 
-    pub fn container(&self, id: Uuid) -> Option<EntityPath2<BtrfsContainerEntity, BtrfsPoolEntity>> {
+    pub fn container(&self, id: EntityId) -> Option<EntityPath2<BtrfsContainerEntity, BtrfsPoolEntity>> {
         entity_by_id(self.containers(), id)
     }
 
-    pub fn restic_container(&self, id: Uuid) -> Option<&ResticContainerEntity> {
+    pub fn restic_container(&self, id: EntityId) -> Option<&ResticContainerEntity> {
         entity_by_id(self.restic_containers.iter(), id)
     }
 
@@ -141,7 +172,7 @@ impl<'a, T: Entity> Entity for EntityPath1<'a, T> {
         self.entity.name()
     }
 
-    fn id(&self) -> Uuid {
+    fn id(&self) -> EntityId {
         self.entity.id()
     }
 
@@ -161,7 +192,7 @@ impl<'a, T: Entity, U: Entity> Entity for EntityPath2<'a, T, U> {
         self.entity.name()
     }
 
-    fn id(&self) -> Uuid {
+    fn id(&self) -> EntityId {
         self.entity.id()
     }
 
@@ -181,8 +212,8 @@ pub trait EntityPath: Entity {
 }
 
 pub struct EntityIdPath2 {
-    pub entity: Uuid,
-    pub parent: Uuid,
+    pub entity: EntityId,
+    pub parent: EntityId,
 }
 
 impl<'a, T: Entity> EntityPath for EntityPath1<'a, T> {
@@ -222,7 +253,7 @@ pub enum EntityType {
 
 pub trait Entity: Debug {
     fn name(&self) -> &str;
-    fn id(&self) -> Uuid;
+    fn id(&self) -> EntityId;
     fn entity_type(&self) -> EntityType;
 }
 
@@ -234,7 +265,7 @@ pub fn entity_by_name<'a, T: Entity>(vec: &'a [T], name: &str) -> Option<&'a T> 
     vec.iter().find(|e| e.name() == name)
 }
 
-pub fn entity_by_id_mut<T: Entity>(vec: &mut [T], id: Uuid) -> Option<&mut T> {
+pub fn entity_by_id_mut<T: Entity>(vec: &mut [T], id: EntityId) -> Option<&mut T> {
     vec.iter_mut().find(|e| e.id() == id)
 }
 
@@ -242,7 +273,7 @@ pub fn entity_by_name_mut<'a, T: Entity>(vec: &'a mut Vec<T>, name: &str) -> Opt
     vec.iter_mut().find(|e| e.name() == name)
 }
 
-pub fn entity_by_id<'a, T: AsRef<dyn Entity + 'a>>(mut iter: impl Iterator<Item = T>, id: Uuid) -> Option<T> {
+pub fn entity_by_id<'a, T: AsRef<dyn Entity + 'a>>(mut iter: impl Iterator<Item = T>, id: EntityId) -> Option<T> {
     iter.find(|e| e.as_ref().id() == id)
 }
 
@@ -254,7 +285,7 @@ pub fn entity_by_name_or_id<'a, T: AsRef<dyn Entity + 'a> + EntityStatic>(
         .collect::<Vec<_>>();
     match matches.len() {
         0 => Err(anyhow!("{} '{}' not found", T::entity_type_static(), name_or_id)),
-        1 => Ok(matches.pop().unwrap()),
+        1 => Ok(matches.pop().expect("length verified can't fail")),
         _ => Err(anyhow!(
             "'{}' identifies multiple {}s",
             T::entity_type_static(),

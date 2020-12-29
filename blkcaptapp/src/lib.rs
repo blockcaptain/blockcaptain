@@ -1,6 +1,5 @@
 mod slogext;
 use anyhow::Result;
-use human_panic::setup_panic;
 use slog::{b, debug, error, info, o, record_static, trace, Drain, Level, Logger, Record};
 use slogext::{CustomFullFormat, DedupDrain, SlogLogLogger};
 use std::{future::Future, sync::Arc, time::Duration};
@@ -11,8 +10,6 @@ where
     M: FnOnce(Logger) -> F,
     F: Future<Output = Result<()>>,
 {
-    setup_panic!();
-
     let (internal_level, external_level) = match verbose_flag_count {
         0 => (Level::Info, log::LevelFilter::Info),
         1 => (Level::Debug, log::LevelFilter::Info),
@@ -93,3 +90,20 @@ where
 macro_rules! slog_println( ($($args:tt)+) => {
     slog_scope::info!(#"bc_raw", $($args)+)
 };);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runs_app() {
+        blkcaptapp_run(
+            |log| async move {
+                info!(log, "runs_app test");
+                Ok(())
+            },
+            0,
+            false,
+        );
+    }
+}

@@ -2,14 +2,13 @@ use crate::{
     actorbase::unhandled_result,
     actors::intel::{ActorDropMessage, ActorStartMessage, ActorStopMessage, IntelActor},
 };
-use anyhow::{Context as AnyhowContext, Result};
-use futures_util::future::join_all;
+use anyhow::{anyhow, Context as _, Result};
+use futures_util::future::{join_all, FutureExt};
 use heck::SnakeCase;
 use paste::paste;
-use slog::{error, o, trace, Logger};
-use std::{future::Future, marker::PhantomData, time::Duration};
+use slog::{crit, error, o, trace, Logger};
+use std::{future::Future, marker::PhantomData, panic::AssertUnwindSafe, time::Duration};
 use strum_macros::Display;
-use uuid::Uuid;
 use xactor::{message, Actor, Addr, Context, Handler, Message, WeakAddr};
 
 // pub trait ActorAddrExt<T: Actor> {
@@ -40,15 +39,15 @@ pub fn join_all_actors<V: IntoIterator<Item = A>, A: AnyAddr + 'static>(actors: 
     join_all(futures_iter)
 }
 
-pub struct GetChildActorMessage<T>(pub Uuid, PhantomData<T>);
+pub struct GetChildActorMessage<I, T>(pub I, PhantomData<T>);
 
-impl<T> GetChildActorMessage<T> {
-    pub fn new(id: Uuid) -> Self {
+impl<I, T> GetChildActorMessage<I, T> {
+    pub fn new(id: I) -> Self {
         Self(id, PhantomData)
     }
 }
 
-impl<T: Actor> xactor::Message for GetChildActorMessage<T> {
+impl<I: Send + 'static, T: Actor> xactor::Message for GetChildActorMessage<I, T> {
     type Result = Option<Addr<T>>;
 }
 
@@ -139,6 +138,27 @@ impl<T> BcActor<T> {
     notify_impl!(drop, ActorDropMessage);
 }
 
+pub async fn halt_and_catch_fire_on_panic<T>(future: impl Future<Output = T>) -> Result<T> {
+    let maybe_output = AssertUnwindSafe(future).catch_unwind().await;
+    if maybe_output.is_err() {
+        use nix::sys::signal::{kill, Signal};
+        use nix::unistd::Pid;
+
+        let _ = kill(Pid::this(), Signal::SIGINT);
+    }
+
+    maybe_output.map_err(|payload| {
+        let reason: String = payload
+            .as_ref()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.as_ref().downcast_ref::<String>().map(|s| s.as_str()))
+            .unwrap_or("unknown")
+            .to_string();
+        anyhow!("panic reason: {}", reason)
+    })
+}
+
 #[message(result = "String")]
 pub struct GetActorStatusMessage;
 
@@ -151,15 +171,17 @@ where
     async fn handle(&mut self, ctx: &mut Context<Self>, msg: M) -> M::Result {
         let log = self.log.new(o!("message" => snek_type_name::<M>()));
         slog::trace!(log, "message received");
-        self.inner
-            .handle(
-                BcContext {
-                    log: &self.log,
-                    native: ctx,
-                },
-                msg,
-            )
-            .await
+        let fut = self.inner.handle(
+            BcContext {
+                log: &self.log,
+                native: ctx,
+            },
+            msg,
+        );
+        halt_and_catch_fire_on_panic(fut).await.unwrap_or_else(|error| {
+            crit!(self.log, "actor paniced handling message"; "error" => %error);
+            panic!("message handler paniced");
+        })
     }
 }
 
@@ -171,13 +193,11 @@ where
     async fn started(&mut self, ctx: &mut Context<Self>) -> Result<()> {
         self.log = self.log.new(o!("actor_id" => ctx.actor_id()));
         trace!(self.log, "actor starting");
-        let result = self
-            .inner
-            .started(BcContext {
-                log: &self.log,
-                native: ctx,
-            })
-            .await;
+        let fut = self.inner.started(BcContext {
+            log: &self.log,
+            native: ctx,
+        });
+        let result = halt_and_catch_fire_on_panic(fut).await.and_then(|r| r);
         if let Err(e) = &result {
             error!(self.log, "actor start failed"; "error" => %e);
         } else {
@@ -190,13 +210,16 @@ where
 
     async fn stopped(&mut self, ctx: &mut Context<Self>) {
         trace!(self.log, "actor stopping");
-        let terminal_state = self
-            .inner
-            .stopped(BcContext {
-                log: &self.log,
-                native: ctx,
-            })
-            .await;
+        let fut = self.inner.stopped(BcContext {
+            log: &self.log,
+            native: ctx,
+        });
+
+        let result = halt_and_catch_fire_on_panic(fut).await;
+        let terminal_state = result.unwrap_or_else(|error| {
+            crit!(self.log, "actor panic on stop"; "error" => %error);
+            TerminalState::Faulted
+        });
         self.intel_notify_stop(ActorStopMessage::new(self.actor_id, terminal_state));
         trace!(self.log, "actor stopped"; "terminal_state" => %terminal_state);
     }

@@ -12,17 +12,16 @@ use futures_util::{
     future::ready,
     stream::{self, FuturesUnordered, StreamExt},
 };
-use libblkcapt::model::{entities::SnapshotSyncEntity, storage, Entities, Entity};
+use libblkcapt::model::{entities::SnapshotSyncEntity, storage, Entities, Entity, EntityId};
 use slog::{error, trace, Logger};
 use std::{collections::HashMap, mem};
-use uuid::Uuid;
 use xactor::{Actor, Addr};
 
 pub struct CaptainActor {
     healthcheck_actors: Vec<Addr<BcActor<HealthchecksActor>>>,
     sync_actors: Vec<Addr<BcActor<SyncActor>>>,
-    pool_actors: HashMap<Uuid, Addr<BcActor<PoolActor>>>,
-    restic_actors: HashMap<Uuid, Addr<BcActor<ResticContainerActor>>>,
+    pool_actors: HashMap<EntityId, Addr<BcActor<PoolActor>>>,
+    restic_actors: HashMap<EntityId, Addr<BcActor<ResticContainerActor>>>,
     server_actor: Option<Addr<BcActor<ServerActor>>>,
 }
 

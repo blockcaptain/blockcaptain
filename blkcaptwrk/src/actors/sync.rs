@@ -16,7 +16,7 @@ use crate::{
     xactorext::BoxBcAddr,
     xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState},
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use cron::Schedule;
 use libblkcapt::{
@@ -131,6 +131,16 @@ impl SyncActor {
         };
 
         let to_send = if let Some(handle) = to_send {
+            if let Some(last_datetime) = self.last_sent {
+                if handle.datetime == last_datetime {
+                    let result = Err(anyhow!(
+                        "sanity check failed: snapshot {} was successfully sent, but was selected to be sent again",
+                        last_datetime
+                    ));
+                    observation.result(&result);
+                    return result;
+                }
+            }
             handle
         } else {
             debug!(ctx.log(), "no snapshots ready to send");
@@ -182,7 +192,7 @@ impl SyncActor {
                     &ctx.log().new(o!("message" => ())),
                 );
 
-                let transfer_actor = transfer_actor.start().await.unwrap();
+                let transfer_actor = transfer_actor.start().await?;
 
                 self.dataset
                     .call(GetSnapshotSenderMessage::new(
@@ -190,8 +200,7 @@ impl SyncActor {
                         snapshot.clone(),
                         parent.cloned(),
                     ))
-                    .await
-                    .unwrap()?;
+                    .await??;
 
                 container
                     .call(GetSnapshotReceiverMessage::new(
@@ -199,8 +208,7 @@ impl SyncActor {
                         self.model.dataset_id(),
                         snapshot.clone(),
                     ))
-                    .await
-                    .unwrap()?;
+                    .await??;
 
                 Ok(transfer_actor.into())
             }
@@ -212,7 +220,7 @@ impl SyncActor {
                     &ctx.log().new(o!("message" => ())),
                 );
 
-                let transfer_actor = transfer_actor.start().await.unwrap();
+                let transfer_actor = transfer_actor.start().await?;
 
                 self.dataset
                     .call(GetSnapshotHolderMessage::new(
@@ -220,8 +228,7 @@ impl SyncActor {
                         snapshot.clone(),
                         parent.cloned(),
                     ))
-                    .await
-                    .unwrap()?;
+                    .await??;
 
                 container
                     .call(GetBackupMessage::new(
@@ -229,8 +236,7 @@ impl SyncActor {
                         self.model.dataset_id(),
                         snapshot.clone(),
                     ))
-                    .await
-                    .unwrap()?;
+                    .await??;
 
                 Ok(transfer_actor.into())
             }
@@ -310,7 +316,8 @@ impl BcHandler<StartSnapshotSyncCycleMessage> for SyncActor {
             }
             SyncModeState::LatestImmediate(queue, interval) => {
                 if self.last_sent.is_none()
-                    || new_limit_time - self.last_sent.unwrap() > chrono::Duration::from_std(*interval).unwrap()
+                    || new_limit_time - self.last_sent.expect("always exists, validated earlier in expr")
+                        > chrono::Duration::from_std(*interval).expect("interval always fits in chrono duration")
                 {
                     trace!(ctx.log(), "adding sync time {} to queue", new_limit_time);
                     queue.push_back(new_limit_time);

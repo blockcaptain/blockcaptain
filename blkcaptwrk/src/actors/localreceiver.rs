@@ -4,7 +4,7 @@ use crate::{
     xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState},
 };
 use anyhow::Result;
-use libblkcapt::core::{localsndrcv::SnapshotReceiver, BtrfsContainerSnapshot};
+use libblkcapt::sys::btrfs::SnapshotReceiver;
 use slog::Logger;
 use std::mem;
 use strum_macros::Display;
@@ -15,7 +15,7 @@ use xactor::{message, Sender};
 pub struct LocalReceiverStoppedMessage(pub Result<()>);
 
 #[message()]
-pub struct LocalReceiverStoppedParentMessage(pub u64, pub Option<BtrfsContainerSnapshot>);
+pub struct LocalReceiverStoppedParentMessage(pub u64, pub Option<String>);
 
 #[message(result = "Box<dyn AsyncWrite + Send + Unpin>")]
 pub struct GetWriterMessage;
@@ -30,7 +30,7 @@ pub struct LocalReceiverActor {
 enum State {
     Created(SnapshotReceiver),
     Running(WorkerTask, Option<Box<dyn AsyncWrite + Send + Unpin>>),
-    Finished(Result<BtrfsContainerSnapshot>),
+    Finished(Result<String>),
     Faulted,
 }
 
@@ -40,7 +40,7 @@ impl State {
     }
 }
 
-type ReceiveWorkerCompleteMessage = WorkerCompleteMessage<Result<BtrfsContainerSnapshot>>;
+type ReceiveWorkerCompleteMessage = WorkerCompleteMessage<Result<String>>;
 
 impl LocalReceiverActor {
     pub fn new(
@@ -77,7 +77,7 @@ impl BcActorCtrl for LocalReceiverActor {
     }
 
     async fn stopped(&mut self, ctx: BcContext<'_, Self>) -> TerminalState {
-        let (terminal_state, result): (TerminalState, Result<BtrfsContainerSnapshot>) = match self.state.take() {
+        let (terminal_state, result) = match self.state.take() {
             State::Created(_) => state_result(TerminalState::Cancelled),
             State::Running(worker, _) => {
                 worker.abort();

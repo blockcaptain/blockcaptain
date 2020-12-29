@@ -3,13 +3,12 @@ use libblkcapt::model::{
     entities::BtrfsDatasetEntity,
     entities::BtrfsPoolEntity,
     entities::{BtrfsContainerEntity, SnapshotSyncEntity},
-    entity_by_name, EntityPath, EntityPath1, EntityPath2, EntityStatic, EntityType,
+    entity_by_name, EntityId, EntityPath, EntityPath1, EntityPath2, EntityStatic, EntityType,
 };
 use libblkcapt::{
     model::{entities::HealthchecksObserverEntity, Entities},
     model::{entity_by_name_or_id, Entity},
 };
-use uuid::Uuid;
 pub mod observer;
 pub mod pool;
 
@@ -47,7 +46,7 @@ pub fn observer_search<'a>(entities: &'a Entities, query: &str) -> Result<&'a He
     entity_search1(entities.observers.iter(), query)
 }
 
-pub fn entity_by_type_lookup(entities: &Entities, etype: EntityType, id: Uuid) -> Option<String> {
+pub fn entity_by_type_lookup(entities: &Entities, etype: EntityType, id: EntityId) -> Option<String> {
     match etype {
         EntityType::Pool => entities.pool(id).map(|p| p.name().to_owned()),
         EntityType::Dataset => entities.dataset(id).map(|d| d.path()),

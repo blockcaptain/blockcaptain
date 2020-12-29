@@ -290,7 +290,7 @@ impl FromStr for IntervalSpecArg {
         };
         let (repeat, duration) = match inner.len() {
             2 => (NonZeroU32::from_str(inner[0])?, inner[1]),
-            1 => (NonZeroU32::new(1).unwrap(), inner[0]),
+            1 => (NonZeroU32::new(1).expect("constant always nonzero"), inner[0]),
             _ => unreachable!(),
         };
         Ok(Self(IntervalSpec {
@@ -301,7 +301,7 @@ impl FromStr for IntervalSpecArg {
                     "all" => KeepSpec::All,
                     s => KeepSpec::Newest(NonZeroU32::from_str(s)?),
                 },
-                1 => KeepSpec::Newest(NonZeroU32::new(1).unwrap()),
+                1 => KeepSpec::Newest(NonZeroU32::new(1).expect("constant always nonzero")),
                 _ => unreachable!(),
             },
         }))
@@ -321,8 +321,9 @@ pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
         let dataset_path = entity_by_name_or_id(entities.datasets(), parts[0])
             .map(|e| e.into_id_path())
             .context("Dataset not found.")?;
-        let filesystem = entity_by_id_mut(&mut entities.btrfs_pools, dataset_path.parent).unwrap();
-        entity_by_id_mut(&mut filesystem.datasets, dataset_path.entity).unwrap()
+        let filesystem =
+            entity_by_id_mut(&mut entities.btrfs_pools, dataset_path.parent).expect("always exists if path found");
+        entity_by_id_mut(&mut filesystem.datasets, dataset_path.entity).expect("always exists if path found")
     };
 
     if let Some(f) = options.snapshot_frequency {

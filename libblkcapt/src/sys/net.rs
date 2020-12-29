@@ -32,7 +32,7 @@ impl HttpsClient {
     }
 
     pub async fn post(&self, url: Uri, body: String) -> Result<Response<Body>, hyper::Error> {
-        let request = Request::post(url).body(Body::from(body)).unwrap();
+        let request = Request::post(url).body(Body::from(body)).expect("valid request setup");
         self.client.request(request).await
     }
 }

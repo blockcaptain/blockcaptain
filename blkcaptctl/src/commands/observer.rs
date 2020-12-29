@@ -301,9 +301,13 @@ pub fn delete_observer(options: ObserverDeleteOptions) -> Result<()> {
         (observer.id(), observer.name().to_owned())
     };
 
-    entities
-        .observers
-        .remove(entities.observers.iter().position(|h| h.id() == id).unwrap());
+    entities.observers.remove(
+        entities
+            .observers
+            .iter()
+            .position(|h| h.id() == id)
+            .expect("id always exists"),
+    );
 
     storage::store_entity_state(entities);
     info!("Deleted observer '{}'", name);

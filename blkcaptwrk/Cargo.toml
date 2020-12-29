@@ -10,20 +10,20 @@ blkcaptapp = { path = "../blkcaptapp" }
 anyhow = "1.0.31"
 thiserror = "1.0.20"
 chrono = { version = "0.4", features = ["serde"] }
-tokio = { version = "0.3", features = ["full"] }
+tokio = { version = "1.0", features = ["full"] }
 futures-util = "0.3"
 humantime = "2.0"
 async-trait = "0.1"
-xactor = { git = "https://github.com/wpbrown/xactor", branch = "tokio03", features = ["runtime-tokio"], default-features = false }
+xactor = { git = "https://github.com/wpbrown/xactor", branch = "tokio10", features = ["runtime-tokio"], default-features = false }
 uuid = { version = "0.8", features = ["serde", "v4"] }
-bytes = "0.6"
+bytes = "1.0"
 heck = "0.3.1"
 slog = { version = "2.5.2", features = ["max_level_trace", "release_max_level_warn"] }
 slog-scope = "4.3.0"
-cron = "0.6.1"
+cron = "0.7"
 once_cell = "1.4"
 paste = "1.0.2"
-strum_macros = "0.19"
+strum_macros = "0.20"
 derive_more = "0.99.11"
 warp = "0.2"
 nix = "0.19.0"

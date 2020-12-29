@@ -317,7 +317,7 @@ mod operations {
                 .expect("child did not have a handle to stdout")
         }
 
-        pub async fn wait(self) -> Result<()> {
+        pub async fn wait(mut self) -> Result<()> {
             exit_status_as_result(self.process.wait().await?)
         }
     }
@@ -384,7 +384,7 @@ mod operations {
                 .expect("child did not have a handle to stdout")
         }
 
-        pub async fn wait(self) -> Result<String> {
+        pub async fn wait(mut self) -> Result<String> {
             exit_status_as_result(self.process.wait().await?)?;
             let stdout_result = self.name_reader_stdout.await.expect("task doesn't panic")?;
             let stderr_result = self.name_reader_stderr.await.expect("task doesn't panic")?;
@@ -419,7 +419,7 @@ mod operations {
     }
 
     impl StartedPoolScrub {
-        pub async fn wait(self) -> Result<(), ScrubError> {
+        pub async fn wait(mut self) -> Result<(), ScrubError> {
             let exit_status = self.process.wait().await.map_err(|_| ScrubError::Unknown)?;
             match exit_status.code() {
                 Some(code) => match code {

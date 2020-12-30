@@ -4,7 +4,7 @@ use futures_util::{FutureExt, TryFutureExt};
 use slog::Logger;
 use std::path::PathBuf;
 use tokio::{net::UnixListener, sync::oneshot, task::JoinHandle};
-use warp::{Filter, Rejection};
+//use warp::{Filter, Rejection};
 
 use super::intel::{GetStateMessage, IntelActor};
 

@@ -126,28 +126,28 @@ pub mod service {
     pub struct ServiceStatusOptions {}
 
     pub async fn service_status(_: ServiceStatusOptions) -> Result<()> {
-        // let client = ServiceClient::default();
-        // let result = client.get("/").await?;
-        // let body = hyper::body::aggregate(result).await?;
-        // let mut system: SystemState = serde_json::from_reader(body.reader())?;
-        // system.actors.sort_by_key(|a| a.actor_id);
+        let client = ServiceClient::default();
+        let result = client.get("/").await?;
+        let body = hyper::body::aggregate(result).await?;
+        let mut system: SystemState = serde_json::from_reader(body.reader())?;
+        system.actors.sort_by_key(|a| a.actor_id);
 
-        // print_comfy_table(
-        //     vec![
-        //         comfy_id_header(),
-        //         Cell::new("Actor Type"),
-        //         Cell::new("State"),
-        //         Cell::new("Substate"),
-        //     ],
-        //     system.actors.into_iter().map(|a| {
-        //         vec![
-        //             comfy_name_value(a.actor_id),
-        //             Cell::new(&a.actor_type),
-        //             actor_state_cell(&a.actor_state),
-        //             actor_substate_cell(a.actor_state),
-        //         ]
-        //     }),
-        // );
+        print_comfy_table(
+            vec![
+                comfy_id_header(),
+                Cell::new("Actor Type"),
+                Cell::new("State"),
+                Cell::new("Substate"),
+            ],
+            system.actors.into_iter().map(|a| {
+                vec![
+                    comfy_name_value(a.actor_id),
+                    Cell::new(&a.actor_type),
+                    actor_state_cell(&a.actor_state),
+                    actor_substate_cell(a.actor_state),
+                ]
+            }),
+        );
 
         Ok(())
     }

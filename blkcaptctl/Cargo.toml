@@ -3,6 +3,9 @@ name = "blkcaptctl"
 version = "0.1.0"
 authors = ["opensource@rebeagle.com"]
 edition = "2018"
+license = "GPL-3.0 License"
+license-file = "../LICENSE"
+description = "Data integrity system management for Linux."
 
 [dependencies]
 libblkcapt = { path = "../libblkcapt" }
@@ -24,3 +27,11 @@ bytes = "0.5"
 
 [dev-dependencies]
 
+[package.metadata.deb]
+name = "blockcaptain"
+assets = [
+    ["../target/release/blkcaptwrk", "usr/lib/blkcapt/blkcaptwrk", "755"],
+    ["../target/release/blkcaptctl", "usr/sbin/blkcaptctl", "755"],
+]
+maintainer-scripts = "debian/"
+systemd-units = { enable = false, start = false, unit-name = "blockcaptain" }

@@ -1,6 +1,5 @@
 #!/bin/bash
 
-cargo build --release
-cargo deb --manifest-path ./blkcaptctl/Cargo.toml --no-build --fast
+cargo deb -p blkcaptctl --fast
 dpkg -c ./target/debian/blockcaptain_*.deb
 dpkg -I ./target/debian/blockcaptain_*.deb

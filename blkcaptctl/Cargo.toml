@@ -30,8 +30,8 @@ bytes = "0.5"
 [package.metadata.deb]
 name = "blockcaptain"
 assets = [
-    ["../target/release/blkcaptwrk", "usr/lib/blkcapt/blkcaptwrk", "755"],
-    ["../target/release/blkcaptctl", "usr/sbin/blkcaptctl", "755"],
+    ["target/release/blkcaptwrk", "usr/lib/blkcapt/blkcaptwrk", "755"],
+    ["target/release/blkcaptctl", "usr/sbin/blkcaptctl", "755"],
 ]
-maintainer-scripts = "debian/"
+maintainer-scripts = "../debian/"
 systemd-units = { enable = false, start = false, unit-name = "blockcaptain" }

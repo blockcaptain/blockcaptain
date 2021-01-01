@@ -26,6 +26,6 @@ paste = "1.0.2"
 strum_macros = "0.19"
 derive_more = "0.99.11"
 warp = "0.2"
-nix = "0.19.0"
+nix = "0.19.1"
 
 [dev-dependencies]

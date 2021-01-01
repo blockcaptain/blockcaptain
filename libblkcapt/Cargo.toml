@@ -34,5 +34,5 @@ mockall_double = "0.2"
 
 [dev-dependencies]
 mockall = "0.9"
-serial_test = "0.4"
+serial_test = "0.5"
 indoc = "0.3"

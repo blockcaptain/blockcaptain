@@ -482,8 +482,9 @@ mod tests {
             TYPE=btrfs
             PARTUUID=725de4b5-9235-4d5d-b7e0-73d87d9c11fd"#
         );
-        let ctx = process_double::run_command_as_result_context();
-        ctx.expect().returning(|_| Ok(BLKID_DATA.to_string()));
+        let ctx = process_double::run_command_context();
+        ctx.expect()
+            .returning(|_| Command::new("echo").arg(BLKID_DATA).output());
         assert_eq!(
             BlockDeviceIds::lookup(&DevicePathBuf::try_from("/dev/nvme0n1p2").unwrap())
                 .unwrap()

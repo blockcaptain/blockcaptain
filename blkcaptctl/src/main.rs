@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use blkcaptapp::{blkcaptapp_run, slog_println};
+use blkcaptapp::blkcaptapp_run;
 use clap::{crate_version, Clap};
 mod commands;
 mod ui;
@@ -25,7 +25,7 @@ async fn async_main(options: clap::Result<CliOptions>) -> Result<()> {
             if e.use_stderr() {
                 Err(anyhow!(ClapErrorWrapper(e)))
             } else {
-                slog_println!("{}", e);
+                println!("{}", e);
                 Ok(())
             }
         }

@@ -1,9 +1,13 @@
 use anyhow::{bail, Context, Result};
 use clap::Clap;
 use comfy_table::Cell;
+use dialoguer::Confirm;
 use libblkcapt::{
     model::entities::ScheduleModel,
-    sys::fs::{find_mountentry, DevicePathBuf},
+    sys::{
+        btrfs::{add_to_fstab, AllocationMode, Filesystem},
+        fs::{find_mountentry, BlockDeviceIds, BlockDeviceInfo, DevicePathBuf},
+    },
 };
 
 use libblkcapt::model::entities::{IntervalSpec, KeepSpec};
@@ -12,11 +16,11 @@ use libblkcapt::{
     model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
 };
 use slog_scope::*;
-use std::{convert::TryInto, num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc, unimplemented};
+use std::{convert::TryInto, num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc};
 
 use crate::ui::{
-    comfy_feature_state_cell, comfy_id_header, comfy_id_value, comfy_id_value_full, comfy_name_value, print_comfy_info,
-    print_comfy_table,
+    comfy_feature_state_cell, comfy_id_header, comfy_id_value, comfy_id_value_full, comfy_name_value, comfy_value_or,
+    print_comfy_info, print_comfy_table,
 };
 
 use super::dataset_search;
@@ -98,6 +102,16 @@ pub struct PoolCreateOptions {
     #[clap(short, long, default_value=DEFAULT_POOL_NAME)]
     name: String,
 
+    #[clap(long)]
+    metadata: Option<AllocationMode>,
+
+    #[clap(long)]
+    data: Option<AllocationMode>,
+
+    /// New mountpoint for the filesystem.
+    #[clap(short, long)]
+    mountpoint: Option<PathBuf>,
+
     /// Devices to format for the filesystem.
     #[clap(required(true))]
     devices: Vec<DevicePathBuf>,
@@ -105,16 +119,68 @@ pub struct PoolCreateOptions {
 
 pub fn create_pool(options: PoolCreateOptions) -> Result<()> {
     debug!("Command 'create_pool': {:?}", options);
-    //let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_state();
 
-    unimplemented!();
-    // create filesystem (via fs?)
-    // mount (via fs)
-    // let new_pool = BtrfsPool::new(options.name, options.mountpoint)?;
-    // entities.attach_pool(new_pool.take_model())?;
+    if options.devices.is_empty() {
+        bail!("at least one device is required")
+    }
 
-    //storage::store_entity_state(entities);
-    //Ok(())
+    let infos = options
+        .devices
+        .iter()
+        .map(|d| {
+            let (name, uuid, label) = BlockDeviceIds::lookup(d)?
+                .map(|ids| (ids.name, ids.uuid, ids.label))
+                .unwrap_or_else(|| (d.to_string(), None, None));
+            let info = BlockDeviceInfo::lookup(d)?;
+            Ok((name, uuid, label, info))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    print_comfy_table(
+        vec![
+            Cell::new("Name"),
+            Cell::new("Current UUID"),
+            Cell::new("Current Label"),
+            Cell::new("Model"),
+            Cell::new("Serial"),
+        ],
+        infos.into_iter().map(|i| {
+            vec![
+                comfy_name_value(i.0),
+                comfy_value_or(i.1, "None"),
+                comfy_value_or(i.2, "None"),
+                comfy_value_or(i.3.model, "Unknown"),
+                comfy_value_or(i.3.serial_short, "Unknown"),
+            ]
+        }),
+    );
+
+    println!();
+    if !Confirm::new()
+        .with_prompt("Are you sure you want to destory all data on the devices above?")
+        .interact()?
+    {
+        println!();
+        bail!("user aborted");
+    }
+    println!();
+
+    let filesystem = Filesystem::make(&options.devices, &options.name, options.data, options.metadata)?;
+    let mountpoint = options.mountpoint.clone().unwrap_or_else(|| {
+        let mut path = PathBuf::from("/mnt");
+        path.push(&options.name);
+        path
+    });
+
+    let filesystem = filesystem.mount(&mountpoint)?;
+    add_to_fstab(&filesystem)?;
+
+    let new_pool = BtrfsPool::new(options.name, mountpoint)?;
+    entities.attach_pool(new_pool.take_model())?;
+
+    storage::store_entity_state(entities);
+    Ok(())
 }
 
 #[derive(Clap, Debug)]

@@ -7,12 +7,15 @@ use fs_double::lookup_mountentries_by_devices;
 pub use operations::*;
 use process_double::run_command_as_result;
 use serde::Deserialize;
-use std::string::String;
-use std::{convert::TryFrom, process::Command};
+use std::{convert::TryFrom, fs::OpenOptions, process::Command, writeln};
+use std::{convert::TryInto, num::NonZeroUsize, string::String};
 use std::{
     ffi::OsStr,
+    io::Write,
     path::{Path, PathBuf},
 };
+use strum_macros::Display;
+use strum_macros::EnumString;
 use uuid::Uuid;
 
 fn btrfs_command() -> Command {
@@ -114,6 +117,98 @@ impl Filesystem {
             None => QueriedFilesystem::Unmounted(filesystem),
         })
     }
+
+    pub fn make(
+        devices: &[DevicePathBuf], name: &str, data_allocation: Option<AllocationMode>,
+        meta_allocation: Option<AllocationMode>,
+    ) -> Result<Filesystem> {
+        let device_count = devices.len().try_into()?;
+        let data_allocation = data_allocation.or_else(|| Self::default_redundancy(device_count));
+        let meta_allocation = meta_allocation.or_else(|| Self::default_redundancy(device_count));
+
+        let output_data = run_command_as_result({
+            let mut command = Command::new("mkfs.btrfs");
+            command.args(&["-f", "-L", name]);
+            if let Some(allocation) = data_allocation {
+                command.args(&["-d", &allocation.to_string()]);
+            }
+            if let Some(allocation) = meta_allocation {
+                command.args(&["-m", &allocation.to_string()]);
+            }
+            command.args(devices);
+            command
+        })?;
+
+        let uuid_regex = once_regex!(r"(?m)^UUID:\s+(.*?)\s*$");
+        let uuid_match = uuid_regex.captures(&output_data);
+
+        Ok(Filesystem {
+            devices: devices.to_vec(),
+            uuid: uuid_match
+                .expect("successful mkfs.btrfs should have uuid output")
+                .get(1)
+                .unwrap()
+                .as_str()
+                .parse()
+                .expect("uuid should parse"),
+        })
+    }
+
+    pub fn mount(self, path: &Path) -> Result<MountedFilesystem> {
+        use nix::mount::{mount, MsFlags};
+
+        mount(
+            Some(AsRef::<OsStr>::as_ref(
+                self.devices.first().expect("filesystem always has >=1 device"),
+            )),
+            path,
+            Some("btrfs"),
+            MsFlags::MS_NOATIME,
+            Option::<&str>::None,
+        )
+        .context("btrfs mount syscall failed")?;
+
+        Ok(MountedFilesystem {
+            filesystem: self,
+            fstree_mountpoint: path.to_owned(),
+        })
+    }
+
+    fn default_redundancy(device_count: NonZeroUsize) -> Option<AllocationMode> {
+        // TODO: consider c3 requires kernel 5.5
+        match device_count.get() {
+            1 => None,
+            2 => Some(AllocationMode::Raid1),
+            _ => Some(AllocationMode::Raid1c3),
+        }
+    }
+}
+
+pub fn add_to_fstab(mounted: &MountedFilesystem) -> Result<()> {
+    let line = fstab_line(mounted);
+    let mut file = OpenOptions::new().append(true).create(true).open("/etc/fstab")?;
+    writeln!(file)
+        .and_then(|_| writeln!(file, "{}", line))
+        .context("writing to fstab failed")
+}
+
+pub fn fstab_line(mounted: &MountedFilesystem) -> String {
+    format!(
+        "UUID={}\t{}\tbtrfs\tdefaults,noatime\t0\t0",
+        mounted.filesystem.uuid.to_hyphenated(),
+        mounted.fstree_mountpoint.to_string_lossy()
+    )
+}
+
+#[derive(Clone, Copy, Display, Debug, EnumString, PartialEq, Eq)]
+#[strum(serialize_all = "snake_case")]
+pub enum AllocationMode {
+    Raid1,
+    Raid1c3,
+    Raid1c4,
+    Single,
+    #[strum(serialize = "dup")]
+    Duplicate,
 }
 
 impl MountedFilesystem {

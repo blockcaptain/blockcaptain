@@ -2,6 +2,28 @@ use slog::{b, Drain, Level, Logger, OwnedKVList, Record, KV};
 use slog_term::{timestamp_local, CountingWriter, Decorator, RecordDecorator, Serializer};
 use std::{fmt, io, io::Write, result};
 
+pub struct SyncDrain<D> {
+    inner: std::sync::Arc<std::sync::Mutex<D>>,
+}
+
+impl<D> SyncDrain<D> {
+    pub fn new(inner: D) -> Self {
+        Self {
+            inner: std::sync::Arc::new(std::sync::Mutex::new(inner)),
+        }
+    }
+}
+
+impl<D: Drain> Drain for SyncDrain<D> {
+    type Ok = D::Ok;
+    type Err = D::Err;
+
+    fn log(&self, record: &slog::Record, values: &slog::OwnedKVList) -> Result<Self::Ok, Self::Err> {
+        let inner_locked = self.inner.lock().expect("drains have not paniced");
+        inner_locked.log(record, values)
+    }
+}
+
 fn print_msg_header(mut rd: &mut dyn RecordDecorator, record: &Record, timestamp: bool) -> io::Result<bool> {
     if timestamp {
         rd.start_timestamp()?;
@@ -72,19 +94,15 @@ where
 
     fn format_full(&self, record: &Record, values: &OwnedKVList) -> io::Result<()> {
         self.decorator.with_record(record, values, |decorator| {
-            if record.tag() != "bc_raw" {
-                let comma_needed = print_msg_header(decorator, record, self.timestamp)?;
-                {
-                    let mut serializer = Serializer::new(decorator, comma_needed, false);
+            let comma_needed = print_msg_header(decorator, record, self.timestamp)?;
+            {
+                let mut serializer = Serializer::new(decorator, comma_needed, false);
 
-                    record.kv().serialize(record, &mut serializer)?;
+                record.kv().serialize(record, &mut serializer)?;
 
-                    values.serialize(record, &mut serializer)?;
+                values.serialize(record, &mut serializer)?;
 
-                    serializer.finish()?;
-                }
-            } else {
-                write!(decorator, "{}", record.msg())?;
+                serializer.finish()?;
             }
 
             decorator.start_whitespace()?;

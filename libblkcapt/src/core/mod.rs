@@ -51,7 +51,9 @@ impl BtrfsPool {
             .filesystem
             .devices
             .iter()
-            .map(|d| BlockDeviceIds::lookup(d))
+            .map(|d| {
+                BlockDeviceIds::lookup(d).and_then(|ids| ids.ok_or_else(|| anyhow!("missing device ids for {}", d)))
+            })
             .collect::<Result<Vec<BlockDeviceIds>>>()
             .context("All devices for a btrfs filesystem should resolve with blkid.")?;
 

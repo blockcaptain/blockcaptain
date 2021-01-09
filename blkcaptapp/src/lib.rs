@@ -1,7 +1,7 @@
 mod slogext;
 use anyhow::Result;
 use slog::{b, debug, error, info, o, record_static, trace, Drain, Level, Logger, Record};
-use slogext::{CustomFullFormat, DedupDrain, SlogLogLogger};
+use slogext::{CustomFullFormat, DedupDrain, SlogLogLogger, SyncDrain};
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::runtime::Runtime;
 
@@ -22,11 +22,16 @@ where
 
     {
         let (slog_drain, slog_drain_ctrl) = {
-            let decorator = slog_term::TermDecorator::new().build();
             let show_timestamp = !interactive;
+            let decorator = slog_term::TermDecorator::new().build();
             let drain = CustomFullFormat::new(decorator, show_timestamp).fuse();
-            let drain = slog_async::Async::new(drain).build().fuse();
-            let drain = slog_atomic::AtomicSwitch::new(drain);
+            let drain = if interactive {
+                let drain = SyncDrain::new(drain);
+                slog_atomic::AtomicSwitch::new(drain)
+            } else {
+                let drain = slog_async::Async::new(drain).build().fuse();
+                slog_atomic::AtomicSwitch::new(drain)
+            };
             let ctrl = drain.ctrl();
             (drain.map(Arc::new), ctrl)
         };
@@ -85,11 +90,6 @@ where
 
     println!();
 }
-
-#[macro_export]
-macro_rules! slog_println( ($($args:tt)+) => {
-    slog_scope::info!(#"bc_raw", $($args)+)
-};);
 
 #[cfg(test)]
 mod tests {

@@ -2,6 +2,11 @@ use anyhow::{bail, Context, Result};
 use clap::Clap;
 use comfy_table::Cell;
 use dialoguer::Confirm;
+use libblkcapt::model::entities::{IntervalSpec, KeepSpec};
+use libblkcapt::{
+    core::{BtrfsContainer, BtrfsDataset, BtrfsPool},
+    model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
+};
 use libblkcapt::{
     model::entities::ScheduleModel,
     sys::{
@@ -9,58 +14,14 @@ use libblkcapt::{
         fs::{find_mountentry, BlockDeviceIds, BlockDeviceInfo, DevicePathBuf},
     },
 };
-
-use libblkcapt::model::entities::{IntervalSpec, KeepSpec};
-use libblkcapt::{
-    core::{BtrfsContainer, BtrfsDataset, BtrfsPool},
-    model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
-};
 use slog_scope::*;
 use std::{convert::TryInto, num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc};
 
+use super::{dataset_search, pool_search};
 use crate::ui::{
     comfy_feature_state_cell, comfy_id_header, comfy_id_value, comfy_id_value_full, comfy_name_value, comfy_value_or,
     print_comfy_info, print_comfy_table,
 };
-
-use super::dataset_search;
-
-// #[derive(Clap, Debug)]
-// struct PoolAttachOptions {
-//     /// Name of the filesystem.
-//     #[clap(default_value=DEFAULT_OS_NAME)]
-//     name: String,
-//     /// New mountpoint for the filesystem.
-//     #[clap(default_value = "/mnt/os_fs")]
-//     fs_mountpoint: PathBuf,
-// }
-
-// const DEFAULT_OS_NAME: &str = "OS";
-
-// fn initialize_operatingsystem(mut options: PoolAttachOptions) {
-//     if options.name != DEFAULT_OS_NAME {
-//         let re = Regex::new(r"[^0-9a-z]+").unwrap();
-//         options.fs_mountpoint = format!("/mnt/{}_fs", re.replace_all(options.name.to_lowercase().as_str(), "_"))
-//             .parse()
-//             .unwrap();
-//     }
-//     let options = options;
-//     debug!("initialize_operatingsystem: {:?}", options);
-
-//     let mut validation = Validation::new("new devices");
-//     let root_mountentry = filesystem::lookup_mountentry(Path::new("/"))
-//         .expect("Root mountpoint is parsable.")
-//         .expect("A root mountpoint must exists.");
-//     let root_mountentry = BtrfsMountEntry::try_from(root_mountentry);
-//     validation.require("root mountpoint must be a btrfs subvolume", root_mountentry.is_ok());
-//     validation.require(
-//         "root mountpoint must not be the top-level subvolume",
-//         root_mountentry.map_or(true, |m| !m.is_toplevel_subvolume()),
-//     );
-//     validation.validate();
-// }
-
-// Pool Attach
 
 #[derive(Clap, Debug)]
 pub struct PoolListOptions {}
@@ -172,7 +133,7 @@ pub fn create_pool(options: PoolCreateOptions) -> Result<()> {
         path.push(&options.name);
         path
     });
-
+    std::fs::create_dir_all(&mountpoint)?;
     let filesystem = filesystem.mount(&mountpoint)?;
     add_to_fstab(&filesystem)?;
 
@@ -235,6 +196,31 @@ pub fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
 
     let pool = Arc::new(BtrfsPool::validate(pool_model.clone())?);
     let dataset = BtrfsDataset::new(&pool, name, options.path)?;
+
+    pool_model.attach_dataset(dataset.take_model())?;
+    storage::store_entity_state(entities);
+
+    Ok(())
+}
+
+#[derive(Clap, Debug)]
+pub struct DatasetCreateOptions {
+    /// The pool [pool|id]
+    pool: String,
+
+    /// Name of the dataset
+    name: String,
+}
+
+pub fn create_dataset(options: DatasetCreateOptions) -> Result<()> {
+    debug!("Command 'create_dataset': {:?}", options);
+
+    let mut entities = storage::load_entity_state();
+    let pool_id = pool_search(&entities, &options.pool)?.id();
+    let pool_model = entity_by_id_mut(&mut entities.btrfs_pools, pool_id).expect("always exists if path found");
+
+    let pool = Arc::new(BtrfsPool::validate(pool_model.clone())?);
+    let dataset = pool.create_dataset(options.name)?;
 
     pool_model.attach_dataset(dataset.take_model())?;
     storage::store_entity_state(entities);
@@ -461,6 +447,31 @@ pub fn attach_container(options: ContainerAttachOptions) -> Result<()> {
         .context(format!("No pool found for mountpoint {:?}.", mountentry.file))?;
 
     pool.attach_container(container.take_model())?;
+    storage::store_entity_state(entities);
+
+    Ok(())
+}
+
+#[derive(Clap, Debug)]
+pub struct ContainerCreateOptions {
+    /// The pool [pool|id]
+    pool: String,
+
+    /// Name of the container
+    name: String,
+}
+
+pub fn create_container(options: ContainerCreateOptions) -> Result<()> {
+    debug!("Command 'create_container': {:?}", options);
+
+    let mut entities = storage::load_entity_state();
+    let pool_id = pool_search(&entities, &options.pool)?.id();
+    let pool_model = entity_by_id_mut(&mut entities.btrfs_pools, pool_id).expect("always exists if path found");
+
+    let pool = Arc::new(BtrfsPool::validate(pool_model.clone())?);
+    let container = pool.create_container(options.name)?;
+
+    pool_model.attach_container(container.take_model())?;
     storage::store_entity_state(entities);
 
     Ok(())

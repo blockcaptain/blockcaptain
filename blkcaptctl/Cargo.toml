@@ -3,7 +3,6 @@ name = "blkcaptctl"
 version = "0.1.0"
 authors = ["opensource@rebeagle.com"]
 edition = "2018"
-license = "GPL-3.0 License"
 license-file = "../LICENSE"
 description = "Data integrity system management for Linux."
 

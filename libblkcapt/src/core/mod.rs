@@ -102,6 +102,18 @@ impl BtrfsPool {
     pub fn scrub(&self) -> PoolScrub {
         self.filesystem.scrub()
     }
+
+    pub fn create_dataset(self: &Arc<Self>, name: String) -> Result<BtrfsDataset> {
+        let fs_path = FsPathBuf::from(&name);
+        self.filesystem.create_subvolume(&fs_path)?;
+        BtrfsDataset::new(self, name, fs_path.as_pathbuf(&self.filesystem.fstree_mountpoint))
+    }
+
+    pub fn create_container(self: &Arc<Self>, name: String) -> Result<BtrfsContainer> {
+        let fs_path = FsPathBuf::from(&name);
+        self.filesystem.create_subvolume(&fs_path)?;
+        BtrfsContainer::new(self, name, fs_path.as_pathbuf(&self.filesystem.fstree_mountpoint))
+    }
 }
 
 impl Display for BtrfsPool {

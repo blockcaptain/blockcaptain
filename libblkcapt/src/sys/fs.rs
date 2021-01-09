@@ -275,7 +275,7 @@ impl BlockDeviceIds {
         })
         .map_err(|e| anyhow!(e))
         .and_then(|output| {
-            if output.status.code().unwrap_or_default() == 2 {
+            if output.status.code().unwrap_or_default() == 2 || output.stdout.is_empty() {
                 return Ok(None);
             }
 

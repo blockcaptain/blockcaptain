@@ -41,12 +41,14 @@ async fn command_dispath(options: CliOptions) -> Result<()> {
         },
         TopCommands::Dataset(top_options) => match top_options.subcmd {
             DatasetSubCommands::Attach(options) => attach_dataset(options)?,
+            DatasetSubCommands::Create(options) => create_dataset(options)?,
             DatasetSubCommands::List(options) => list_dataset(options)?,
             DatasetSubCommands::Update(options) => update_dataset(options)?,
             DatasetSubCommands::Show(options) => show_dataset(options)?,
         },
         TopCommands::Container(top_options) => match top_options.subcmd {
             ContainerSubCommands::Attach(options) => attach_container(options)?,
+            ContainerSubCommands::Create(options) => create_container(options)?,
             ContainerSubCommands::List(options) => list_container(options)?,
         },
         TopCommands::Observer(top_options) => match top_options.subcmd {
@@ -107,6 +109,7 @@ struct DatasetCommands {
 #[clap()]
 enum DatasetSubCommands {
     Attach(DatasetAttachOptions),
+    Create(DatasetCreateOptions),
     List(DatasetListOptions),
     Update(DatasetUpdateOptions),
     Show(DatasetShowOptions),
@@ -121,6 +124,7 @@ struct ContainerCommands {
 #[derive(Clap)]
 enum ContainerSubCommands {
     Attach(ContainerAttachOptions),
+    Create(ContainerCreateOptions),
     List(ContainerListOptions),
 }
 

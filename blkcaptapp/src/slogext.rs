@@ -252,7 +252,7 @@ impl<D: Drain> Drain for DedupDrain<D> {
 
 pub struct SlogLogLogger(Logger);
 
-fn log_to_slog_level(level: log::Level) -> Level {
+pub fn log_to_slog_level(level: log::Level) -> Level {
     match level {
         log::Level::Trace => Level::Trace,
         log::Level::Debug => Level::Debug,

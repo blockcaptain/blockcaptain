@@ -1,8 +1,8 @@
 use crate::xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState};
 use anyhow::Result;
 use futures_util::{FutureExt, TryFutureExt};
+use libblkcapt::data_dir;
 use slog::Logger;
-use std::path::PathBuf;
 use tokio::{net::UnixListener, sync::oneshot, task::JoinHandle};
 use warp::{Filter, Rejection};
 
@@ -24,7 +24,11 @@ impl BcActorCtrl for ServerActor {
         let (sender, receiver) = oneshot::channel::<()>();
         let signal = receiver.map(|_| ());
 
-        let socket_path = PathBuf::from("/var/lib/blkcapt/wrk.sock");
+        let socket_path = {
+            let mut path = data_dir();
+            path.push("daemon.sock");
+            path
+        };
         if socket_path.exists() {
             std::fs::remove_file(&socket_path)?;
         }

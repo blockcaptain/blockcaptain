@@ -1,3 +1,4 @@
+use crate::data_dir;
 use http::Request;
 use hyper::{client::connect::dns::GaiResolver, client::HttpConnector, Client, Uri};
 use hyper::{Body, Response};
@@ -54,8 +55,12 @@ impl ServiceClient {
     }
 
     pub async fn get(&self, path: &str) -> Result<Response<Body>, hyper::Error> {
-        const SOCKET: &str = "/var/lib/blkcapt/wrk.sock";
-        let url: Uri = hyperlocal::Uri::new(SOCKET, path).into();
+        let socket_path = {
+            let mut path = data_dir();
+            path.push("daemon.sock");
+            path
+        };
+        let url: Uri = hyperlocal::Uri::new(socket_path, path).into();
         self.client.get(url).await
     }
 }

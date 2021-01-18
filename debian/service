@@ -2,7 +2,7 @@
 Description=BlockCaptain Service
 
 [Service]
-ExecStart=/usr/lib/blkcapt/blkcaptwrk
+ExecStart=/usr/lib/blockcaptain/blkcaptd
 
 [Install]
 WantedBy=multi-user.target

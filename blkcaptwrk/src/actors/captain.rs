@@ -12,7 +12,10 @@ use futures_util::{
     future::ready,
     stream::{self, FuturesUnordered, StreamExt},
 };
-use libblkcapt::model::{entities::SnapshotSyncEntity, storage, Entities, Entity, EntityId};
+use libblkcapt::{
+    create_data_dir,
+    model::{entities::SnapshotSyncEntity, storage, Entities, Entity, EntityId},
+};
 use slog::{error, trace, Logger};
 use std::{collections::HashMap, mem};
 use xactor::{Actor, Addr};
@@ -89,6 +92,8 @@ impl CaptainActor {
 #[async_trait::async_trait]
 impl BcActorCtrl for CaptainActor {
     async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
+        create_data_dir()?;
+
         let mut entities = storage::load_entity_state();
         if !entities.observers.is_empty() {
             trace!(ctx.log(), "building observer actors");

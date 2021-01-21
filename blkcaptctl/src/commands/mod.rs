@@ -11,6 +11,7 @@ use libblkcapt::{
 };
 pub mod observer;
 pub mod pool;
+pub mod sync;
 
 pub fn dataset_search<'a>(
     entities: &'a Entities, query: &str,

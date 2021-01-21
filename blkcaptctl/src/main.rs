@@ -11,6 +11,7 @@ mod ui;
 use commands::observer::*;
 use commands::pool::*;
 use commands::service::*;
+use commands::sync::*;
 
 fn main() {
     let maybe_options = CliOptions::try_parse();
@@ -59,6 +60,13 @@ async fn command_dispath(options: CliOptions) -> Result<()> {
             ObserverSubCommands::Test(options) => test_observer(options).await?,
             ObserverSubCommands::List(options) => list_observer(options)?,
         },
+        TopCommands::Sync(top_options) => match top_options.subcmd {
+            SyncSubCommands::Create(options) => create_sync(options)?,
+            SyncSubCommands::Update(options) => update_sync(options)?,
+            SyncSubCommands::Delete(options) => delete_sync(options)?,
+            SyncSubCommands::Show(options) => show_sync(options)?,
+            SyncSubCommands::List(options) => list_sync(options)?,
+        },
         TopCommands::Service(top_options) => match top_options.subcmd {
             ServiceSubCommands::Status(options) => service_status(options).await?,
         },
@@ -83,6 +91,7 @@ enum TopCommands {
     Dataset(DatasetCommands),
     Container(ContainerCommands),
     Observer(ObserverCommands),
+    Sync(SyncCommands),
     Service(ServiceCommands),
 }
 
@@ -142,6 +151,21 @@ enum ObserverSubCommands {
     Show(ObserverShowOptions),
     Test(ObserverTestOptions),
     List(ObserverListOptions),
+}
+
+#[derive(Clap)]
+struct SyncCommands {
+    #[clap(subcommand)]
+    subcmd: SyncSubCommands,
+}
+
+#[derive(Clap)]
+enum SyncSubCommands {
+    Create(SyncCreateOptions),
+    Update(SyncUpdateOptions),
+    Delete(SyncDeleteOptions),
+    Show(SyncShowOptions),
+    List(SyncListOptions),
 }
 
 #[derive(Clap)]

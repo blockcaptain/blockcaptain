@@ -84,8 +84,8 @@ impl SyncActor {
     pub fn new(
         dataset: Addr<BcActor<DatasetActor>>, container: SyncToContainer, model: SnapshotSyncEntity, log: &Logger,
     ) -> BcActor<Self> {
-        let dataset_id = model.dataset_id();
-        let container_id = model.container_id();
+        let dataset_id = model.dataset_id;
+        let container_id = model.container_id;
         BcActor::new(
             Self {
                 dataset,
@@ -170,7 +170,7 @@ impl SyncActor {
         &self, addr: &Addr<T>,
     ) -> Result<Vec<SnapshotHandle>> {
         addr.call(GetContainerSnapshotsMessage {
-            source_dataset_id: self.model.dataset_id(),
+            source_dataset_id: self.model.dataset_id,
         })
         .await
         .map(|r| r.snapshots)
@@ -205,7 +205,7 @@ impl SyncActor {
                 container
                     .call(GetSnapshotReceiverMessage::new(
                         &transfer_actor,
-                        self.model.dataset_id(),
+                        self.model.dataset_id,
                         snapshot.clone(),
                     ))
                     .await??;
@@ -233,7 +233,7 @@ impl SyncActor {
                 container
                     .call(GetBackupMessage::new(
                         &transfer_actor,
-                        self.model.dataset_id(),
+                        self.model.dataset_id,
                         snapshot.clone(),
                     ))
                     .await??;
@@ -287,7 +287,7 @@ impl BcActorCtrl for SyncActor {
 #[async_trait::async_trait]
 impl BcHandler<ObservableEventMessage> for SyncActor {
     async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: ObservableEventMessage) {
-        if msg.source == self.model.dataset_id()
+        if msg.source == self.model.dataset_id
             && msg.event == ObservableEvent::DatasetSnapshot
             && msg.stage == ObservableEventStage::Succeeded
         {

@@ -46,7 +46,7 @@ impl CaptainActor {
         &self, entities: &Entities, model: SnapshotSyncEntity, log: &Logger,
     ) -> Result<BcActor<SyncActor>> {
         let dataset_pool_id = entities
-            .dataset(model.dataset_id())
+            .dataset(model.dataset_id)
             .map(|p| p.parent.id())
             .context("Invalid sync configuration. Source dataset does not exist.")?;
 
@@ -56,11 +56,11 @@ impl CaptainActor {
             .context("Source dataset's pool didn't start.")?;
 
         let dataset_actor = dataset_pool
-            .call(GetChildActorMessage::new(model.dataset_id()))
+            .call(GetChildActorMessage::new(model.dataset_id))
             .await?
             .context("Source dataset didn't start.")?;
 
-        let maybe_container_pool_id = entities.container(model.container_id()).map(|p| p.parent.id());
+        let maybe_container_pool_id = entities.container(model.container_id).map(|p| p.parent.id());
 
         let to_container_actor = if let Some(container_pool_id) = maybe_container_pool_id {
             let container_pool = self
@@ -68,18 +68,18 @@ impl CaptainActor {
                 .get(&container_pool_id)
                 .context("Destination container's pool didn't start.")?;
             let container_actor = container_pool
-                .call(GetChildActorMessage::new(model.container_id()))
+                .call(GetChildActorMessage::new(model.container_id))
                 .await?
                 .context("Destination container didn't start.")?;
 
             SyncToContainer::Btrfs(container_actor)
         } else {
             let _ = entities
-                .restic_container(model.container_id())
+                .restic_container(model.container_id)
                 .context("Invalid sync configuration. Destination container does not exist.")?;
             let container_actor = self
                 .restic_actors
-                .get(&model.container_id())
+                .get(&model.container_id)
                 .context("Destination restic container didn't start.")?;
 
             SyncToContainer::Restic(container_actor.clone())

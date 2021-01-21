@@ -3,7 +3,6 @@ use comfy_table::presets::UTF8_FULL;
 use comfy_table::*;
 use libblkcapt::{model::entities::FeatureState, parsing::parse_uuid};
 use presets::ASCII_NO_BORDERS;
-use slog_scope::info;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -18,7 +17,7 @@ pub fn print_comfy_table(header: Vec<Cell>, rows: impl Iterator<Item = Vec<Cell>
         table.add_row(r);
     });
 
-    info!(#"bc_raw", "{}", table);
+    println!("{}", table);
 }
 
 pub fn comfy_feature_state_cell(state: FeatureState) -> Cell {
@@ -55,6 +54,12 @@ pub fn comfy_id_value_full<T: Into<Uuid>>(uuid: T) -> Cell {
 
 pub fn comfy_name_value<T: ToString>(name: T) -> Cell {
     Cell::new(name).fg(Color::Blue)
+}
+
+pub fn comfy_value_or<T: ToString>(value: Option<T>, default: &str) -> Cell {
+    value
+        .map(|v| Cell::new(v.to_string()))
+        .unwrap_or_else(|| Cell::new(default))
 }
 
 pub enum CellOrCells {
@@ -98,7 +103,7 @@ pub fn print_comfy_info(rows: Vec<(Cell, CellOrCells)>) {
         }
     }
 
-    info!(#"bc_raw", "{}", table);
+    println!("{}", table);
 }
 
 #[derive(Debug)]

@@ -1,0 +1,8 @@
+[Unit]
+Description=BlockCaptain Service
+
+[Service]
+ExecStart=/usr/lib/blockcaptain/blkcaptd
+
+[Install]
+WantedBy=multi-user.target

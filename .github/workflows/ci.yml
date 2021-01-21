@@ -54,6 +54,7 @@ jobs:
           COVERALLS_KEY: ${{ secrets.COVERALLS_KEY }}
         run: eng/ci/test-run.sh
       - name: Test Report
+        if: always()
         run: eng/ci/test-report.sh
       - name: Publish Test Report
         uses: docker://ghcr.io/enricomi/publish-unit-test-result-action:v1.6

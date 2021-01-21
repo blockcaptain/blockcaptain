@@ -4,13 +4,14 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use blkcaptapp::{blkcaptapp_run, slog_println};
+use blkcaptapp::blkcaptapp_run;
 use clap::{crate_version, Clap};
 mod commands;
 mod ui;
 use commands::observer::*;
 use commands::pool::*;
 use commands::service::*;
+use commands::sync::*;
 
 fn main() {
     let maybe_options = CliOptions::try_parse();
@@ -25,7 +26,7 @@ async fn async_main(options: clap::Result<CliOptions>) -> Result<()> {
             if e.use_stderr() {
                 Err(anyhow!(ClapErrorWrapper(e)))
             } else {
-                slog_println!("{}", e);
+                println!("{}", e);
                 Ok(())
             }
         }
@@ -41,12 +42,14 @@ async fn command_dispath(options: CliOptions) -> Result<()> {
         },
         TopCommands::Dataset(top_options) => match top_options.subcmd {
             DatasetSubCommands::Attach(options) => attach_dataset(options)?,
+            DatasetSubCommands::Create(options) => create_dataset(options)?,
             DatasetSubCommands::List(options) => list_dataset(options)?,
             DatasetSubCommands::Update(options) => update_dataset(options)?,
             DatasetSubCommands::Show(options) => show_dataset(options)?,
         },
         TopCommands::Container(top_options) => match top_options.subcmd {
             ContainerSubCommands::Attach(options) => attach_container(options)?,
+            ContainerSubCommands::Create(options) => create_container(options)?,
             ContainerSubCommands::List(options) => list_container(options)?,
         },
         TopCommands::Observer(top_options) => match top_options.subcmd {
@@ -56,6 +59,13 @@ async fn command_dispath(options: CliOptions) -> Result<()> {
             ObserverSubCommands::Show(options) => show_observer(options)?,
             ObserverSubCommands::Test(options) => test_observer(options).await?,
             ObserverSubCommands::List(options) => list_observer(options)?,
+        },
+        TopCommands::Sync(top_options) => match top_options.subcmd {
+            SyncSubCommands::Create(options) => create_sync(options)?,
+            SyncSubCommands::Update(options) => update_sync(options)?,
+            SyncSubCommands::Delete(options) => delete_sync(options)?,
+            SyncSubCommands::Show(options) => show_sync(options)?,
+            SyncSubCommands::List(options) => list_sync(options)?,
         },
         TopCommands::Service(top_options) => match top_options.subcmd {
             ServiceSubCommands::Status(options) => service_status(options).await?,
@@ -81,6 +91,7 @@ enum TopCommands {
     Dataset(DatasetCommands),
     Container(ContainerCommands),
     Observer(ObserverCommands),
+    Sync(SyncCommands),
     Service(ServiceCommands),
 }
 
@@ -107,6 +118,7 @@ struct DatasetCommands {
 #[clap()]
 enum DatasetSubCommands {
     Attach(DatasetAttachOptions),
+    Create(DatasetCreateOptions),
     List(DatasetListOptions),
     Update(DatasetUpdateOptions),
     Show(DatasetShowOptions),
@@ -121,6 +133,7 @@ struct ContainerCommands {
 #[derive(Clap)]
 enum ContainerSubCommands {
     Attach(ContainerAttachOptions),
+    Create(ContainerCreateOptions),
     List(ContainerListOptions),
 }
 
@@ -138,6 +151,21 @@ enum ObserverSubCommands {
     Show(ObserverShowOptions),
     Test(ObserverTestOptions),
     List(ObserverListOptions),
+}
+
+#[derive(Clap)]
+struct SyncCommands {
+    #[clap(subcommand)]
+    subcmd: SyncSubCommands,
+}
+
+#[derive(Clap)]
+enum SyncSubCommands {
+    Create(SyncCreateOptions),
+    Update(SyncUpdateOptions),
+    Delete(SyncDeleteOptions),
+    Show(SyncShowOptions),
+    List(SyncListOptions),
 }
 
 #[derive(Clap)]

@@ -1,7 +1,7 @@
 mod slogext;
 use anyhow::Result;
 use slog::{b, debug, error, info, o, record_static, trace, Drain, Level, Logger, Record};
-use slogext::{CustomFullFormat, DedupDrain, SlogLogLogger};
+use slogext::{CustomFullFormat, DedupDrain, SlogLogLogger, SyncDrain};
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::runtime::Runtime;
 
@@ -10,23 +10,28 @@ where
     M: FnOnce(Logger) -> F,
     F: Future<Output = Result<()>>,
 {
-    let (internal_level, external_level) = match verbose_flag_count {
-        0 => (Level::Info, log::LevelFilter::Info),
-        1 => (Level::Debug, log::LevelFilter::Info),
-        2 => (Level::Trace, log::LevelFilter::Info),
-        3 => (Level::Trace, log::LevelFilter::Debug),
-        _ => (Level::Trace, log::LevelFilter::Trace),
+    let (internal_level, external_level_slog, external_level) = match verbose_flag_count {
+        0 => (Level::Info, Level::Info, log::LevelFilter::Info),
+        1 => (Level::Debug, Level::Info, log::LevelFilter::Info),
+        2 => (Level::Trace, Level::Info, log::LevelFilter::Info),
+        3 => (Level::Trace, Level::Debug, log::LevelFilter::Debug),
+        _ => (Level::Trace, Level::Trace, log::LevelFilter::Trace),
     };
 
     println!();
 
     {
         let (slog_drain, slog_drain_ctrl) = {
-            let decorator = slog_term::TermDecorator::new().build();
             let show_timestamp = !interactive;
+            let decorator = slog_term::TermDecorator::new().build();
             let drain = CustomFullFormat::new(decorator, show_timestamp).fuse();
-            let drain = slog_async::Async::new(drain).build().fuse();
-            let drain = slog_atomic::AtomicSwitch::new(drain);
+            let drain = if interactive {
+                let drain = SyncDrain::new(drain);
+                slog_atomic::AtomicSwitch::new(drain)
+            } else {
+                let drain = slog_async::Async::new(drain).build().fuse();
+                slog_atomic::AtomicSwitch::new(drain)
+            };
             let ctrl = drain.ctrl();
             (drain.map(Arc::new), ctrl)
         };
@@ -40,6 +45,7 @@ where
 
             let slog_external_logger = {
                 let drain = Arc::clone(&slog_drain);
+                let drain = drain.filter_level(external_level_slog).fuse();
                 Logger::root(drain, o!())
             };
 
@@ -85,11 +91,6 @@ where
 
     println!();
 }
-
-#[macro_export]
-macro_rules! slog_println( ($($args:tt)+) => {
-    slog_scope::info!(#"bc_raw", $($args)+)
-};);
 
 #[cfg(test)]
 mod tests {

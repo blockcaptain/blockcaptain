@@ -158,6 +158,14 @@ pub struct EntityPath2<'a, T: Entity, U: Entity> {
     pub parent: &'a U,
 }
 
+impl<'a, T: Entity> EntityPath1<'a, T> {
+    pub fn into_id_path(self) -> EntityIdPath1 {
+        EntityIdPath1 {
+            entity: self.entity.id(),
+        }
+    }
+}
+
 impl<'a, T: Entity, U: Entity> EntityPath2<'a, T, U> {
     pub fn into_id_path(self) -> EntityIdPath2 {
         EntityIdPath2 {
@@ -209,6 +217,10 @@ impl<'a, T: Entity, U: Entity> AsRef<dyn Entity + 'a> for EntityPath2<'a, T, U> 
 
 pub trait EntityPath: Entity {
     fn path(&self) -> String;
+}
+
+pub struct EntityIdPath1 {
+    pub entity: EntityId,
 }
 
 pub struct EntityIdPath2 {

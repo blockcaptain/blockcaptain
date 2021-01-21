@@ -360,7 +360,7 @@ pub fn show_observer(options: ObserverShowOptions) -> Result<()> {
         ),
     ]);
 
-    info!(#"bc_raw", "");
+    println!();
 
     print_comfy_table(
         vec![

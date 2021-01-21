@@ -350,8 +350,8 @@ impl EntityStatic for BtrfsContainerEntity {
 pub struct SnapshotSyncEntity {
     id: EntityId,
     name: String,
-    dataset: EntityId,
-    container: EntityId,
+    pub dataset_id: EntityId,
+    pub container_id: EntityId,
     pub sync_mode: SnapshotSyncMode,
 }
 
@@ -361,7 +361,7 @@ impl<'a> AsRef<dyn Entity + 'a> for SnapshotSyncEntity {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
 pub enum SnapshotSyncMode {
     AllScheduled(ScheduleModel),
@@ -370,12 +370,29 @@ pub enum SnapshotSyncMode {
     IntervalImmediate(#[serde(with = "humantime_serde")] Duration),
 }
 
-impl SnapshotSyncEntity {
-    pub fn dataset_id(&self) -> EntityId {
-        self.dataset
+impl FromStr for SnapshotSyncMode {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "all_scheduled" => Ok(Self::AllScheduled(ScheduleModel(String::from("0 0 0 * * * *")))),
+            "latest_scheduled" => Ok(Self::LatestScheduled(ScheduleModel(String::from("0 0 0 * * * *")))),
+            "all_immediate" => Ok(Self::AllImmediate),
+            "interval_immediate" => Ok(Self::IntervalImmediate(Duration::from_secs(3600))),
+            _ => Err(anyhow::anyhow!("invalid snapshot sync mode")),
+        }
     }
-    pub fn container_id(&self) -> EntityId {
-        self.container
+}
+
+impl SnapshotSyncEntity {
+    pub fn new(name: String, dataset_id: EntityId, container_id: EntityId) -> Self {
+        Self {
+            id: EntityId::new(),
+            name,
+            dataset_id,
+            container_id,
+            sync_mode: SnapshotSyncMode::AllImmediate,
+        }
     }
 }
 

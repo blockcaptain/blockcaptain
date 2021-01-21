@@ -1,16 +1,17 @@
 use crate::parsing::{parse_key_value_data, StringPair};
 #[mockall_double::double]
 use crate::sys::process::double as process_double;
+use crate::sys::process::output_as_result;
 use anyhow::{anyhow, Context, Error, Result};
 use mnt::{MountEntry, MountIter};
 use nix::mount::{mount, MsFlags};
-use process_double::run_command_as_result;
+use process_double::{run_command, run_command_as_result};
 use serde::{Deserialize, Serialize};
-use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::{collections::HashMap, process::Command};
+use std::{convert::TryFrom, fmt::Display};
 use uuid::Uuid;
 
 // ## Filesystem Relative PathBuf ####################################################################################
@@ -85,6 +86,18 @@ impl DevicePathBuf {
             }
         }
         Err(anyhow!("Device path must be within /dev/."))
+    }
+}
+
+impl Display for DevicePathBuf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.to_string_lossy())
+    }
+}
+
+impl AsRef<OsStr> for DevicePathBuf {
+    fn as_ref(&self) -> &OsStr {
+        self.0.as_os_str()
     }
 }
 
@@ -211,7 +224,7 @@ pub struct BlockDeviceInfo {
 }
 
 impl BlockDeviceInfo {
-    pub fn lookup(device_name: &str) -> Result<Self> {
+    pub fn lookup(device_name: &DevicePathBuf) -> Result<Self> {
         const PROCESS_NAME: &str = "udevadm";
         let output_data = run_command_as_result({
             let mut command = Command::new(PROCESS_NAME);
@@ -253,22 +266,29 @@ pub struct BlockDeviceIds {
 }
 
 impl BlockDeviceIds {
-    pub fn lookup(device_name: &DevicePathBuf) -> Result<Self> {
+    pub fn lookup(device_name: &DevicePathBuf) -> Result<Option<Self>> {
         const PROCESS_NAME: &str = "blkid";
-        let output_data = run_command_as_result({
+        run_command({
             let mut command = Command::new(PROCESS_NAME);
             command.args(&["-o", "export"]).arg(device_name.as_pathbuf());
             command
         })
-        .context(format!("Failed to run {} to get device information.", PROCESS_NAME))?;
+        .map_err(|e| anyhow!(e))
+        .and_then(|output| {
+            if output.status.code().unwrap_or_default() == 2 || output.stdout.is_empty() {
+                return Ok(None);
+            }
 
-        let kvps = parse_key_value_data::<Vec<StringPair>>(&output_data)
-            .context(format!("Failed to parse output of {}", PROCESS_NAME))?;
+            let output_data = output_as_result(output)?;
+            let kvps = parse_key_value_data::<Vec<StringPair>>(&output_data)
+                .context(format!("Failed to parse output of {}", PROCESS_NAME))?;
 
-        envy::from_iter::<_, Self>(kvps).context(format!(
-            "Failed loading the device information from {} output.",
-            PROCESS_NAME
-        ))
+            envy::from_iter::<_, Self>(kvps).map(Some).context(format!(
+                "Failed loading the device information from {} output.",
+                PROCESS_NAME
+            ))
+        })
+        .context(format!("Failed to run {} to get device information.", PROCESS_NAME))
     }
 }
 
@@ -354,7 +374,7 @@ mod tests {
         let ctx = process_double::run_command_as_result_context();
         ctx.expect().returning(|_| Ok(UDEVADM_DATA.to_string()));
 
-        assert!(BlockDeviceInfo::lookup("/dev/nvme0")
+        assert!(BlockDeviceInfo::lookup(&"/dev/nvme0".parse().unwrap())
             .unwrap_err()
             .to_string()
             .contains("Not a block"))
@@ -387,7 +407,7 @@ mod tests {
         ctx.expect().returning(|_| Ok(UDEVADM_DATA.to_string()));
 
         assert_eq!(
-            BlockDeviceInfo::lookup("/dev/nvme0").unwrap(),
+            BlockDeviceInfo::lookup(&"/dev/nvme0".parse().unwrap()).unwrap(),
             BlockDeviceInfo {
                 name: String::from("/dev/nvme0n1"),
                 devtype: String::from("disk"),
@@ -439,7 +459,7 @@ mod tests {
         ctx.expect().returning(|_| Ok(UDEVADM_DATA.to_string()));
 
         assert_eq!(
-            BlockDeviceInfo::lookup("/dev/nvme0").unwrap(),
+            BlockDeviceInfo::lookup(&"/dev/nvme0".parse().unwrap()).unwrap(),
             BlockDeviceInfo {
                 name: String::from("/dev/nvme0n1p1"),
                 devtype: String::from("partition"),
@@ -462,10 +482,13 @@ mod tests {
             TYPE=btrfs
             PARTUUID=725de4b5-9235-4d5d-b7e0-73d87d9c11fd"#
         );
-        let ctx = process_double::run_command_as_result_context();
-        ctx.expect().returning(|_| Ok(BLKID_DATA.to_string()));
+        let ctx = process_double::run_command_context();
+        ctx.expect()
+            .returning(|_| Command::new("echo").arg(BLKID_DATA).output());
         assert_eq!(
-            BlockDeviceIds::lookup(&DevicePathBuf::try_from("/dev/nvme0n1p2").unwrap()).unwrap(),
+            BlockDeviceIds::lookup(&DevicePathBuf::try_from("/dev/nvme0n1p2").unwrap())
+                .unwrap()
+                .unwrap(),
             BlockDeviceIds {
                 name: String::from("/dev/nvme0n1p2"),
                 label: Some(String::from("default"),),

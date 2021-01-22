@@ -4,7 +4,8 @@ use futures_util::{FutureExt, TryFutureExt};
 use libblkcapt::data_dir;
 use slog::Logger;
 use tokio::{net::UnixListener, sync::oneshot, task::JoinHandle};
-//use warp::{Filter, Rejection};
+use tokio_stream::wrappers::UnixListenerStream;
+use warp::{Filter, Rejection};
 
 use super::intel::{GetStateMessage, IntelActor};
 
@@ -21,37 +22,36 @@ impl ServerActor {
 #[async_trait::async_trait]
 impl BcActorCtrl for ServerActor {
     async fn started(&mut self, _ctx: BcContext<'_, Self>) -> Result<()> {
-        // TODO_ON_TOKIO03
-        // let (sender, receiver) = oneshot::channel::<()>();
-        // let signal = receiver.map(|_| ());
+        let (sender, receiver) = oneshot::channel::<()>();
+        let signal = receiver.map(|_| ());
 
-        // let socket_path = {
-        //     let mut path = data_dir();
-        //     path.push("daemon.sock");
-        //     path
-        // };
-        // if socket_path.exists() {
-        //     std::fs::remove_file(&socket_path)?;
-        // }
-        // let mut listener = UnixListener::bind(socket_path)?;
-        // let handle = tokio::spawn(async move {
-        //     let incoming = listener;
+        let socket_path = {
+            let mut path = data_dir();
+            path.push("daemon.sock");
+            path
+        };
+        if socket_path.exists() {
+            std::fs::remove_file(&socket_path)?;
+        }
+        let listener = UnixListener::bind(socket_path)?;
+        let handle = tokio::spawn(async move {
+            let incoming = UnixListenerStream::new(listener);
 
-        //     let routes = warp::any().and_then(|| async {
-        //         let addr = IntelActor::addr();
-        //         let state = addr
-        //             .call(GetStateMessage)
-        //             .and_then(|fut| fut.map(Ok))
-        //             .await
-        //             .map_err(|_| warp::reject())?;
-        //         Ok::<_, Rejection>(warp::reply::json(&state))
-        //     });
+            let routes = warp::any().and_then(|| async {
+                let addr = IntelActor::addr();
+                let state = addr
+                    .call(GetStateMessage)
+                    .and_then(|fut| fut.map(Ok))
+                    .await
+                    .map_err(|_| warp::reject())?;
+                Ok::<_, Rejection>(warp::reply::json(&state))
+            });
 
-        //     warp::serve(routes)
-        //         .serve_incoming_with_graceful_shutdown(incoming, signal)
-        //         .await;
-        // });
-        // self.server = Some((handle, sender));
+            warp::serve(routes)
+                .serve_incoming_with_graceful_shutdown(incoming, signal)
+                .await;
+        });
+        self.server = Some((handle, sender));
         Ok(())
     }
 

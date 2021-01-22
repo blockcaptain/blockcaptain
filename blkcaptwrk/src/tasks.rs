@@ -86,8 +86,7 @@ impl WorkerTask {
     }
 
     pub fn abort(&self) {
-        // TODO_ON_TOKIO03
-        //let _ = self.handle.abort()
+        let _ = self.handle.abort();
     }
 }
 

@@ -241,7 +241,7 @@ pub async fn test_observer(options: ObserverTestOptions) -> Result<()> {
         emitter
             .emit(observation_match.healthcheck_id, ObservableEventStage::Starting)
             .await?;
-        tokio::time::delay_for(Duration::from_millis(300)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
 
         let end_stage = match options.fail {
             true => ObservableEventStage::Failed(String::from("This is a test failure.")),

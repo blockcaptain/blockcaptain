@@ -287,8 +287,8 @@ pub struct StartedResticBackup {
 }
 
 impl StartedResticBackup {
-    pub async fn wait(self) -> Result<ResticContainerSnapshot> {
-        let exit_status = self.process.await?;
+    pub async fn wait(mut self) -> Result<ResticContainerSnapshot> {
+        let exit_status = self.process.wait().await?;
         let _ = unmount(&self.source.bind_path);
         exit_status_as_result(exit_status)?;
 
@@ -327,8 +327,8 @@ pub struct StartedResticPrune {
 }
 
 impl StartedResticPrune {
-    pub async fn wait(self) -> Result<()> {
-        exit_status_as_result(self.process.await?)
+    pub async fn wait(mut self) -> Result<()> {
+        exit_status_as_result(self.process.wait().await?)
     }
 }
 
@@ -356,8 +356,8 @@ pub struct StartedResticForget {
 }
 
 impl StartedResticForget {
-    pub async fn wait(self) -> Result<()> {
-        exit_status_as_result(self.process.await?)
+    pub async fn wait(mut self) -> Result<()> {
+        exit_status_as_result(self.process.wait().await?)
     }
 }
 

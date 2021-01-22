@@ -113,7 +113,7 @@ where
 
 pub mod service {
     use anyhow::Result;
-    use bytes::buf::BufExt;
+    use bytes::buf::Buf;
     use clap::Clap;
     use comfy_table::Cell;
     use libblkcapt::{

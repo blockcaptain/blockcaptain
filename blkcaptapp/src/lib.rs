@@ -66,7 +66,7 @@ where
             ));
 
             {
-                let mut runtime = Runtime::new().expect("can create runtime");
+                let runtime = Runtime::new().expect("can create runtime");
                 let result = runtime.block_on(main(slog_internal_logger.clone()));
                 if let Err(e) = result {
                     error!(slog_internal_logger, "{}", e);

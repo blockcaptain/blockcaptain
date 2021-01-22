@@ -4,6 +4,7 @@ use futures_util::{FutureExt, TryFutureExt};
 use libblkcapt::data_dir;
 use slog::Logger;
 use tokio::{net::UnixListener, sync::oneshot, task::JoinHandle};
+use tokio_stream::wrappers::UnixListenerStream;
 use warp::{Filter, Rejection};
 
 use super::intel::{GetStateMessage, IntelActor};
@@ -32,10 +33,9 @@ impl BcActorCtrl for ServerActor {
         if socket_path.exists() {
             std::fs::remove_file(&socket_path)?;
         }
-        let mut listener = UnixListener::bind(socket_path)?;
-
+        let listener = UnixListener::bind(socket_path)?;
         let handle = tokio::spawn(async move {
-            let incoming = listener.incoming();
+            let incoming = UnixListenerStream::new(listener);
 
             let routes = warp::any().and_then(|| async {
                 let addr = IntelActor::addr();

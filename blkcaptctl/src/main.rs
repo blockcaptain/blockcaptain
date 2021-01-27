@@ -10,6 +10,7 @@ mod commands;
 mod ui;
 use commands::observer::*;
 use commands::pool::*;
+use commands::restic::*;
 use commands::service::*;
 use commands::sync::*;
 
@@ -36,43 +37,45 @@ async fn async_main(options: clap::Result<CliOptions>) -> Result<()> {
 async fn command_dispath(options: CliOptions) -> Result<()> {
     match options.subcmd {
         TopCommands::Pool(top_options) => match top_options.subcmd {
-            PoolSubCommands::Attach(options) => attach_pool(options)?,
-            PoolSubCommands::Create(options) => create_pool(options)?,
-            PoolSubCommands::List(options) => list_pool(options)?,
+            PoolSubCommands::Attach(options) => attach_pool(options),
+            PoolSubCommands::Create(options) => create_pool(options),
+            PoolSubCommands::List(options) => list_pool(options),
         },
         TopCommands::Dataset(top_options) => match top_options.subcmd {
-            DatasetSubCommands::Attach(options) => attach_dataset(options)?,
-            DatasetSubCommands::Create(options) => create_dataset(options)?,
-            DatasetSubCommands::List(options) => list_dataset(options)?,
-            DatasetSubCommands::Update(options) => update_dataset(options)?,
-            DatasetSubCommands::Show(options) => show_dataset(options)?,
+            DatasetSubCommands::Attach(options) => attach_dataset(options),
+            DatasetSubCommands::Create(options) => create_dataset(options),
+            DatasetSubCommands::List(options) => list_dataset(options),
+            DatasetSubCommands::Update(options) => update_dataset(options),
+            DatasetSubCommands::Show(options) => show_dataset(options),
         },
         TopCommands::Container(top_options) => match top_options.subcmd {
-            ContainerSubCommands::Attach(options) => attach_container(options)?,
-            ContainerSubCommands::Create(options) => create_container(options)?,
-            ContainerSubCommands::List(options) => list_container(options)?,
+            ContainerSubCommands::Attach(options) => attach_container(options),
+            ContainerSubCommands::Create(options) => create_container(options),
+            ContainerSubCommands::List(options) => list_container(options),
         },
         TopCommands::Observer(top_options) => match top_options.subcmd {
-            ObserverSubCommands::Create(options) => create_observer(options)?,
-            ObserverSubCommands::Update(options) => update_observer(options)?,
-            ObserverSubCommands::Delete(options) => delete_observer(options)?,
-            ObserverSubCommands::Show(options) => show_observer(options)?,
-            ObserverSubCommands::Test(options) => test_observer(options).await?,
-            ObserverSubCommands::List(options) => list_observer(options)?,
+            ObserverSubCommands::Create(options) => create_observer(options),
+            ObserverSubCommands::Update(options) => update_observer(options),
+            ObserverSubCommands::Delete(options) => delete_observer(options),
+            ObserverSubCommands::Show(options) => show_observer(options),
+            ObserverSubCommands::Test(options) => test_observer(options).await,
+            ObserverSubCommands::List(options) => list_observer(options),
         },
         TopCommands::Sync(top_options) => match top_options.subcmd {
-            SyncSubCommands::Create(options) => create_sync(options)?,
-            SyncSubCommands::Update(options) => update_sync(options)?,
-            SyncSubCommands::Delete(options) => delete_sync(options)?,
-            SyncSubCommands::Show(options) => show_sync(options)?,
-            SyncSubCommands::List(options) => list_sync(options)?,
+            SyncSubCommands::Create(options) => create_sync(options),
+            SyncSubCommands::Update(options) => update_sync(options),
+            SyncSubCommands::Delete(options) => delete_sync(options),
+            SyncSubCommands::Show(options) => show_sync(options),
+            SyncSubCommands::List(options) => list_sync(options),
+        },
+        TopCommands::Restic(top_options) => match top_options.subcmd {
+            ResticSubCommands::Attach(options) => attach_restic(options),
+            ResticSubCommands::Update(options) => update_restic(options),
         },
         TopCommands::Service(top_options) => match top_options.subcmd {
-            ServiceSubCommands::Status(options) => service_status(options).await?,
+            ServiceSubCommands::Status(options) => service_status(options).await,
         },
     }
-
-    Ok(())
 }
 
 #[derive(Clap)]
@@ -92,6 +95,7 @@ enum TopCommands {
     Container(ContainerCommands),
     Observer(ObserverCommands),
     Sync(SyncCommands),
+    Restic(ResticCommands),
     Service(ServiceCommands),
 }
 
@@ -166,6 +170,18 @@ enum SyncSubCommands {
     Delete(SyncDeleteOptions),
     Show(SyncShowOptions),
     List(SyncListOptions),
+}
+
+#[derive(Clap)]
+struct ResticCommands {
+    #[clap(subcommand)]
+    subcmd: ResticSubCommands,
+}
+
+#[derive(Clap)]
+enum ResticSubCommands {
+    Attach(ResticAttachOptions),
+    Update(ResticUpdateOptions),
 }
 
 #[derive(Clap)]

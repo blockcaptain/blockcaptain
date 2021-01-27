@@ -17,7 +17,7 @@ use libblkcapt::{
 use slog_scope::*;
 use std::{convert::TryInto, num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc};
 
-use super::{dataset_search, pool_search};
+use super::{dataset_search, pool_search, RetentionCreateUpdateOptions, RetentionUpdateOptions};
 use crate::ui::{
     comfy_feature_state_cell, comfy_id_header, comfy_id_value, comfy_id_value_full, comfy_name_value, comfy_value_or,
     print_comfy_info, print_comfy_table,
@@ -69,6 +69,10 @@ pub struct PoolCreateOptions {
     #[clap(long)]
     data: Option<AllocationMode>,
 
+    /// Do not prompt for confirmation.
+    #[clap(long)]
+    force: bool,
+
     /// New mountpoint for the filesystem.
     #[clap(short, long)]
     mountpoint: Option<PathBuf>,
@@ -118,12 +122,14 @@ pub fn create_pool(options: PoolCreateOptions) -> Result<()> {
     );
 
     println!();
-    if !Confirm::new()
-        .with_prompt("Are you sure you want to destory all data on the devices above?")
-        .interact()?
-    {
-        println!();
-        bail!("user aborted");
+    if !options.force {
+        if !Confirm::new()
+            .with_prompt("Are you sure you want to destory all data on the devices above?")
+            .interact()?
+        {
+            println!();
+            bail!("user aborted");
+        }
     }
     println!();
 
@@ -210,6 +216,9 @@ pub struct DatasetCreateOptions {
 
     /// Name of the dataset
     name: String,
+
+    #[clap(flatten)]
+    shared: DatasetCreateUpdateOptions,
 }
 
 pub fn create_dataset(options: DatasetCreateOptions) -> Result<()> {
@@ -222,7 +231,14 @@ pub fn create_dataset(options: DatasetCreateOptions) -> Result<()> {
     let pool = Arc::new(BtrfsPool::validate(pool_model.clone())?);
     let dataset = pool.create_dataset(options.name)?;
 
-    pool_model.attach_dataset(dataset.take_model())?;
+    let mut dataset = dataset.take_model();
+    options.shared.update_snapshots(&mut dataset.snapshot_schedule)?;
+    options
+        .shared
+        .retention
+        .update_retention(&mut dataset.snapshot_retention);
+
+    pool_model.attach_dataset(dataset)?;
     storage::store_entity_state(entities);
 
     Ok(())
@@ -284,6 +300,38 @@ pub fn list_dataset(options: DatasetListOptions) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clap, Debug)]
+pub struct DatasetCreateUpdateOptions {
+    /// Set the snapshots schedule using a simple frequency (e.g. 1hour, 2days)
+    #[clap(short('f'), long, value_name("duration"), conflicts_with("snapshot-schedule"))]
+    snapshot_frequency: Option<humantime::Duration>,
+
+    /// Set the schedule for taking snapshots of this dataset
+    #[clap(short('s'), long, value_name("cron"))]
+    snapshot_schedule: Option<ScheduleModel>,
+
+    #[clap(flatten)]
+    retention: RetentionCreateUpdateOptions,
+}
+
+impl DatasetCreateUpdateOptions {
+    fn update_snapshots(&self, schedule: &mut Option<ScheduleModel>) -> Result<()> {
+        if let Some(f) = self.snapshot_frequency {
+            let std_duration = *f;
+            *schedule = Some(std_duration.try_into().context(
+                "The specified frequency can't be converted into a schedule. \
+                For more advanced schedule creation use the -s option. \
+                See --help for more details.",
+            )?);
+        }
+
+        if self.snapshot_schedule.is_some() {
+            *schedule = self.snapshot_schedule.clone();
+        }
+        Ok(())
+    }
+}
+
 const AFTER_HELP: &str = r"RETENTION
 
 The retention interval format is [<Repeat>x]<Duration>[:<Count>]. The default Repeat and Count values are 1.
@@ -293,14 +341,6 @@ The retention interval format is [<Repeat>x]<Duration>[:<Count>]. The default Re
 #[derive(Clap, Debug)]
 #[clap(after_help(AFTER_HELP))]
 pub struct DatasetUpdateOptions {
-    /// Set the snapshots schedule using a simple frequency (e.g. 1hour, 2days)
-    #[clap(short('f'), long, value_name("duration"), conflicts_with("snapshot-schedule"))]
-    snapshot_frequency: Option<humantime::Duration>,
-
-    /// Set the schedule for taking snapshots of this dataset
-    #[clap(short('s'), long, value_name("cron"))]
-    snapshot_schedule: Option<ScheduleModel>,
-
     /// Prevent starting new snapshot creation jobs on this dataset
     #[clap(long, conflicts_with("resume-snapshotting"))]
     pause_snapshotting: bool,
@@ -308,56 +348,15 @@ pub struct DatasetUpdateOptions {
     #[clap(long)]
     resume_snapshotting: bool,
 
-    /// Specify one or more snapshot retention time intervals
-    #[clap(short('i'), long, value_name("interval"))]
-    retention_intervals: Option<Vec<IntervalSpecArg>>,
+    #[clap(flatten)]
+    shared: DatasetCreateUpdateOptions,
 
-    /// Specify the minimum number of snapshots to retains
-    #[clap(short('m'), long, value_name("count"))]
-    retain_minimum: Option<NonZeroU32>,
-
-    /// Prevent starting new snapshot pruning jobs on this dataset
-    #[clap(long, conflicts_with("resume-pruning"))]
-    pause_pruning: bool,
-
-    #[clap(long)]
-    resume_pruning: bool,
+    #[clap(flatten)]
+    retention_update: RetentionUpdateOptions,
 
     /// The dataset to update
     #[clap(value_name("[pool/]dataset|id"))]
     dataset: String,
-}
-
-#[derive(Debug)]
-pub struct IntervalSpecArg(IntervalSpec);
-
-impl FromStr for IntervalSpecArg {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let outter = s.split(':').collect::<Vec<_>>();
-        let inner = outter[0].split('x').collect::<Vec<_>>();
-        if inner.len() > 2 || outter.len() > 2 {
-            bail!("Interval format is [<Repeat>x]<Duration>[:<Count>].");
-        };
-        let (repeat, duration) = match inner.len() {
-            2 => (NonZeroU32::from_str(inner[0])?, inner[1]),
-            1 => (NonZeroU32::new(1).expect("constant always nonzero"), inner[0]),
-            _ => unreachable!(),
-        };
-        Ok(Self(IntervalSpec {
-            repeat,
-            duration: *humantime::Duration::from_str(duration)?,
-            keep: match outter.len() {
-                2 => match outter[1] {
-                    "all" => KeepSpec::All,
-                    s => KeepSpec::Newest(NonZeroU32::from_str(s)?),
-                },
-                1 => KeepSpec::Newest(NonZeroU32::new(1).expect("constant always nonzero")),
-                _ => unreachable!(),
-            },
-        }))
-    }
 }
 
 pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
@@ -378,37 +377,27 @@ pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
         entity_by_id_mut(&mut filesystem.datasets, dataset_path.entity).expect("always exists if path found")
     };
 
-    if let Some(f) = options.snapshot_frequency {
-        let std_duration = *f;
-        dataset.snapshot_schedule = Some(std_duration.try_into().context(
-            "The specified frequency can't be converted into a schedule. \
-            For more advanced schedule creation use the -s option. \
-            See --help for more details.",
-        )?);
-    }
+    options.shared.update_snapshots(&mut dataset.snapshot_schedule)?;
 
     if options.pause_snapshotting || options.resume_snapshotting {
         dataset.pause_snapshotting = options.pause_snapshotting
     }
 
-    if options.pause_pruning || options.resume_pruning {
-        dataset.pause_pruning = options.pause_pruning
-    }
-
-    if options.retain_minimum.is_some() || options.retention_intervals.is_some() {
-        let retention = dataset.snapshot_retention.get_or_insert_with(Default::default);
-        if let Some(intervals) = options.retention_intervals {
-            retention.interval = intervals.into_iter().map(|i| i.0).collect();
-        }
-
-        if let Some(minimum) = options.retain_minimum {
-            retention.newest_count = minimum;
-        }
-    }
+    options.retention_update.update_pruning(&mut dataset.pause_pruning);
+    options
+        .shared
+        .retention
+        .update_retention(&mut dataset.snapshot_retention);
 
     storage::store_entity_state(entities);
 
     Ok(())
+}
+
+#[derive(Clap, Debug)]
+pub struct ContainerCreateUpdateOptions {
+    #[clap(flatten)]
+    retention: RetentionCreateUpdateOptions,
 }
 
 #[derive(Clap, Debug)]
@@ -459,6 +448,9 @@ pub struct ContainerCreateOptions {
 
     /// Name of the container
     name: String,
+
+    #[clap(flatten)]
+    shared: ContainerCreateUpdateOptions,
 }
 
 pub fn create_container(options: ContainerCreateOptions) -> Result<()> {
@@ -470,8 +462,13 @@ pub fn create_container(options: ContainerCreateOptions) -> Result<()> {
 
     let pool = Arc::new(BtrfsPool::validate(pool_model.clone())?);
     let container = pool.create_container(options.name)?;
+    let mut container = container.take_model();
+    options
+        .shared
+        .retention
+        .update_retention(&mut container.snapshot_retention);
 
-    pool_model.attach_container(container.take_model())?;
+    pool_model.attach_container(container)?;
     storage::store_entity_state(entities);
 
     Ok(())

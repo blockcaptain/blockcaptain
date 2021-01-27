@@ -88,6 +88,10 @@ pub struct ResticRepository {
 }
 
 impl ResticRepository {
+    pub fn new(model: ResticContainerEntity) -> Result<Self> {
+        Ok(Self { model })
+    }
+
     pub fn validate(model: ResticContainerEntity) -> Result<Self> {
         Ok(Self { model })
     }

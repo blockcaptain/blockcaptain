@@ -4,7 +4,7 @@ use humantime::Duration;
 use libblkcapt::model::entities::{ScheduleModel, SnapshotSyncEntity, SnapshotSyncMode};
 use libblkcapt::model::{storage, Entity};
 
-use super::{container_search, dataset_search};
+use super::{container_search, dataset_search, restic_search};
 
 #[derive(Clap, Debug)]
 pub struct SyncCreateUpdateOptions {
@@ -60,7 +60,11 @@ pub fn create_sync(options: SyncCreateOptions) -> Result<()> {
     let mut entities = storage::load_entity_state();
 
     let dataset_id = dataset_search(&entities, &options.dataset).map(|d| d.id())?;
-    let container_id = container_search(&entities, &options.container).map(|c| c.id())?;
+    // TODO: entity refactor needed. this doesn't error if a container and restic container have
+    // the same name so user may accidentally select wrong target.
+    let container_id = container_search(&entities, &options.container)
+        .map(|c| c.id())
+        .or_else(|_| restic_search(&entities, &options.container).map(|c| c.id()))?;
     let maybe_mode = options
         .shared
         .mode

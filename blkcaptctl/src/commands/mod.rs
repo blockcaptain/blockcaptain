@@ -1,8 +1,14 @@
-use anyhow::{Context, Result};
+use std::{num::NonZeroU32, str::FromStr};
+
+use anyhow::{bail, Context, Result};
+use clap::Clap;
 use libblkcapt::model::{
     entities::BtrfsDatasetEntity,
     entities::BtrfsPoolEntity,
-    entities::{BtrfsContainerEntity, SnapshotSyncEntity},
+    entities::{
+        BtrfsContainerEntity, IntervalSpec, KeepSpec, ResticContainerEntity, RetentionRuleset, ScheduleModel,
+        SnapshotSyncEntity,
+    },
     entity_by_name, EntityId, EntityPath, EntityPath1, EntityPath2, EntityStatic, EntityType,
 };
 use libblkcapt::{
@@ -11,6 +17,7 @@ use libblkcapt::{
 };
 pub mod observer;
 pub mod pool;
+pub mod restic;
 pub mod sync;
 
 pub fn dataset_search<'a>(
@@ -33,6 +40,10 @@ pub fn container_search<'a>(
         entities.containers(),
         query,
     )
+}
+
+pub fn restic_search<'a>(entities: &'a Entities, query: &str) -> Result<&'a ResticContainerEntity> {
+    entity_search1(entities.restic_containers.iter(), query)
 }
 
 pub fn pool_search<'a>(entities: &'a Entities, query: &str) -> Result<&'a BtrfsPoolEntity> {
@@ -108,6 +119,90 @@ where
         Ok(EntityPath2 { entity, parent })
     } else {
         entity_by_name_or_id(all_children, parts[0])
+    }
+}
+
+#[derive(Clap, Debug)]
+pub struct RetentionCreateUpdateOptions {
+    /// Specify one or more snapshot retention time intervals
+    #[clap(short('i'), long, value_name("interval"))]
+    retention_intervals: Option<Vec<IntervalSpecArg>>,
+
+    /// Specify the minimum number of snapshots to retain
+    #[clap(short('m'), long, value_name("count"))]
+    retain_minimum: Option<NonZeroU32>,
+
+    /// Set the schedule for pruning snapshots
+    #[clap(long, value_name("cron"))]
+    prune_schedule: Option<ScheduleModel>,
+}
+
+impl RetentionCreateUpdateOptions {
+    fn update_retention(&self, retention: &mut Option<RetentionRuleset>) {
+        if self.retain_minimum.is_some() || self.retention_intervals.is_some() {
+            let retention = retention.get_or_insert_with(Default::default);
+            if let Some(intervals) = self.retention_intervals.clone() {
+                retention.interval = intervals.into_iter().map(|i| i.0).collect();
+            }
+
+            if let Some(minimum) = self.retain_minimum {
+                retention.newest_count = minimum;
+            }
+
+            if let Some(schedule) = self.prune_schedule.clone() {
+                retention.evaluation_schedule = schedule;
+            }
+        }
+    }
+}
+
+#[derive(Clap, Debug)]
+pub struct RetentionUpdateOptions {
+    /// Prevent starting new snapshot pruning jobs on this dataset
+    #[clap(long, conflicts_with("resume-pruning"))]
+    pause_pruning: bool,
+
+    #[clap(long)]
+    resume_pruning: bool,
+}
+
+impl RetentionUpdateOptions {
+    fn update_pruning(&self, pause_pruning: &mut bool) {
+        if self.pause_pruning || self.resume_pruning {
+            *pause_pruning = self.pause_pruning
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct IntervalSpecArg(IntervalSpec);
+
+impl FromStr for IntervalSpecArg {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let outter = s.split(':').collect::<Vec<_>>();
+        let inner = outter[0].split('x').collect::<Vec<_>>();
+        if inner.len() > 2 || outter.len() > 2 {
+            bail!("Interval format is [<Repeat>x]<Duration>[:<Count>].");
+        };
+        let (repeat, duration) = match inner.len() {
+            2 => (NonZeroU32::from_str(inner[0])?, inner[1]),
+            1 => (NonZeroU32::new(1).expect("constant always nonzero"), inner[0]),
+            _ => unreachable!(),
+        };
+        Ok(Self(IntervalSpec {
+            repeat,
+            duration: *humantime::Duration::from_str(duration)?,
+            keep: match outter.len() {
+                2 => match outter[1] {
+                    "all" => KeepSpec::All,
+                    s => KeepSpec::Newest(NonZeroU32::from_str(s)?),
+                },
+                1 => KeepSpec::Newest(NonZeroU32::new(1).expect("constant always nonzero")),
+                _ => unreachable!(),
+            },
+        }))
     }
 }
 

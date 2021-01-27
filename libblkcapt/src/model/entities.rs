@@ -589,6 +589,19 @@ impl ResticContainerEntity {
     }
 }
 
+impl ResticContainerEntity {
+    pub fn new(name: String, repository: ResticRepository) -> Self {
+        Self {
+            id: EntityId::new(),
+            name,
+            repository,
+            custom_environment: Default::default(),
+            snapshot_retention: None,
+            pause_pruning: false,
+        }
+    }
+}
+
 impl Entity for ResticContainerEntity {
     fn name(&self) -> &str {
         &self.name
@@ -597,6 +610,12 @@ impl Entity for ResticContainerEntity {
         self.id
     }
     fn entity_type(&self) -> EntityType {
+        EntityType::Container
+    }
+}
+
+impl EntityStatic for ResticContainerEntity {
+    fn entity_type_static() -> EntityType {
         EntityType::Container
     }
 }

@@ -2,7 +2,6 @@ use anyhow::{bail, Context, Result};
 use clap::Clap;
 use comfy_table::Cell;
 use dialoguer::Confirm;
-use libblkcapt::model::entities::{IntervalSpec, KeepSpec};
 use libblkcapt::{
     core::{BtrfsContainer, BtrfsDataset, BtrfsPool},
     model::{entity_by_id_mut, entity_by_name_mut, entity_by_name_or_id, storage, Entity},
@@ -15,7 +14,7 @@ use libblkcapt::{
     },
 };
 use slog_scope::*;
-use std::{convert::TryInto, num::NonZeroU32, path::PathBuf, str::FromStr, sync::Arc};
+use std::{convert::TryInto, path::PathBuf, sync::Arc};
 
 use super::{dataset_search, pool_search, RetentionCreateUpdateOptions, RetentionUpdateOptions};
 use crate::ui::{
@@ -122,15 +121,15 @@ pub fn create_pool(options: PoolCreateOptions) -> Result<()> {
     );
 
     println!();
-    if !options.force {
-        if !Confirm::new()
+    if !options.force
+        && !Confirm::new()
             .with_prompt("Are you sure you want to destory all data on the devices above?")
             .interact()?
-        {
-            println!();
-            bail!("user aborted");
-        }
+    {
+        println!();
+        bail!("user aborted");
     }
+
     println!();
 
     let filesystem = Filesystem::make(&options.devices, &options.name, options.data, options.metadata)?;

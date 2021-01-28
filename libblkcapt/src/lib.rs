@@ -9,6 +9,10 @@ pub fn data_dir() -> PathBuf {
     PathBuf::from("/var/lib/blockcaptain")
 }
 
+pub fn runtime_dir() -> PathBuf {
+    PathBuf::from("/run/blockcaptain")
+}
+
 pub fn create_data_dir() -> Result<PathBuf> {
     let data_dir = data_dir();
     std::fs::create_dir_all(&data_dir).context("failed to create the blockcaptain data directory")?;

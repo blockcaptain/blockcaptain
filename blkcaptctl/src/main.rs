@@ -1,6 +1,7 @@
 use std::{
     error::Error,
     fmt::{Debug, Display},
+    process::exit,
 };
 
 use anyhow::{anyhow, Result};
@@ -17,7 +18,7 @@ use commands::sync::*;
 fn main() {
     let maybe_options = CliOptions::try_parse();
     let vcount = maybe_options.as_ref().map(|o| o.verbose as usize).unwrap_or_default();
-    blkcaptapp_run(|_| async_main(maybe_options), vcount, true);
+    exit(blkcaptapp_run(|_| async_main(maybe_options), vcount, true));
 }
 
 async fn async_main(options: clap::Result<CliOptions>) -> Result<()> {

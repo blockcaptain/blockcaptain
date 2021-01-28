@@ -2,10 +2,10 @@ mod slogext;
 use anyhow::Result;
 use slog::{b, debug, error, info, o, record_static, trace, Drain, Level, Logger, Record};
 use slogext::{CustomFullFormat, DedupDrain, SlogLogLogger, SyncDrain};
-use std::{future::Future, process::exit, sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 use tokio::runtime::Runtime;
 
-pub fn blkcaptapp_run<M, F>(main: M, verbose_flag_count: usize, interactive: bool) -> !
+pub fn blkcaptapp_run<M, F>(main: M, verbose_flag_count: usize, interactive: bool) -> i32
 where
     M: FnOnce(Logger) -> F,
     F: Future<Output = Result<()>>,
@@ -94,7 +94,11 @@ where
 
     println!();
 
-    exit(if app_succeeded { 0 } else { 1 })
+    if app_succeeded {
+        0
+    } else {
+        1
+    }
 }
 
 #[cfg(test)]

@@ -1,10 +1,9 @@
 use anyhow::{anyhow, Result};
 use clap::Clap;
-use humantime::Duration;
-use libblkcapt::model::entities::{ResticContainerEntity, ResticRepository, ScheduleModel};
-use libblkcapt::model::{storage, Entity};
+use libblkcapt::model::entities::{ResticContainerEntity, ResticRepository};
+use libblkcapt::model::storage;
 
-use super::{container_search, dataset_search, RetentionCreateUpdateOptions, RetentionUpdateOptions};
+use super::{RetentionCreateUpdateOptions, RetentionUpdateOptions};
 
 #[derive(Clap, Debug)]
 pub struct ResticCreateUpdateOptions {
@@ -41,8 +40,8 @@ pub fn attach_restic(options: ResticAttachOptions) -> Result<()> {
 
     let repository = options
         .custom
-        .ok_or(anyhow!("only custom is supported"))
-        .map(|r| ResticRepository::Custom(r))?;
+        .ok_or_else(|| anyhow!("only custom is supported"))
+        .map(ResticRepository::Custom)?;
     let mut restic = ResticContainerEntity::new(options.name, repository);
 
     restic.custom_environment = options

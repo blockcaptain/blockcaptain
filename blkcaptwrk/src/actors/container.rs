@@ -176,7 +176,7 @@ impl BcHandler<GetSnapshotReceiverMessage> for ContainerActor {
             )
         }
 
-        let snapshot_receiver = self.container.receive(msg.source_dataset_id);
+        let snapshot_receiver = self.container.receive(msg.source_dataset_id)?;
         let started_receiver_actor = LocalReceiverActor::new(
             ctx.address().sender(),
             msg.target_finished,

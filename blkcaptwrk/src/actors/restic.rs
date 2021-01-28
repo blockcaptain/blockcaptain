@@ -39,6 +39,7 @@ mod container {
     use libblkcapt::{
         core::retention::evaluate_retention,
         model::{entities::ObservableEvent, EntityId},
+        runtime_dir,
     };
     use slog::info;
     use xactor::{Actor, WeakAddr};
@@ -210,9 +211,9 @@ mod container {
         }
 
         async fn start_backup(&self, msg: GetBackupMessage) -> Result<Active> {
-            const BASE_PATH: &str = "/var/lib/blkcapt/restic";
             let bind_path = {
-                let mut p = PathBuf::from(BASE_PATH);
+                let mut p = runtime_dir();
+                p.push("restic_bind");
                 p.push(self.container_id.to_string());
                 p.push(msg.source_dataset_id.to_string());
                 p

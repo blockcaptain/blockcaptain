@@ -456,10 +456,15 @@ impl BtrfsContainer {
         self.subvolume.path.join(dataset_id.to_string())
     }
 
-    pub fn receive(self: &Arc<Self>, dataset_id: EntityId) -> SnapshotReceiver {
-        self.pool
-            .filesystem
-            .receive_subvolume(&self.snapshot_container_path(dataset_id))
+    pub fn receive(self: &Arc<Self>, dataset_id: EntityId) -> Result<SnapshotReceiver> {
+        let dataset_container_path = self.snapshot_container_path(dataset_id);
+        let dataset_container_exists = self.pool.filesystem.subvolume_by_path(&dataset_container_path).is_ok();
+
+        if !dataset_container_exists {
+            self.pool.filesystem.create_subvolume(&dataset_container_path)?;
+        }
+
+        Ok(self.pool.filesystem.receive_subvolume(&dataset_container_path))
     }
 
     pub fn seal_snapshot(

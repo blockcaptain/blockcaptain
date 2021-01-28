@@ -2,7 +2,7 @@ use anyhow::Result;
 use blkcaptapp::blkcaptapp_run;
 use blkcaptwrk::actors::{captain::CaptainActor, intel::IntelActor};
 use slog::{info, Logger};
-use std::time::Duration;
+use std::{process::exit, time::Duration};
 use xactor::Actor;
 
 fn main() {
@@ -14,7 +14,7 @@ fn main() {
         }
     });
 
-    blkcaptapp_run(async_main, vcount, false);
+    exit(blkcaptapp_run(async_main, vcount, false));
 }
 
 async fn async_main(log: Logger) -> Result<()> {

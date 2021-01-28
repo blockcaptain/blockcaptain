@@ -1,4 +1,4 @@
-use crate::data_dir;
+use crate::runtime_dir;
 use http::Request;
 use hyper::{client::connect::dns::GaiResolver, client::HttpConnector, Client, Uri};
 use hyper::{Body, Response};
@@ -56,7 +56,7 @@ impl ServiceClient {
 
     pub async fn get(&self, path: &str) -> Result<Response<Body>, hyper::Error> {
         let socket_path = {
-            let mut path = data_dir();
+            let mut path = runtime_dir();
             path.push("daemon.sock");
             path
         };

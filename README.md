@@ -1,6 +1,7 @@
 # BlockCaptain
 
-![CI](https://github.com/blockcaptain/blockcaptain/workflows/CI/badge.svg?branch=master)
+[![CI](https://github.com/blockcaptain/blockcaptain/workflows/CI/badge.svg?branch=master)](https://github.com/blockcaptain/blockcaptain/actions?query=workflow%3ACI)
+[![Coverage Status](https://coveralls.io/repos/github/blockcaptain/blockcaptain/badge.svg?branch=master)](https://coveralls.io/github/blockcaptain/blockcaptain?branch=master)
 
 BlockCaptain is an open source data integrity systems for Linux. 
 

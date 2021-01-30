@@ -16,12 +16,45 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-crates-${{ hashFiles('./Cargo.lock') }}
-      - uses: actions/checkout@v2
       - name: Setup Environment
         run: eng/ci/setup.sh
       - name: Run Clippy
         run: eng/ci/clippy.sh
-  test:
+  build:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Cache crates
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-crates-${{ hashFiles('./Cargo.lock') }}
+      - name: Setup Environment
+        run: eng/ci/setup.sh
+      - name: Run Build
+        run: eng/ci/build.sh
+      - name: Upload Build
+        uses: actions/upload-artifact@v2
+        with:
+          name: ubuntu-deb
+          path: target/debian/blockcaptain_*.deb
+  integrationtest:
+    runs-on: ubuntu-20.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup Environment
+        run: eng/ci/setup-integration.sh
+      - name: Download Build
+        uses: actions/download-artifact@v2
+        with:
+          name: ubuntu-deb
+          path: target/debian
+      - name: Run Integration Test
+        run: eng/ci/integration-run.sh
+  unittest:
     runs-on: ubuntu-20.04
     env:
       CARGO_CARGO_TARPAULIN_VERSION: 0.16.0

@@ -1,4 +1,4 @@
 #!/bin/bash
 set -euo pipefail
 
-cargo build
+./scripts/build-deb.sh

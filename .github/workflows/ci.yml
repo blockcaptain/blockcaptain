@@ -22,8 +22,15 @@ jobs:
         run: eng/ci/clippy.sh
   build:
     runs-on: ubuntu-20.04
+    env:
+      CARGO_CARGO_DEB_VERSION: 1.28.2
     steps:
       - uses: actions/checkout@v2
+      - name: Cache cargo-deb
+        uses: actions/cache@v2
+        with:
+          path: ~/.cargo/bin/cargo-deb
+          key: ${{ runner.os }}-cargo-cargo-deb-${{ env.CARGO_CARGO_DEB_VERSION }}
       - name: Cache crates
         uses: actions/cache@v2
         with:
@@ -33,6 +40,8 @@ jobs:
           key: ${{ runner.os }}-cargo-crates-${{ hashFiles('./Cargo.lock') }}
       - name: Setup Environment
         run: eng/ci/setup.sh
+      - name: Setup Build Environment
+        run: eng/ci/setup-build.sh
       - name: Run Build
         run: eng/ci/build.sh
       - name: Upload Build

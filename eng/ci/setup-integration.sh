@@ -36,5 +36,5 @@ cluster: null
 
 wget "https://github.com/blockcaptain/blockcaptain-eng/releases/latest/download/blkcapteng"
 sudo mv blkcapteng /usr/local/bin
-chown root: /usr/local/bin/blkcapteng
-chmod 755 /usr/local/bin/blkcapteng
+sudo chown root: /usr/local/bin/blkcapteng
+sudo chmod 755 /usr/local/bin/blkcapteng

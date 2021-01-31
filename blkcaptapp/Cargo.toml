@@ -10,7 +10,6 @@ tokio = { version = "1.0", features = ["full"] }
 log = { version = "0.4", features = ["std"] }
 slog = { version = "2.5.2", features = ["max_level_trace", "release_max_level_trace"] }
 slog-term = "2.6.0"
-slog-async = "2.5.0"
 slog-scope = "4.3.0"
 slog-atomic = "3.0.0"
 

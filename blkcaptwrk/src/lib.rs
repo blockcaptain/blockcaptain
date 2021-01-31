@@ -13,6 +13,7 @@ pub mod actors {
     pub mod transfer;
 }
 mod actorbase;
+pub mod slogext;
 mod snapshots;
 mod tasks;
 mod xactorext;

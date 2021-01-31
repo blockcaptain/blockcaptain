@@ -5,7 +5,10 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use blkcaptapp::blkcaptapp_run;
+use blkcaptapp::{
+    blkcaptapp_run,
+    slogext::{CustomFullFormat, SyncDrain},
+};
 use clap::{crate_version, Clap};
 mod commands;
 mod ui;
@@ -14,11 +17,20 @@ use commands::pool::*;
 use commands::restic::*;
 use commands::service::*;
 use commands::sync::*;
+use slog::Drain;
 
 fn main() {
     let maybe_options = CliOptions::try_parse();
     let vcount = maybe_options.as_ref().map(|o| o.verbose as usize).unwrap_or_default();
-    exit(blkcaptapp_run(|_| async_main(maybe_options), vcount, true));
+
+    let slog_drain = {
+        let decorator = slog_term::TermDecorator::new().build();
+        let drain = CustomFullFormat::new(decorator, false).fuse();
+        let drain = SyncDrain::new(drain);
+        slog_atomic::AtomicSwitch::new(drain)
+    };
+
+    exit(blkcaptapp_run(|_| async_main(maybe_options), vcount, slog_drain));
 }
 
 async fn async_main(options: clap::Result<CliOptions>) -> Result<()> {

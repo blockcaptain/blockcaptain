@@ -1,8 +1,13 @@
 use anyhow::Result;
-use blkcaptapp::blkcaptapp_run;
-use blkcaptwrk::actors::{captain::CaptainActor, intel::IntelActor};
-use slog::{info, Logger};
-use std::{process::exit, time::Duration};
+use blkcaptapp::{blkcaptapp_run, slogext::CustomFullFormat};
+use blkcaptwrk::{
+    actors::{captain::CaptainActor, intel::IntelActor},
+    slogext::JournalDrain,
+};
+use libsystemd::daemon::{self, NotifyState};
+use slog::{error, info, Drain, Logger};
+use std::{env, process::exit, time::Duration};
+use tokio::signal::unix::{signal, SignalKind};
 use xactor::Actor;
 
 fn main() {
@@ -14,15 +19,34 @@ fn main() {
         }
     });
 
-    exit(blkcaptapp_run(async_main, vcount, false));
+    let slog_drain = if use_journal() {
+        println!("logging to journald");
+        let drain = JournalDrain.fuse();
+        let drain = slog_async::Async::new(drain).build().fuse();
+        slog_atomic::AtomicSwitch::new(drain)
+    } else {
+        let decorator = slog_term::TermDecorator::new().build();
+        let drain = CustomFullFormat::new(decorator, true).fuse();
+        let drain = slog_async::Async::new(drain).build().fuse();
+        slog_atomic::AtomicSwitch::new(drain)
+    };
+
+    exit(blkcaptapp_run(async_main, vcount, slog_drain));
 }
 
 async fn async_main(log: Logger) -> Result<()> {
     let mut intel = IntelActor::start_default_and_register().await?;
     {
         let mut captain = CaptainActor::new(&log).start().await?;
-        tokio::signal::ctrl_c().await?;
-        info!(log, "process signaled");
+        let mut sigint_stream = signal(SignalKind::interrupt())?;
+        let mut sigterm_stream = signal(SignalKind::terminate())?;
+        systemd_notify(&log, &[NotifyState::Ready]);
+        let signal = tokio::select! {
+            _ = sigint_stream.recv() => "interrupt",
+            _ = sigterm_stream.recv() => "terminate"
+        };
+        info!(log, "process {} signal received", signal);
+        systemd_notify(&log, &[NotifyState::Stopping]);
         let _ = captain.stop(None);
         captain.wait_for_stop().await;
     }
@@ -30,4 +54,14 @@ async fn async_main(log: Logger) -> Result<()> {
     intel.stop(None)?;
     intel.wait_for_stop().await;
     Ok(())
+}
+
+fn systemd_notify(log: &Logger, state: &[NotifyState]) {
+    if let Err(error) = daemon::notify(false, state) {
+        error!(log, "failed to notify systemd"; "error" => %error);
+    }
+}
+
+fn use_journal() -> bool {
+    env::var("JOURNAL_STREAM").is_ok()
 }

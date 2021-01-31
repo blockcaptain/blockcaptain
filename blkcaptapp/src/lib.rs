@@ -1,11 +1,11 @@
-mod slogext;
+pub mod slogext;
 use anyhow::Result;
-use slog::{b, debug, error, info, o, record_static, trace, Drain, Level, Logger, Record};
-use slogext::{CustomFullFormat, DedupDrain, SlogLogLogger, SyncDrain};
+use slog::{debug, error, info, o, trace, Drain, Level, Logger};
+use slogext::{DedupDrain, SlogLogLogger};
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::runtime::Runtime;
 
-pub fn blkcaptapp_run<M, F>(main: M, verbose_flag_count: usize, interactive: bool) -> i32
+pub fn blkcaptapp_run<M, F>(main: M, verbose_flag_count: usize, slog_drain: slog_atomic::AtomicSwitch<()>) -> i32
 where
     M: FnOnce(Logger) -> F,
     F: Future<Output = Result<()>>,
@@ -23,20 +23,8 @@ where
     let mut app_succeeded = true;
 
     {
-        let (slog_drain, slog_drain_ctrl) = {
-            let show_timestamp = !interactive;
-            let decorator = slog_term::TermDecorator::new().build();
-            let drain = CustomFullFormat::new(decorator, show_timestamp).fuse();
-            let drain = if interactive {
-                let drain = SyncDrain::new(drain);
-                slog_atomic::AtomicSwitch::new(drain)
-            } else {
-                let drain = slog_async::Async::new(drain).build().fuse();
-                slog_atomic::AtomicSwitch::new(drain)
-            };
-            let ctrl = drain.ctrl();
-            (drain.map(Arc::new), ctrl)
-        };
+        let slog_drain_ctrl = slog_drain.ctrl();
+        let slog_drain = slog_drain.map(Arc::new);
 
         {
             let slog_internal_logger = {
@@ -54,18 +42,9 @@ where
             slog_scope::set_global_logger(slog_internal_logger.clone()).cancel_reset();
             SlogLogLogger::install(slog_external_logger, external_level);
 
-            let process_msg_level = match interactive {
-                true => Level::Debug,
-                false => Level::Info,
-            };
-
             debug!(slog_internal_logger, "debug messages enabled");
             trace!(slog_internal_logger, "trace messages enabled");
-            slog_internal_logger.log(&Record::new(
-                &record_static!(process_msg_level, ""),
-                &format_args!("process starting"),
-                b!("blkcapt_version" => env!("CARGO_PKG_VERSION")),
-            ));
+            debug!(slog_internal_logger, "process starting");
 
             {
                 let runtime = Runtime::new().expect("can create runtime");
@@ -80,11 +59,7 @@ where
                 runtime.shutdown_timeout(Duration::from_secs(0));
             }
 
-            slog_internal_logger.log(&Record::new(
-                &record_static!(process_msg_level, ""),
-                &format_args!("process exiting"),
-                b!(),
-            ));
+            debug!(slog_internal_logger, "process stopping");
 
             slog_scope::set_global_logger(Logger::root(slog::Discard, o!())).cancel_reset();
         }
@@ -107,13 +82,16 @@ mod tests {
 
     #[test]
     fn runs_app() {
+        let decorator = slog_term::PlainSyncDecorator::new(std::io::stdout());
+        let drain = CustomFullFormat::new(decorator, false).fuse();
+        let drain = slog_atomic::AtomicSwitch::new(drain);
         blkcaptapp_run(
             |log| async move {
                 info!(log, "runs_app test");
                 Ok(())
             },
             0,
-            false,
+            drain,
         );
     }
 }

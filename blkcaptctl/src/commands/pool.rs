@@ -14,12 +14,12 @@ use libblkcapt::{
     },
 };
 use slog_scope::*;
-use std::{convert::TryInto, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use super::{dataset_search, pool_search, RetentionCreateUpdateOptions, RetentionUpdateOptions};
 use crate::ui::{
     comfy_feature_state_cell, comfy_id_header, comfy_id_value, comfy_id_value_full, comfy_name_value, comfy_value_or,
-    print_comfy_info, print_comfy_table,
+    print_comfy_info, print_comfy_table, ScheduleArg,
 };
 
 #[derive(Clap, Debug)]
@@ -301,13 +301,9 @@ pub fn list_dataset(options: DatasetListOptions) -> Result<()> {
 
 #[derive(Clap, Debug)]
 pub struct DatasetCreateUpdateOptions {
-    /// Set the snapshots schedule using a simple frequency (e.g. 1hour, 2days)
-    #[clap(short('f'), long, value_name("duration"), conflicts_with("snapshot-schedule"))]
-    snapshot_frequency: Option<humantime::Duration>,
-
     /// Set the schedule for taking snapshots of this dataset
     #[clap(short('s'), long, value_name("cron"))]
-    snapshot_schedule: Option<ScheduleModel>,
+    snapshot_schedule: Option<ScheduleArg>,
 
     #[clap(flatten)]
     retention: RetentionCreateUpdateOptions,
@@ -315,17 +311,8 @@ pub struct DatasetCreateUpdateOptions {
 
 impl DatasetCreateUpdateOptions {
     fn update_snapshots(&self, schedule: &mut Option<ScheduleModel>) -> Result<()> {
-        if let Some(f) = self.snapshot_frequency {
-            let std_duration = *f;
-            *schedule = Some(std_duration.try_into().context(
-                "The specified frequency can't be converted into a schedule. \
-                For more advanced schedule creation use the -s option. \
-                See --help for more details.",
-            )?);
-        }
-
         if self.snapshot_schedule.is_some() {
-            *schedule = self.snapshot_schedule.clone();
+            *schedule = self.snapshot_schedule.clone().map(|s| s.into());
         }
         Ok(())
     }

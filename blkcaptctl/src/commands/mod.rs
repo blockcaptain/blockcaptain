@@ -6,8 +6,7 @@ use libblkcapt::model::{
     entities::BtrfsDatasetEntity,
     entities::BtrfsPoolEntity,
     entities::{
-        BtrfsContainerEntity, IntervalSpec, KeepSpec, ResticContainerEntity, RetentionRuleset, ScheduleModel,
-        SnapshotSyncEntity,
+        BtrfsContainerEntity, IntervalSpec, KeepSpec, ResticContainerEntity, RetentionRuleset, SnapshotSyncEntity,
     },
     entity_by_name, EntityId, EntityPath, EntityPath1, EntityPath2, EntityStatic, EntityType,
 };
@@ -15,6 +14,8 @@ use libblkcapt::{
     model::{entities::HealthchecksObserverEntity, Entities},
     model::{entity_by_name_or_id, Entity},
 };
+
+use crate::ui::ScheduleArg;
 pub mod observer;
 pub mod pool;
 pub mod restic;
@@ -134,7 +135,7 @@ pub struct RetentionCreateUpdateOptions {
 
     /// Set the schedule for pruning snapshots
     #[clap(long, value_name("cron"))]
-    prune_schedule: Option<ScheduleModel>,
+    prune_schedule: Option<ScheduleArg>,
 }
 
 impl RetentionCreateUpdateOptions {
@@ -150,7 +151,7 @@ impl RetentionCreateUpdateOptions {
             }
 
             if let Some(schedule) = self.prune_schedule.clone() {
-                retention.evaluation_schedule = schedule;
+                retention.evaluation_schedule = schedule.into();
             }
         }
     }

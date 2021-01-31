@@ -1,8 +1,10 @@
 use anyhow::{anyhow, Result};
 use clap::Clap;
 use humantime::Duration;
-use libblkcapt::model::entities::{ScheduleModel, SnapshotSyncEntity, SnapshotSyncMode};
+use libblkcapt::model::entities::{SnapshotSyncEntity, SnapshotSyncMode};
 use libblkcapt::model::{storage, Entity};
+
+use crate::ui::ScheduleArg;
 
 use super::{container_search, dataset_search, restic_search};
 
@@ -14,7 +16,7 @@ pub struct SyncCreateUpdateOptions {
 
     /// Schedule for all_scheduled or latest_scheduled modes
     #[clap(short, long, value_name("schedule"))]
-    schedule: Option<ScheduleModel>,
+    schedule: Option<ScheduleArg>,
 
     /// Interval for interval_immediate mode
     #[clap(short, long, value_name("interval"))]
@@ -25,10 +27,10 @@ impl SyncCreateUpdateOptions {
     fn configure_mode(&self, mode: SnapshotSyncMode) -> Result<SnapshotSyncMode> {
         match (mode, &self.schedule, self.interval) {
             (SnapshotSyncMode::AllScheduled(_), Some(schedule), None) => {
-                Ok(SnapshotSyncMode::AllScheduled(schedule.clone()))
+                Ok(SnapshotSyncMode::AllScheduled(schedule.clone().into()))
             }
             (SnapshotSyncMode::LatestScheduled(_), Some(schedule), None) => {
-                Ok(SnapshotSyncMode::LatestScheduled(schedule.clone()))
+                Ok(SnapshotSyncMode::LatestScheduled(schedule.clone().into()))
             }
             (SnapshotSyncMode::IntervalImmediate(_), None, Some(duration)) => {
                 Ok(SnapshotSyncMode::IntervalImmediate(duration.into()))

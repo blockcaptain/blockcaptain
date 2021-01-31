@@ -1,9 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use comfy_table::presets::UTF8_FULL;
 use comfy_table::*;
-use libblkcapt::{model::entities::FeatureState, parsing::parse_uuid};
+use libblkcapt::{
+    model::entities::{FeatureState, ScheduleModel},
+    parsing::parse_uuid,
+};
 use presets::ASCII_NO_BORDERS;
-use std::str::FromStr;
+use std::{convert::TryInto, str::FromStr};
 use uuid::Uuid;
 
 pub fn print_comfy_table(header: Vec<Cell>, rows: impl Iterator<Item = Vec<Cell>>) {
@@ -124,5 +127,37 @@ impl FromStr for UuidArg {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         parse_uuid(s).map(UuidArg)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ScheduleArg(ScheduleModel);
+
+impl ScheduleArg {
+    pub fn into_schedule_model(self) -> ScheduleModel {
+        self.0
+    }
+}
+
+impl From<ScheduleArg> for ScheduleModel {
+    fn from(arg: ScheduleArg) -> Self {
+        arg.into_schedule_model()
+    }
+}
+
+impl FromStr for ScheduleArg {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        if s.contains(' ') {
+            s.parse().map(Self)
+        } else {
+            let duration = *(s.parse::<humantime::Duration>()?);
+            duration.try_into().map(Self).context(
+                "The specified frequency can't be converted into a schedule. \
+            For more advanced schedule creation use a cron expression. \
+            See --help for more details.",
+            )
+        }
     }
 }

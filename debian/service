@@ -2,6 +2,8 @@
 Description=BlockCaptain Service
 
 [Service]
+Type=notify
+NotifyAccess=main
 ExecStart=/usr/lib/blockcaptain/blkcaptd
 
 [Install]

@@ -79,6 +79,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::slogext::CustomFullFormat;
 
     #[test]
     fn runs_app() {

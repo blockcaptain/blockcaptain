@@ -30,7 +30,7 @@ fn main() {
         slog_atomic::AtomicSwitch::new(drain)
     };
 
-    exit(blkcaptapp_run(|_| async_main(maybe_options), vcount, slog_drain));
+    exit(blkcaptapp_run(|_| async_main(maybe_options), vcount.into(), slog_drain));
 }
 
 async fn async_main(options: clap::Result<CliOptions>) -> Result<()> {
@@ -87,6 +87,7 @@ async fn command_dispath(options: CliOptions) -> Result<()> {
         },
         TopCommands::Service(top_options) => match top_options.subcmd {
             ServiceSubCommands::Status(options) => service_status(options).await,
+            ServiceSubCommands::Config(options) => service_config(options).await,
         },
     }
 }
@@ -206,6 +207,7 @@ struct ServiceCommands {
 #[derive(Clap)]
 enum ServiceSubCommands {
     Status(ServiceStatusOptions),
+    Config(ServiceConfigOptions),
 }
 
 struct ClapErrorWrapper(clap::Error);

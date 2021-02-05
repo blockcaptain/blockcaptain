@@ -94,7 +94,7 @@ impl BcActorCtrl for CaptainActor {
     async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
         create_data_dir()?;
 
-        let mut entities = storage::load_entity_state();
+        let mut entities = storage::load_entity_config();
         if !entities.observers.is_empty() {
             trace!(ctx.log(), "building observer actors");
             self.healthcheck_actors = entities

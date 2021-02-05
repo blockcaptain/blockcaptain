@@ -1,6 +1,7 @@
 pub mod entities;
 pub mod storage;
 
+use crate::parsing::parse_uuid;
 use anyhow::{anyhow, Result};
 use entities::{
     BtrfsContainerEntity, BtrfsDatasetEntity, BtrfsPoolEntity, HealthchecksObserverEntity, ResticContainerEntity,
@@ -10,9 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, iter::repeat};
 use std::{path::Path, str::FromStr};
 use strum_macros::Display;
+use strum_macros::EnumString;
 use uuid::Uuid;
-
-use crate::parsing::parse_uuid;
 
 #[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EntityId(Uuid);
@@ -304,4 +304,38 @@ pub fn entity_by_name_or_id<'a, T: AsRef<dyn Entity + 'a> + EntityStatic>(
             name_or_id
         )),
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, EnumString, Debug)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum BcLogLevel {
+    Info,
+    Debug,
+    Trace,
+    TraceXdebug,
+    TraceXtrace,
+}
+
+impl Default for BcLogLevel {
+    fn default() -> Self {
+        BcLogLevel::Info
+    }
+}
+
+impl From<usize> for BcLogLevel {
+    fn from(count: usize) -> Self {
+        match count {
+            0 => BcLogLevel::Info,
+            1 => BcLogLevel::Debug,
+            2 => BcLogLevel::Trace,
+            3 => BcLogLevel::TraceXdebug,
+            _ => BcLogLevel::TraceXtrace,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct ServerConfig {
+    pub log_level: BcLogLevel,
 }

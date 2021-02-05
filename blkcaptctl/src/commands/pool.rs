@@ -28,7 +28,7 @@ pub struct PoolListOptions {}
 pub fn list_pool(options: PoolListOptions) -> Result<()> {
     debug!("Command 'list_pool': {:?}", options);
 
-    let entities = storage::load_entity_state();
+    let entities = storage::load_entity_config();
 
     print_comfy_table(
         vec![
@@ -83,7 +83,7 @@ pub struct PoolCreateOptions {
 
 pub fn create_pool(options: PoolCreateOptions) -> Result<()> {
     debug!("Command 'create_pool': {:?}", options);
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
 
     if options.devices.is_empty() {
         bail!("at least one device is required")
@@ -145,7 +145,7 @@ pub fn create_pool(options: PoolCreateOptions) -> Result<()> {
     let new_pool = BtrfsPool::new(options.name, mountpoint)?;
     entities.attach_pool(new_pool.take_model())?;
 
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
     Ok(())
 }
 
@@ -161,13 +161,13 @@ pub struct PoolAttachOptions {
 
 pub fn attach_pool(options: PoolAttachOptions) -> Result<()> {
     debug!("Command 'attach_pool': {:?}", options);
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
 
     let new_pool = BtrfsPool::new(options.name, options.mountpoint)?;
 
     entities.attach_pool(new_pool.take_model())?;
 
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
     Ok(())
 }
 
@@ -183,7 +183,7 @@ pub struct DatasetAttachOptions {
 pub fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
     debug!("Command 'attach_dataset': {:?}", options);
 
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
 
     let mountentry =
         find_mountentry(&options.path).context(format!("Failed to detect mountpoint for {:?}.", options.path))?;
@@ -203,7 +203,7 @@ pub fn attach_dataset(options: DatasetAttachOptions) -> Result<()> {
     let dataset = BtrfsDataset::new(&pool, name, options.path)?;
 
     pool_model.attach_dataset(dataset.take_model())?;
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
 
     Ok(())
 }
@@ -223,7 +223,7 @@ pub struct DatasetCreateOptions {
 pub fn create_dataset(options: DatasetCreateOptions) -> Result<()> {
     debug!("Command 'create_dataset': {:?}", options);
 
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
     let pool_id = pool_search(&entities, &options.pool)?.id();
     let pool_model = entity_by_id_mut(&mut entities.btrfs_pools, pool_id).expect("always exists if path found");
 
@@ -238,7 +238,7 @@ pub fn create_dataset(options: DatasetCreateOptions) -> Result<()> {
         .update_retention(&mut dataset.snapshot_retention);
 
     pool_model.attach_dataset(dataset)?;
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
 
     Ok(())
 }
@@ -253,7 +253,7 @@ pub struct DatasetShowOptions {
 pub fn show_dataset(options: DatasetShowOptions) -> Result<()> {
     debug!("Command 'show_dataset': {:?}", options);
 
-    let entities = storage::load_entity_state();
+    let entities = storage::load_entity_config();
     let dataset = dataset_search(&entities, &options.dataset)?;
 
     print_comfy_info(vec![
@@ -275,7 +275,7 @@ pub struct DatasetListOptions {}
 pub fn list_dataset(options: DatasetListOptions) -> Result<()> {
     debug!("Command 'list_dataset': {:?}", options);
 
-    let entities = storage::load_entity_state();
+    let entities = storage::load_entity_config();
 
     print_comfy_table(
         vec![
@@ -348,7 +348,7 @@ pub struct DatasetUpdateOptions {
 pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
     debug!("Command 'update_dataset': {:?}", options);
 
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
 
     let parts = options.dataset.splitn(2, '/').collect::<Vec<_>>();
     let dataset = if parts.len() == 2 {
@@ -375,7 +375,7 @@ pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
         .retention
         .update_retention(&mut dataset.snapshot_retention);
 
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
 
     Ok(())
 }
@@ -398,7 +398,7 @@ pub struct ContainerAttachOptions {
 pub fn attach_container(options: ContainerAttachOptions) -> Result<()> {
     debug!("Command 'attach_container': {:?}", options);
 
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
 
     let mountentry =
         find_mountentry(&options.path).context(format!("Failed to detect mountpoint for {:?}.", options.path))?;
@@ -422,7 +422,7 @@ pub fn attach_container(options: ContainerAttachOptions) -> Result<()> {
         .context(format!("No pool found for mountpoint {:?}.", mountentry.file))?;
 
     pool.attach_container(container.take_model())?;
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
 
     Ok(())
 }
@@ -442,7 +442,7 @@ pub struct ContainerCreateOptions {
 pub fn create_container(options: ContainerCreateOptions) -> Result<()> {
     debug!("Command 'create_container': {:?}", options);
 
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
     let pool_id = pool_search(&entities, &options.pool)?.id();
     let pool_model = entity_by_id_mut(&mut entities.btrfs_pools, pool_id).expect("always exists if path found");
 
@@ -455,7 +455,7 @@ pub fn create_container(options: ContainerCreateOptions) -> Result<()> {
         .update_retention(&mut container.snapshot_retention);
 
     pool_model.attach_container(container)?;
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
 
     Ok(())
 }
@@ -466,7 +466,7 @@ pub struct ContainerListOptions {}
 pub fn list_container(options: ContainerListOptions) -> Result<()> {
     debug!("Command 'list_container': {:?}", options);
 
-    let entities = storage::load_entity_state();
+    let entities = storage::load_entity_config();
 
     print_comfy_table(
         vec![

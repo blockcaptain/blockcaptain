@@ -4,6 +4,7 @@ use blkcaptwrk::{
     actors::{captain::CaptainActor, intel::IntelActor},
     slogext::JournalDrain,
 };
+use libblkcapt::model::{storage::load_server_config, BcLogLevel};
 use libsystemd::daemon::{self, NotifyState};
 use slog::{error, info, Drain, Logger};
 use std::{env, process::exit, time::Duration};
@@ -11,13 +12,27 @@ use tokio::signal::unix::{signal, SignalKind};
 use xactor::Actor;
 
 fn main() {
-    let vcount = std::env::args().fold(0, |a, e| {
-        a + if e.starts_with('-') && e.chars().skip(1).all(|c| c == 'v') {
-            e.len() - 1
+    let log_level = {
+        let count = std::env::args().fold(0, |a, e| {
+            a + if e.starts_with('-') && e.chars().skip(1).all(|c| c == 'v') {
+                e.len() - 1
+            } else {
+                0
+            }
+        });
+        if count > 0 {
+            count.into()
         } else {
-            0
+            let config = load_server_config();
+            match config {
+                Ok(c) => c.log_level,
+                Err(e) => {
+                    println!("reading server config failed: {:?}", e);
+                    BcLogLevel::Info
+                }
+            }
         }
-    });
+    };
 
     let slog_drain = if use_journal() {
         println!("logging to journald");
@@ -31,7 +46,7 @@ fn main() {
         slog_atomic::AtomicSwitch::new(drain)
     };
 
-    exit(blkcaptapp_run(async_main, vcount, slog_drain));
+    exit(blkcaptapp_run(async_main, log_level, slog_drain));
 }
 
 async fn async_main(log: Logger) -> Result<()> {

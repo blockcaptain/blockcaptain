@@ -36,7 +36,7 @@ pub struct ResticAttachOptions {
 }
 
 pub fn attach_restic(options: ResticAttachOptions) -> Result<()> {
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
 
     let repository = options
         .custom
@@ -66,7 +66,7 @@ pub fn attach_restic(options: ResticAttachOptions) -> Result<()> {
 
     entities.restic_containers.push(restic);
 
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
     Ok(())
 }
 

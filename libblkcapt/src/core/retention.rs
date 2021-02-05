@@ -7,6 +7,14 @@ use std::{cmp::Reverse, collections::HashSet, iter::repeat};
 use std::{convert::TryFrom, num::NonZeroUsize};
 
 pub fn evaluate_retention<'a, T: Snapshot>(snapshots: &'a [T], rules: &RetentionRuleset) -> RetentionEvaluation<'a, T> {
+    if snapshots.is_empty() {
+        return RetentionEvaluation {
+            drop_snapshots: Default::default(),
+            keep_minimum_snapshots: Default::default(),
+            keep_interval_buckets: Default::default(),
+        };
+    }
+
     let mut snapshots: Vec<_> = snapshots.iter().collect();
     snapshots.sort_unstable_by_key(|b| Reverse(b.datetime()));
     let snapshots = snapshots;
@@ -51,7 +59,6 @@ pub fn evaluate_retention<'a, T: Snapshot>(snapshots: &'a [T], rules: &Retention
         keep_interval_buckets,
     }
 }
-
 pub struct RetentionEvaluation<'a, T> {
     pub drop_snapshots: Vec<&'a T>,
     pub keep_minimum_snapshots: Vec<&'a T>,

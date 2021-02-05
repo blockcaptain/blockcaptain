@@ -88,7 +88,7 @@ pub struct ObserverCreateOptions {
 }
 
 pub fn create_observer(options: ObserverCreateOptions) -> Result<()> {
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
 
     if options.observer_type != "healthchecks" {
         bail!("only healthchecks is supported");
@@ -102,7 +102,7 @@ pub fn create_observer(options: ObserverCreateOptions) -> Result<()> {
 
     entities.attach_observer(observer)?;
 
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
 
     Ok(())
 }
@@ -141,7 +141,7 @@ pub struct ObserverUpdateOptions {
 }
 
 pub fn update_observer(options: ObserverUpdateOptions) -> Result<()> {
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
 
     let observations = build_observation_models(&entities, &options.add)?;
 
@@ -176,7 +176,7 @@ pub fn update_observer(options: ObserverUpdateOptions) -> Result<()> {
         observer.heartbeat = None;
     }
 
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
 
     Ok(())
 }
@@ -207,7 +207,7 @@ pub struct ObserverTestOptions {
 pub async fn test_observer(options: ObserverTestOptions) -> Result<()> {
     debug!("Command 'create_observer': {:?}", options);
 
-    let entities = storage::load_entity_state();
+    let entities = storage::load_entity_config();
 
     let observer = observer_search(&entities, &options.observer)?;
 
@@ -260,7 +260,7 @@ pub struct ObserverListOptions {}
 pub fn list_observer(options: ObserverListOptions) -> Result<()> {
     debug!("Command 'list_pool': {:?}", options);
 
-    let entities = storage::load_entity_state();
+    let entities = storage::load_entity_config();
 
     if entities.observers.is_empty() {
         info!("No observers configured")
@@ -294,7 +294,7 @@ pub struct ObserverDeleteOptions {
 }
 
 pub fn delete_observer(options: ObserverDeleteOptions) -> Result<()> {
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
 
     let (id, name) = {
         let observer = entity_by_name_or_id(entities.observers.iter(), &options.observer)?;
@@ -309,7 +309,7 @@ pub fn delete_observer(options: ObserverDeleteOptions) -> Result<()> {
             .expect("id always exists"),
     );
 
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
     info!("Deleted observer '{}'", name);
 
     Ok(())
@@ -323,7 +323,7 @@ pub struct ObserverShowOptions {
 }
 
 pub fn show_observer(options: ObserverShowOptions) -> Result<()> {
-    let entities = storage::load_entity_state();
+    let entities = storage::load_entity_config();
 
     let observer = observer_search(&entities, &options.observer)?;
 

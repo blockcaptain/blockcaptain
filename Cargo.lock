@@ -145,6 +145,7 @@ name = "blkcaptapp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libblkcapt",
  "log",
  "mockall",
  "slog",

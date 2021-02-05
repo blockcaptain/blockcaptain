@@ -214,6 +214,7 @@ pub mod service {
     use comfy_table::Cell;
     use libblkcapt::{
         core::system::{ActiveState, ActorState, SystemState, TerminalState},
+        model::{storage, BcLogLevel},
         sys::net::ServiceClient,
     };
 
@@ -279,5 +280,22 @@ pub mod service {
             ),
         };
         Cell::new(message).fg(color)
+    }
+
+    #[derive(Clap, Debug)]
+    pub struct ServiceConfigOptions {
+        #[clap(short, long, value_name("level"))]
+        log_level: Option<BcLogLevel>,
+    }
+
+    pub async fn service_config(options: ServiceConfigOptions) -> Result<()> {
+        let mut config = storage::load_server_config()?;
+
+        if let Some(level) = options.log_level {
+            config.log_level = level;
+        }
+
+        storage::store_server_config(config)?;
+        Ok(())
     }
 }

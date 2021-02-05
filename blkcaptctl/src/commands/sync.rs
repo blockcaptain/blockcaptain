@@ -59,7 +59,7 @@ pub struct SyncCreateOptions {
 }
 
 pub fn create_sync(options: SyncCreateOptions) -> Result<()> {
-    let mut entities = storage::load_entity_state();
+    let mut entities = storage::load_entity_config();
 
     let dataset_id = dataset_search(&entities, &options.dataset).map(|d| d.id())?;
     // TODO: entity refactor needed. this doesn't error if a container and restic container have
@@ -81,7 +81,7 @@ pub fn create_sync(options: SyncCreateOptions) -> Result<()> {
 
     entities.snapshot_syncs.push(sync);
 
-    storage::store_entity_state(entities);
+    storage::store_entity_config(entities);
     Ok(())
 }
 

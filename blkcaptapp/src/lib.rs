@@ -1,21 +1,22 @@
 pub mod slogext;
 use anyhow::Result;
+use libblkcapt::model::BcLogLevel;
 use slog::{debug, error, info, o, trace, Drain, Level, Logger};
 use slogext::{DedupDrain, SlogLogLogger};
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::runtime::Runtime;
 
-pub fn blkcaptapp_run<M, F>(main: M, verbose_flag_count: usize, slog_drain: slog_atomic::AtomicSwitch<()>) -> i32
+pub fn blkcaptapp_run<M, F>(main: M, log_level: BcLogLevel, slog_drain: slog_atomic::AtomicSwitch<()>) -> i32
 where
     M: FnOnce(Logger) -> F,
     F: Future<Output = Result<()>>,
 {
-    let (internal_level, external_level_slog, external_level) = match verbose_flag_count {
-        0 => (Level::Info, Level::Info, log::LevelFilter::Info),
-        1 => (Level::Debug, Level::Info, log::LevelFilter::Info),
-        2 => (Level::Trace, Level::Info, log::LevelFilter::Info),
-        3 => (Level::Trace, Level::Debug, log::LevelFilter::Debug),
-        _ => (Level::Trace, Level::Trace, log::LevelFilter::Trace),
+    let (internal_level, external_level_slog, external_level) = match log_level {
+        BcLogLevel::Info => (Level::Info, Level::Info, log::LevelFilter::Info),
+        BcLogLevel::Debug => (Level::Debug, Level::Info, log::LevelFilter::Info),
+        BcLogLevel::Trace => (Level::Trace, Level::Info, log::LevelFilter::Info),
+        BcLogLevel::TraceXdebug => (Level::Trace, Level::Debug, log::LevelFilter::Debug),
+        BcLogLevel::TraceXtrace => (Level::Trace, Level::Trace, log::LevelFilter::Trace),
     };
 
     println!();
@@ -91,7 +92,7 @@ mod tests {
                 info!(log, "runs_app test");
                 Ok(())
             },
-            0,
+            BcLogLevel::Info,
             drain,
         );
     }

@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [master]
+  workflow_dispatch:
 
 jobs:
   clippy:
@@ -63,6 +64,16 @@ jobs:
           path: target/debian
       - name: Run Integration Test
         run: eng/ci/integration-run.sh
+      - name: ssh2actions
+        uses: P3TERX/ssh2actions@v1.0.0
+        with:
+          mode: ngrok
+        env:
+          NGROK_TOKEN: ${{ secrets.NGROK_TOKEN }}
+          NGROK_REGION: us
+          SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
+      - name: sleep
+        run: sleep 7200
   unittest:
     runs-on: ubuntu-20.04
     env:

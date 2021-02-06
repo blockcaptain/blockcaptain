@@ -63,6 +63,12 @@ jobs:
           path: target/debian
       - name: Run Integration Test
         run: eng/ci/integration-run.sh
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v2
+        with:
+          name: integration-logs
+          path: "*.log.json"
   unittest:
     runs-on: ubuntu-20.04
     env:

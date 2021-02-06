@@ -38,3 +38,8 @@ wget "https://github.com/blockcaptain/blockcaptain-eng/releases/latest/download/
 sudo mv blkcapteng /usr/local/bin
 sudo chown root: /usr/local/bin/blkcapteng
 sudo chmod 755 /usr/local/bin/blkcapteng
+
+mkdir -p target/debian
+
+# This will change when using upstream restic
+wget "https://github.com/blockcaptain/restic/releases/latest/download/restic" -O target/debian/restic

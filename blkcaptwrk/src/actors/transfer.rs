@@ -4,7 +4,7 @@ use super::{
     localreceiver::GetWriterMessage,
     localreceiver::LocalReceiverActor,
     localreceiver::LocalReceiverStoppedMessage,
-    localsender::GetReaderMessage,
+    localsender::TakeReaderMessage,
     localsender::{LocalSenderActor, LocalSenderFinishedMessage},
     observation::StartedObservation,
 };
@@ -72,7 +72,7 @@ impl TransferActor {
     async fn run_transfer(
         sender_actor: Addr<BcActor<LocalSenderActor>>, receiver_actor: Addr<BcActor<LocalReceiverActor>>,
     ) -> Result<()> {
-        let mut reader = sender_actor.call(GetReaderMessage).await??;
+        let mut reader = sender_actor.call(TakeReaderMessage).await??;
         let mut writer = receiver_actor.call(GetWriterMessage).await?;
 
         let mut buf = BytesMut::with_capacity(1024 * 256);

@@ -19,7 +19,7 @@ pub struct LocalSenderFinishedMessage(pub Result<()>);
 pub struct LocalSenderParentFinishedMessage(pub u64);
 
 #[message(result = "Result<Box<dyn AsyncRead + Send + Unpin>>")]
-pub struct GetReaderMessage;
+pub struct TakeReaderMessage;
 
 pub struct LocalSenderActor {
     parent: Sender<LocalSenderParentFinishedMessage>,
@@ -29,8 +29,8 @@ pub struct LocalSenderActor {
 
 #[derive(Display)]
 enum State {
-    Created(SnapshotSender),
-    Running(WorkerTask, ReaderState),
+    Holding(SnapshotSender),
+    Sending(WorkerTask, ReaderState),
     Draining(Result<()>),
     Finished(Result<()>),
     Faulted,
@@ -62,7 +62,7 @@ impl LocalSenderActor {
             Self {
                 parent,
                 requestor,
-                state: State::Created(sender),
+                state: State::Holding(sender),
             },
             log,
         )
@@ -77,8 +77,8 @@ impl BcActorCtrl for LocalSenderActor {
 
     async fn stopped(&mut self, ctx: BcContext<'_, Self>) -> TerminalState {
         let (terminal_state, result) = match self.state.take() {
-            State::Created(_) | State::Draining(..) => state_result(TerminalState::Cancelled),
-            State::Running(worker, _) => {
+            State::Holding(_) | State::Draining(..) => state_result(TerminalState::Cancelled),
+            State::Sending(worker, _) => {
                 worker.abort();
                 state_result(TerminalState::Cancelled)
             }
@@ -98,16 +98,25 @@ impl BcActorCtrl for LocalSenderActor {
 }
 
 #[async_trait::async_trait]
-impl BcHandler<GetReaderMessage> for LocalSenderActor {
+impl BcHandler<TakeReaderMessage> for LocalSenderActor {
     async fn handle(
-        &mut self, ctx: BcContext<'_, Self>, _msg: GetReaderMessage,
+        &mut self, ctx: BcContext<'_, Self>, _msg: TakeReaderMessage,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>> {
-        if let State::Created(sender) = mem::replace(&mut self.state, State::Faulted) {
-            let mut sender = sender.start()?;
-            let reader = sender.reader();
-            let task = WorkerTask::run(ctx.address(), ctx.log(), |_| async move { sender.wait().await.into() });
-            self.state = State::Running(task, ReaderState::InUse);
-            Ok(Box::new(OwnedSender::new(reader, ctx.address().sender())))
+        if let State::Holding(sender) = mem::replace(&mut self.state, State::Faulted) {
+            let sender = sender.start();
+            match sender {
+                Ok(mut sender) => {
+                    let reader = sender.reader();
+                    let task = WorkerTask::run(ctx.address(), ctx.log(), |_| async move { sender.wait().await.into() });
+                    self.state = State::Sending(task, ReaderState::InUse);
+                    Ok(Box::new(OwnedSender::new(reader, ctx.address().sender())))
+                }
+                result => {
+                    ctx.stop(None);
+                    self.state = State::Finished(result.map(|_| ()));
+                    Err(anyhow!("local sender failed to create reader"))
+                }
+            }
         } else {
             ctx.stop(None);
             Err(anyhow!("cant get reader in current state"))
@@ -119,7 +128,7 @@ impl BcHandler<GetReaderMessage> for LocalSenderActor {
 impl BcHandler<SendWorkerCompleteMessage> for LocalSenderActor {
     async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: SendWorkerCompleteMessage) {
         self.state = match self.state.take() {
-            State::Running(_, reader_state) => match reader_state {
+            State::Sending(_, reader_state) => match reader_state {
                 ReaderState::InUse => State::Draining(msg.0),
                 ReaderState::Dropped => {
                     ctx.stop(None);
@@ -138,7 +147,7 @@ impl BcHandler<SendWorkerCompleteMessage> for LocalSenderActor {
 impl BcHandler<ReaderDropped> for LocalSenderActor {
     async fn handle(&mut self, ctx: BcContext<'_, Self>, _msg: ReaderDropped) {
         self.state = match self.state.take() {
-            State::Running(worker_task, ReaderState::InUse) => State::Running(worker_task, ReaderState::Dropped),
+            State::Sending(worker_task, ReaderState::InUse) => State::Sending(worker_task, ReaderState::Dropped),
             State::Draining(result) => {
                 ctx.stop(None);
                 State::Finished(result)

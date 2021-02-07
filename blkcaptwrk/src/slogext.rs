@@ -55,6 +55,11 @@ impl JournalSerializer {
                 _ => {}
             }
         }
-        output
+
+        match output.as_str() {
+            "MESSAGE" => String::from("MESSAGE_"),
+            "PRIORITY" => String::from("PRIORITY_"),
+            _ => output,
+        }
     }
 }

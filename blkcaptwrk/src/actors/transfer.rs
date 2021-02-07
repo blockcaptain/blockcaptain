@@ -72,7 +72,7 @@ impl TransferActor {
     async fn run_transfer(
         sender_actor: Addr<BcActor<LocalSenderActor>>, receiver_actor: Addr<BcActor<LocalReceiverActor>>,
     ) -> Result<()> {
-        let mut reader = sender_actor.call(GetReaderMessage).await?;
+        let mut reader = sender_actor.call(GetReaderMessage).await??;
         let mut writer = receiver_actor.call(GetWriterMessage).await?;
 
         let mut buf = BytesMut::with_capacity(1024 * 256);

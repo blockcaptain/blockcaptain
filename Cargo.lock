@@ -199,6 +199,7 @@ dependencies = [
  "nix 0.19.1",
  "once_cell",
  "paste",
+ "pin-project 1.0.4",
  "slog",
  "slog-async",
  "slog-atomic",

@@ -3,8 +3,9 @@ use crate::{
     tasks::{WorkerCompleteMessage, WorkerTask},
     xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState},
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use libblkcapt::sys::btrfs::SnapshotSender;
+use pin_project::{pin_project, pinned_drop};
 use slog::Logger;
 use std::mem;
 use strum_macros::Display;
@@ -17,7 +18,7 @@ pub struct LocalSenderFinishedMessage(pub Result<()>);
 #[message()]
 pub struct LocalSenderParentFinishedMessage(pub u64);
 
-#[message(result = "Box<dyn AsyncRead + Send + Unpin>")]
+#[message(result = "Result<Box<dyn AsyncRead + Send + Unpin>>")]
 pub struct GetReaderMessage;
 
 pub struct LocalSenderActor {
@@ -29,9 +30,16 @@ pub struct LocalSenderActor {
 #[derive(Display)]
 enum State {
     Created(SnapshotSender),
-    Running(WorkerTask, Option<Box<dyn AsyncRead + Send + Unpin>>),
+    Running(WorkerTask, ReaderState),
+    Draining(Result<()>),
     Finished(Result<()>),
     Faulted,
+}
+
+#[derive(Display)]
+enum ReaderState {
+    InUse,
+    Dropped,
 }
 
 impl State {
@@ -41,6 +49,9 @@ impl State {
 }
 
 type SendWorkerCompleteMessage = WorkerCompleteMessage<Result<()>>;
+
+#[message()]
+struct ReaderDropped;
 
 impl LocalSenderActor {
     pub fn new(
@@ -60,21 +71,13 @@ impl LocalSenderActor {
 
 #[async_trait::async_trait]
 impl BcActorCtrl for LocalSenderActor {
-    async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
-        if let State::Created(sender) = mem::replace(&mut self.state, State::Faulted) {
-            let mut sender = sender.start()?;
-            let reader = sender.reader();
-            let task = WorkerTask::run(ctx.address(), ctx.log(), |_| async move { sender.wait().await.into() });
-            self.state = State::Running(task, Some(Box::new(reader)));
-        } else {
-            panic!("start called in invalid state");
-        }
+    async fn started(&mut self, _ctx: BcContext<'_, Self>) -> Result<()> {
         Ok(())
     }
 
     async fn stopped(&mut self, ctx: BcContext<'_, Self>) -> TerminalState {
         let (terminal_state, result) = match self.state.take() {
-            State::Created(_) => state_result(TerminalState::Cancelled),
+            State::Created(_) | State::Draining(..) => state_result(TerminalState::Cancelled),
             State::Running(worker, _) => {
                 worker.abort();
                 state_result(TerminalState::Cancelled)
@@ -96,12 +99,18 @@ impl BcActorCtrl for LocalSenderActor {
 
 #[async_trait::async_trait]
 impl BcHandler<GetReaderMessage> for LocalSenderActor {
-    async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetReaderMessage) -> Box<dyn AsyncRead + Send + Unpin> {
-        if let State::Running(worker, Some(reader)) = mem::replace(&mut self.state, State::Faulted) {
-            self.state = State::Running(worker, None);
-            reader
+    async fn handle(
+        &mut self, ctx: BcContext<'_, Self>, _msg: GetReaderMessage,
+    ) -> Result<Box<dyn AsyncRead + Send + Unpin>> {
+        if let State::Created(sender) = mem::replace(&mut self.state, State::Faulted) {
+            let mut sender = sender.start()?;
+            let reader = sender.reader();
+            let task = WorkerTask::run(ctx.address(), ctx.log(), |_| async move { sender.wait().await.into() });
+            self.state = State::Running(task, ReaderState::InUse);
+            Ok(Box::new(OwnedSender::new(reader, ctx.address().sender())))
         } else {
-            panic!("getreader called in invalid state");
+            ctx.stop(None);
+            Err(anyhow!("cant get reader in current state"))
         }
     }
 }
@@ -109,8 +118,36 @@ impl BcHandler<GetReaderMessage> for LocalSenderActor {
 #[async_trait::async_trait]
 impl BcHandler<SendWorkerCompleteMessage> for LocalSenderActor {
     async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: SendWorkerCompleteMessage) {
-        self.state = State::Finished(msg.0);
-        ctx.stop(None);
+        self.state = match self.state.take() {
+            State::Running(_, reader_state) => match reader_state {
+                ReaderState::InUse => State::Draining(msg.0),
+                ReaderState::Dropped => {
+                    ctx.stop(None);
+                    State::Finished(msg.0)
+                }
+            },
+            _ => {
+                ctx.stop(None);
+                State::Faulted
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<ReaderDropped> for LocalSenderActor {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, _msg: ReaderDropped) {
+        self.state = match self.state.take() {
+            State::Running(worker_task, ReaderState::InUse) => State::Running(worker_task, ReaderState::Dropped),
+            State::Draining(result) => {
+                ctx.stop(None);
+                State::Finished(result)
+            }
+            _ => {
+                ctx.stop(None);
+                State::Faulted
+            }
+        }
     }
 }
 
@@ -118,5 +155,34 @@ impl BcHandler<SendWorkerCompleteMessage> for LocalSenderActor {
 impl BcHandler<GetActorStatusMessage> for LocalSenderActor {
     async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
         self.state.to_string()
+    }
+}
+
+#[pin_project(PinnedDrop)]
+struct OwnedSender<T> {
+    #[pin]
+    inner: T,
+    owner: Sender<ReaderDropped>,
+}
+
+impl<T> OwnedSender<T> {
+    fn new(inner: T, owner: Sender<ReaderDropped>) -> Self {
+        Self { inner, owner }
+    }
+}
+
+#[pinned_drop]
+impl<T> PinnedDrop for OwnedSender<T> {
+    fn drop(self: std::pin::Pin<&mut Self>) {
+        let _ = self.owner.send(ReaderDropped);
+    }
+}
+
+impl<T: AsyncRead> AsyncRead for OwnedSender<T> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.project();
+        this.inner.poll_read(cx, buf)
     }
 }

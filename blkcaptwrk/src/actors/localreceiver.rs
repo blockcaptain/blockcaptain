@@ -1,5 +1,5 @@
 use crate::{
-    actorbase::{state_result, state_result_from_result, unhandled_result},
+    actorbase::{log_result, state_result, state_result_from_result, unhandled_result},
     tasks::{WorkerCompleteMessage, WorkerTask},
     xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState},
 };
@@ -86,7 +86,7 @@ impl BcActorCtrl for LocalReceiverActor {
             State::Finished(result) => state_result_from_result(result),
             State::Faulted => state_result(TerminalState::Faulted),
         };
-
+        log_result(ctx.log(), &result);
         let (maybe_snapshot, result) = match result {
             Ok(snapshot) => (Some(snapshot), Ok(())),
             Err(error) => (None, Err(error)),

@@ -28,7 +28,11 @@ impl BcActorCtrl for ServerActor {
         let runtime_dir = runtime_dir();
         std::fs::create_dir_all(&runtime_dir)?;
 
-        let socket_path = runtime_dir.with_file_name("daemon.sock");
+        let socket_path = {
+            let mut path = runtime_dir;
+            path.push("daemon.sock");
+            path
+        };
         if socket_path.exists() {
             std::fs::remove_file(&socket_path)?;
         }

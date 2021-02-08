@@ -3,8 +3,9 @@ use crate::{
     tasks::{WorkerCompleteMessage, WorkerTask},
     xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState},
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use libblkcapt::sys::btrfs::SnapshotReceiver;
+use pin_project::{pin_project, pinned_drop};
 use slog::Logger;
 use std::mem;
 use strum_macros::Display;
@@ -17,7 +18,7 @@ pub struct LocalReceiverStoppedMessage(pub Result<()>);
 #[message()]
 pub struct LocalReceiverStoppedParentMessage(pub u64, pub Option<String>);
 
-#[message(result = "Box<dyn AsyncWrite + Send + Unpin>")]
+#[message(result = "Result<Box<dyn AsyncWrite + Send + Unpin>>")]
 pub struct GetWriterMessage;
 
 pub struct LocalReceiverActor {
@@ -28,8 +29,10 @@ pub struct LocalReceiverActor {
 
 #[derive(Display)]
 enum State {
-    Created(SnapshotReceiver),
-    Running(WorkerTask, Option<Box<dyn AsyncWrite + Send + Unpin>>),
+    Holding(SnapshotReceiver),
+    Receiving(WorkerTask),
+    Draining(WorkerTask),
+    Waiting(Result<String>),
     Finished(Result<String>),
     Faulted,
 }
@@ -42,6 +45,9 @@ impl State {
 
 type ReceiveWorkerCompleteMessage = WorkerCompleteMessage<Result<String>>;
 
+#[message()]
+struct WriterDropped;
+
 impl LocalReceiverActor {
     pub fn new(
         parent: Sender<LocalReceiverStoppedParentMessage>, requestor: Sender<LocalReceiverStoppedMessage>,
@@ -51,7 +57,7 @@ impl LocalReceiverActor {
             Self {
                 parent,
                 requestor,
-                state: State::Created(receiver),
+                state: State::Holding(receiver),
             },
             log,
         )
@@ -60,26 +66,14 @@ impl LocalReceiverActor {
 
 #[async_trait::async_trait]
 impl BcActorCtrl for LocalReceiverActor {
-    async fn started(&mut self, ctx: BcContext<'_, Self>) -> Result<()> {
-        if let State::Created(receiver) = mem::replace(&mut self.state, State::Faulted) {
-            let mut receiver = receiver.start()?;
-            let writer = receiver.writer();
-            let task = WorkerTask::run(
-                ctx.address(),
-                ctx.log(),
-                |_| async move { receiver.wait().await.into() },
-            );
-            self.state = State::Running(task, Some(Box::new(writer)));
-        } else {
-            panic!("start called in invalid state");
-        }
+    async fn started(&mut self, _ctx: BcContext<'_, Self>) -> Result<()> {
         Ok(())
     }
 
     async fn stopped(&mut self, ctx: BcContext<'_, Self>) -> TerminalState {
         let (terminal_state, result) = match self.state.take() {
-            State::Created(_) => state_result(TerminalState::Cancelled),
-            State::Running(worker, _) => {
+            State::Holding(_) | State::Waiting(_) => state_result(TerminalState::Cancelled),
+            State::Receiving(worker) | State::Draining(worker) => {
                 worker.abort();
                 state_result(TerminalState::Cancelled)
             }
@@ -107,13 +101,30 @@ impl BcActorCtrl for LocalReceiverActor {
 #[async_trait::async_trait]
 impl BcHandler<GetWriterMessage> for LocalReceiverActor {
     async fn handle(
-        &mut self, _ctx: BcContext<'_, Self>, _msg: GetWriterMessage,
-    ) -> Box<dyn AsyncWrite + Send + Unpin> {
-        if let State::Running(worker, Some(writer)) = mem::replace(&mut self.state, State::Faulted) {
-            self.state = State::Running(worker, None);
-            writer
+        &mut self, ctx: BcContext<'_, Self>, _msg: GetWriterMessage,
+    ) -> Result<Box<dyn AsyncWrite + Send + Unpin>> {
+        if let State::Holding(receiver) = self.state.take() {
+            let receiver = receiver.start();
+            match receiver {
+                Ok(mut receiver) => {
+                    let writer = receiver.writer();
+                    let task = WorkerTask::run(
+                        ctx.address(),
+                        ctx.log(),
+                        |_| async move { receiver.wait().await.into() },
+                    );
+                    self.state = State::Receiving(task);
+                    Ok(Box::new(OwnedReceiver::new(writer, ctx.address().sender())))
+                }
+                Err(error) => {
+                    ctx.stop(None);
+                    self.state = State::Finished(Err(error));
+                    Err(anyhow!("local receiver failed to create writer"))
+                }
+            }
         } else {
-            panic!("getwriter called in invalid state");
+            ctx.stop(None);
+            Err(anyhow!("cant get writer in current state"))
         }
     }
 }
@@ -121,8 +132,34 @@ impl BcHandler<GetWriterMessage> for LocalReceiverActor {
 #[async_trait::async_trait]
 impl BcHandler<ReceiveWorkerCompleteMessage> for LocalReceiverActor {
     async fn handle(&mut self, ctx: BcContext<'_, Self>, msg: ReceiveWorkerCompleteMessage) {
-        self.state = State::Finished(msg.0);
-        ctx.stop(None);
+        self.state = match self.state.take() {
+            State::Receiving(_) => State::Waiting(msg.0),
+            State::Draining(_) => {
+                ctx.stop(None);
+                State::Finished(msg.0)
+            }
+            _ => {
+                ctx.stop(None);
+                State::Faulted
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl BcHandler<WriterDropped> for LocalReceiverActor {
+    async fn handle(&mut self, ctx: BcContext<'_, Self>, _msg: WriterDropped) {
+        self.state = match self.state.take() {
+            State::Receiving(worker_task) => State::Draining(worker_task),
+            State::Waiting(result) => {
+                ctx.stop(None);
+                State::Finished(result)
+            }
+            _ => {
+                ctx.stop(None);
+                State::Faulted
+            }
+        }
     }
 }
 
@@ -130,5 +167,48 @@ impl BcHandler<ReceiveWorkerCompleteMessage> for LocalReceiverActor {
 impl BcHandler<GetActorStatusMessage> for LocalReceiverActor {
     async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
         self.state.to_string()
+    }
+}
+
+#[pin_project(PinnedDrop)]
+struct OwnedReceiver<T> {
+    #[pin]
+    inner: T,
+    owner: Sender<WriterDropped>,
+}
+
+impl<T> OwnedReceiver<T> {
+    fn new(inner: T, owner: Sender<WriterDropped>) -> Self {
+        Self { inner, owner }
+    }
+}
+
+#[pinned_drop]
+impl<T> PinnedDrop for OwnedReceiver<T> {
+    fn drop(self: std::pin::Pin<&mut Self>) {
+        let _ = self.owner.send(WriterDropped);
+    }
+}
+
+impl<T: AsyncWrite> AsyncWrite for OwnedReceiver<T> {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        let this = self.project();
+        this.inner.poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        let this = self.project();
+        this.inner.poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        let this = self.project();
+        this.inner.poll_shutdown(cx)
     }
 }

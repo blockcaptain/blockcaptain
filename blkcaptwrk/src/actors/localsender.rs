@@ -102,7 +102,7 @@ impl BcHandler<TakeReaderMessage> for LocalSenderActor {
     async fn handle(
         &mut self, ctx: BcContext<'_, Self>, _msg: TakeReaderMessage,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin>> {
-        if let State::Holding(sender) = mem::replace(&mut self.state, State::Faulted) {
+        if let State::Holding(sender) = self.state.take() {
             let sender = sender.start();
             match sender {
                 Ok(mut sender) => {
@@ -111,9 +111,9 @@ impl BcHandler<TakeReaderMessage> for LocalSenderActor {
                     self.state = State::Sending(task, ReaderState::InUse);
                     Ok(Box::new(OwnedSender::new(reader, ctx.address().sender())))
                 }
-                result => {
+                Err(error) => {
                     ctx.stop(None);
-                    self.state = State::Finished(result.map(|_| ()));
+                    self.state = State::Finished(Err(error));
                     Err(anyhow!("local sender failed to create reader"))
                 }
             }

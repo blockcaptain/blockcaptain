@@ -74,14 +74,10 @@ impl DevicePathBuf {
     // Conflict with the blanket impl of into for tryfrom
     pub fn try_from<T: ?Sized + AsRef<Path>>(s: &T) -> Result<Self> {
         let mut iter = s.as_ref().components();
-        if let Some(c) = iter.next() {
-            if let Component::RootDir = c {
-                if let Some(c) = iter.next() {
-                    if let Component::Normal(d) = c {
-                        if d == "dev" && iter.next().is_some() {
-                            return Ok(Self(s.as_ref().to_owned()));
-                        }
-                    }
+        if let Some(Component::RootDir) = iter.next() {
+            if let Some(Component::Normal(d)) = iter.next() {
+                if d == "dev" && iter.next().is_some() {
+                    return Ok(Self(s.as_ref().to_owned()));
                 }
             }
         }

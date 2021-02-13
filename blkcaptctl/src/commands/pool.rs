@@ -231,7 +231,7 @@ pub fn create_dataset(options: DatasetCreateOptions) -> Result<()> {
     let dataset = pool.create_dataset(options.name)?;
 
     let mut dataset = dataset.take_model();
-    options.shared.update_snapshots(&mut dataset.snapshot_schedule)?;
+    options.shared.update_snapshots(&mut dataset.snapshot_schedule);
     options
         .shared
         .retention
@@ -310,11 +310,10 @@ pub struct DatasetCreateUpdateOptions {
 }
 
 impl DatasetCreateUpdateOptions {
-    fn update_snapshots(&self, schedule: &mut Option<ScheduleModel>) -> Result<()> {
+    fn update_snapshots(&self, schedule: &mut Option<ScheduleModel>) {
         if self.snapshot_schedule.is_some() {
             *schedule = self.snapshot_schedule.clone().map(|s| s.into());
         }
-        Ok(())
     }
 }
 
@@ -363,7 +362,7 @@ pub fn update_dataset(options: DatasetUpdateOptions) -> Result<()> {
         entity_by_id_mut(&mut filesystem.datasets, dataset_path.entity).expect("always exists if path found")
     };
 
-    options.shared.update_snapshots(&mut dataset.snapshot_schedule)?;
+    options.shared.update_snapshots(&mut dataset.snapshot_schedule);
 
     if options.pause_snapshotting || options.resume_snapshotting {
         dataset.pause_snapshotting = options.pause_snapshotting

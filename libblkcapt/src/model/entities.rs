@@ -286,6 +286,8 @@ impl BtrfsDatasetEntity {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BtrfsContainerEntity {
+    #[serde(skip)]
+    parent: EntityId,
     id: EntityId,
     name: String,
     pub path: FsPathBuf,
@@ -297,6 +299,7 @@ pub struct BtrfsContainerEntity {
 impl BtrfsContainerEntity {
     pub fn new(name: String, subvolume_path: FsPathBuf, subvolume_uuid: Uuid) -> Result<Self> {
         Ok(Self {
+            parent: EntityId::default(),
             id: EntityId::new(),
             name,
             path: subvolume_path,
@@ -316,6 +319,10 @@ impl BtrfsContainerEntity {
         } else {
             FeatureState::Unconfigured
         }
+    }
+
+    pub fn parent(&self) -> EntityId {
+        self.parent
     }
 }
 
@@ -346,7 +353,7 @@ impl EntityStatic for BtrfsContainerEntity {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SnapshotSyncEntity {
     id: EntityId,
     name: String,
@@ -449,7 +456,7 @@ pub enum KeepSpec {
 
 // ## Observer #######################################################################################################
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HealthchecksObserverEntity {
     id: EntityId,
     name: String,
@@ -458,7 +465,7 @@ pub struct HealthchecksObserverEntity {
     pub heartbeat: Option<HealthchecksHeartbeat>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HealthchecksHeartbeat {
     #[serde(with = "humantime_serde")]
     pub frequency: Duration,

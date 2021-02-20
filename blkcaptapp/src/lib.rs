@@ -1,7 +1,7 @@
 pub mod slogext;
 use anyhow::Result;
 use libblkcapt::model::BcLogLevel;
-use slog::{debug, error, info, o, trace, Drain, Level, Logger};
+use slog::{debug, error, o, trace, Drain, Level, Logger};
 use slogext::{DedupDrain, SlogLogLogger};
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::runtime::Runtime;
@@ -53,7 +53,7 @@ where
                 if let Err(e) = result {
                     error!(slog_internal_logger, "{}", e);
                     for cause in e.chain().skip(1) {
-                        info!(slog_internal_logger, "error caused by: {}", cause);
+                        error!(slog_internal_logger, "error caused by: {}", cause);
                     }
                     app_succeeded = false;
                 }
@@ -81,6 +81,7 @@ where
 mod tests {
     use super::*;
     use crate::slogext::CustomFullFormat;
+    use slog::info;
 
     #[test]
     fn runs_app() {

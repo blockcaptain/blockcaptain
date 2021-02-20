@@ -138,6 +138,12 @@ impl Entities {
         entity_by_id(self.containers(), id)
     }
 
+    pub fn any_container(&self, id: EntityId) -> Option<AnyContainer> {
+        entity_by_id(self.containers(), id)
+            .map(|r| AnyContainer::Btrfs(r.entity))
+            .or_else(|| entity_by_id(self.restic_containers.iter(), id).map(|r| AnyContainer::Restic(r)))
+    }
+
     pub fn restic_container(&self, id: EntityId) -> Option<&ResticContainerEntity> {
         entity_by_id(self.restic_containers.iter(), id)
     }
@@ -260,7 +266,13 @@ pub enum EntityType {
     Container,
     SnapshotSync,
     Observer,
-    //ResticContainer,
+}
+
+#[derive(Display)]
+#[strum(serialize_all = "snake_case")]
+pub enum AnyContainer<'a> {
+    Btrfs(&'a BtrfsContainerEntity),
+    Restic(&'a ResticContainerEntity),
 }
 
 pub trait Entity: Debug {

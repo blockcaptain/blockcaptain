@@ -87,6 +87,13 @@ impl BtrfsPoolEntity {
             FeatureState::Unconfigured
         }
     }
+
+    pub(super) fn post_deserialize(&mut self) {
+        let id = self.id();
+        for container in self.containers.iter_mut() {
+            container.parent = id;
+        }
+    }
 }
 
 impl Entity for BtrfsPoolEntity {

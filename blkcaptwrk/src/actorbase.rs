@@ -4,7 +4,7 @@ use crate::xactorext::{BcActorCtrl, BcContext, BcHandler, TerminalState};
 use anyhow::{anyhow, Error, Result};
 use chrono::{DateTime, Utc};
 use cron::Schedule;
-use slog::{debug, error, info, Logger};
+use slog::{debug, error, Logger};
 use xactor::Message;
 
 pub fn unhandled_error(log: &Logger, error: Error) {
@@ -18,7 +18,7 @@ pub fn unhandled_result<T>(log: &Logger, result: Result<T>) {
 pub fn log_error(log: &Logger, error: &Error) {
     error!(log, "unhandled error"; "error" => %error);
     for cause in error.chain().skip(1) {
-        info!(log, "error caused by"; "error" => %cause);
+        error!(log, "error caused by"; "error" => %cause);
     }
 }
 

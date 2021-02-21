@@ -26,7 +26,9 @@ static ENTITY_PATH: Lazy<PathBuf> = Lazy::new(|| {
 });
 
 pub fn load_entity_config() -> model::Entities {
-    read_state(&ENTITY_PATH).expect("FIXME")
+    let mut entities: model::Entities = read_state(&ENTITY_PATH).expect("FIXME");
+    entities.post_deserialize();
+    entities
 }
 
 pub fn store_entity_config(entities: model::Entities) {

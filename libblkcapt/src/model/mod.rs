@@ -52,6 +52,12 @@ pub struct Entities {
 }
 
 impl Entities {
+    pub(super) fn post_deserialize(&mut self) {
+        for pool in self.btrfs_pools.iter_mut() {
+            pool.post_deserialize()
+        }
+    }
+
     pub fn attach_pool(&mut self, pool: BtrfsPoolEntity) -> Result<()> {
         self.pool_by_name(pool.name())
             .map_or(Ok(()), |p| Err(anyhow!("Pool name '{}' already exists.", p.name())))?;

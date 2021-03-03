@@ -1,17 +1,17 @@
 use crate::parsing::{parse_key_value_data, StringPair};
 #[mockall_double::double]
 use crate::sys::process::double as process_double;
-use crate::sys::process::output_as_result;
+use crate::sys::process::output_stdout_to_result;
 use anyhow::{anyhow, Context, Error, Result};
 use mnt::{MountEntry, MountIter};
 use nix::mount::{mount, MsFlags};
 use process_double::{run_command, run_command_as_result};
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::{collections::HashMap, process::Command};
 use std::{convert::TryFrom, fmt::Display};
+use std::{ffi::OsStr, process::Stdio};
 use uuid::Uuid;
 
 // ## Filesystem Relative PathBuf ####################################################################################
@@ -264,27 +264,31 @@ pub struct BlockDeviceIds {
 impl BlockDeviceIds {
     pub fn lookup(device_name: &DevicePathBuf) -> Result<Option<Self>> {
         const PROCESS_NAME: &str = "blkid";
-        run_command({
+        let result = run_command({
             let mut command = Command::new(PROCESS_NAME);
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::piped());
             command.args(&["-o", "export"]).arg(device_name.as_pathbuf());
             command
-        })
-        .map_err(|e| anyhow!(e))
-        .and_then(|output| {
+        });
+
+        if let Ok(output) = &result {
             if output.status.code().unwrap_or_default() == 2 || output.stdout.is_empty() {
                 return Ok(None);
             }
+        }
 
-            let output_data = output_as_result(output)?;
-            let kvps = parse_key_value_data::<Vec<StringPair>>(&output_data)
-                .context(format!("Failed to parse output of {}", PROCESS_NAME))?;
+        output_stdout_to_result(result)
+            .with_context(|| format!("failed to run {}", PROCESS_NAME))
+            .and_then(|stdout| {
+                let kvps = parse_key_value_data::<Vec<StringPair>>(&stdout)
+                    .context(format!("failed to parse output of {}", PROCESS_NAME))?;
 
-            envy::from_iter::<_, Self>(kvps).map(Some).context(format!(
-                "Failed loading the device information from {} output.",
-                PROCESS_NAME
-            ))
-        })
-        .context(format!("Failed to run {} to get device information.", PROCESS_NAME))
+                envy::from_iter::<_, Self>(kvps)
+                    .map(Some)
+                    .with_context(|| format!("failed loading the device information from {} output.", PROCESS_NAME))
+            })
+            .context("failed to lookup device information")
     }
 }
 

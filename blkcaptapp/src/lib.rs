@@ -1,6 +1,6 @@
 pub mod slogext;
 use anyhow::Result;
-use libblkcapt::model::BcLogLevel;
+use libblkcapt::{error_cause, model::BcLogLevel};
 use slog::{debug, error, o, trace, Drain, Level, Logger};
 use slogext::{DedupDrain, SlogLogLogger};
 use std::{future::Future, sync::Arc, time::Duration};
@@ -52,9 +52,7 @@ where
                 let result = runtime.block_on(main(slog_internal_logger.clone()));
                 if let Err(e) = result {
                     error!(slog_internal_logger, "{}", e);
-                    for cause in e.chain().skip(1) {
-                        error!(slog_internal_logger, "error caused by: {}", cause);
-                    }
+                    error!(slog_internal_logger, "{}", error_cause(&e));
                     app_succeeded = false;
                 }
                 runtime.shutdown_timeout(Duration::from_secs(0));

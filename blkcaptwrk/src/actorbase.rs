@@ -1,11 +1,19 @@
-use std::time::Duration;
-
 use crate::xactorext::{BcActorCtrl, BcContext, BcHandler, TerminalState};
 use anyhow::{anyhow, Error, Result};
 use chrono::{DateTime, Utc};
 use cron::Schedule;
+use futures_util::{
+    future,
+    stream::{FuturesUnordered, StreamExt},
+};
+use libblkcapt::{
+    error_cause,
+    model::{Entity, EntityId, EntityStatic},
+};
 use slog::{debug, error, Logger};
-use xactor::Message;
+use std::future::Future;
+use std::{collections::HashMap, time::Duration};
+use xactor::{Actor, Addr, Message};
 
 pub fn unhandled_error(log: &Logger, error: Error) {
     log_error(log, &error);
@@ -16,10 +24,7 @@ pub fn unhandled_result<T>(log: &Logger, result: Result<T>) {
 }
 
 pub fn log_error(log: &Logger, error: &Error) {
-    error!(log, "unhandled error"; "error" => %error);
-    for cause in error.chain().skip(1) {
-        error!(log, "error caused by"; "error" => %cause);
-    }
+    error!(log, "unhandled error"; "error" => %error, "cause" => error_cause(error));
 }
 
 pub fn log_result<T>(log: &Logger, result: &Result<T>) {
@@ -101,4 +106,56 @@ pub fn state_result_from_result<T>(result: Result<T>) -> (TerminalState, Result<
         },
         result,
     )
+}
+
+pub async fn build_child_actors<'a, S, A, M, IM, B, BR>(
+    ctx: &BcContext<'_, S>, models: IM, builder: B,
+) -> HashMap<EntityId, Addr<A>>
+where
+    BR: Future<Output = Result<A>>,
+    B: Fn(&M) -> BR,
+    IM: Iterator<Item = &'a M>,
+    M: 'a + Entity + EntityStatic,
+    A: Actor,
+    S: BcActorCtrl,
+{
+    models
+        .map(|m| {
+            let m = m;
+            let builder = &builder;
+            async move {
+                let maybe_actor = builder(m).await;
+                match maybe_actor {
+                    Ok(actor) => match actor.start().await {
+                        Ok(started_actor) => Some((m.id(), started_actor)),
+                        Err(error) => {
+                            logged_error(
+                                ctx.log(),
+                                error.context(format!(
+                                    "failed to start {} actor '{}'",
+                                    M::entity_type_static(),
+                                    m.name()
+                                )),
+                            );
+                            None
+                        }
+                    },
+                    Err(error) => {
+                        logged_error(
+                            ctx.log(),
+                            error.context(format!(
+                                "failed to create {} actor '{}",
+                                M::entity_type_static(),
+                                m.name()
+                            )),
+                        );
+                        None
+                    }
+                }
+            }
+        })
+        .collect::<FuturesUnordered<_>>()
+        .filter_map(future::ready)
+        .collect::<HashMap<_, _>>()
+        .await
 }

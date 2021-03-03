@@ -259,6 +259,10 @@ impl BcHandler<PruneMessage> for ContainerActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for ContainerActor {
     async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
-        String::from("ok")
+        if self.active_receivers.is_empty() {
+            String::from("idle")
+        } else {
+            String::from("active")
+        }
     }
 }

@@ -4,12 +4,11 @@ use crate::{
     xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler},
 };
 use crate::{
-    actorbase::ScheduledMessage,
+    actorbase::{build_child_actors, ScheduledMessage},
     xactorext::{GetActorStatusMessage, GetChildActorMessage},
 };
 use anyhow::{Context as _, Result};
-use futures_util::stream::FuturesUnordered;
-use futures_util::stream::StreamExt;
+use futures_util::future;
 use libblkcapt::{
     core::BtrfsPool,
     model::Entity,
@@ -19,7 +18,7 @@ use libblkcapt::{
     },
 };
 use scrub::{PoolScrubActor, ScrubCompleteMessage};
-use slog::{error, info, o, Logger};
+use slog::{info, o, Logger};
 use std::{collections::HashMap, convert::TryInto, mem, sync::Arc};
 use xactor::{message, Actor, Addr};
 
@@ -75,64 +74,15 @@ impl BcActorCtrl for PoolActor {
             panic!("pool already started");
         };
 
-        self.datasets = pool
-            .model()
-            .datasets
-            .iter()
-            .map(|m| (m.id(), DatasetActor::new(ctx.address(), &pool, m.clone(), &ctx.log())))
-            .filter_map(|(id, actor)| match actor {
-                Ok(dataset_actor) => Some((id, dataset_actor)),
-                Err(error) => {
-                    error!(ctx.log(), "Failed to create dataset actor: {}", error);
-                    None
-                }
-            })
-            .map(|(id, actor)| async move {
-                let addr = actor.start().await?;
-                Result::<_>::Ok((id, addr))
-            })
-            .collect::<FuturesUnordered<_>>()
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .filter_map(|sa| match sa {
-                Ok(started_actor) => Some(started_actor),
-                Err(error) => {
-                    error!(ctx.log(), "Failed to start dataset actor: {}", error);
-                    None
-                }
-            })
-            .collect();
+        self.datasets = build_child_actors(&ctx, pool.model().datasets.iter(), |m| {
+            future::ready(DatasetActor::new(ctx.address(), &pool, m.clone(), &ctx.log()))
+        })
+        .await;
 
-        // How to do more code sharing with above???
-        self.containers = pool
-            .model()
-            .containers
-            .iter()
-            .map(|m| (m.id(), ContainerActor::new(ctx.address(), &pool, m.clone(), &ctx.log())))
-            .filter_map(|(id, actor)| match actor {
-                Ok(container_actor) => Some((id, container_actor)),
-                Err(error) => {
-                    error!(ctx.log(), "Failed to create container actor: {}", error);
-                    None
-                }
-            })
-            .map(|(id, actor)| async move {
-                let addr = actor.start().await?;
-                Result::<_>::Ok((id, addr))
-            })
-            .collect::<FuturesUnordered<_>>()
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .filter_map(|sa| match sa {
-                Ok(started_actor) => Some(started_actor),
-                Err(error) => {
-                    error!(ctx.log(), "Failed to start container actor: {}", error);
-                    None
-                }
-            })
-            .collect();
+        self.containers = build_child_actors(&ctx, pool.model().containers.iter(), |m| {
+            future::ready(ContainerActor::new(ctx.address(), &pool, m.clone(), &ctx.log()))
+        })
+        .await;
 
         if pool.model().scrubbing_state() == FeatureState::Enabled {
             self.scrub_schedule = pool.model().scrub_schedule.as_ref().map_or(Ok(None), |s| {
@@ -212,13 +162,13 @@ impl BcHandler<ScrubCompleteMessage> for PoolActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for PoolActor {
     async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
-        String::from("fine")
+        String::from("idle")
     }
 }
 
 mod scrub {
     use crate::{
-        actorbase::unhandled_result,
+        actorbase::{logged_result, unhandled_result},
         actors::observation::StartedObservation,
         tasks::{WorkerCompleteMessage, WorkerTask},
         xactorext::TerminalState,
@@ -292,7 +242,7 @@ mod scrub {
                     observation.cancelled();
                     TerminalState::Cancelled
                 }
-                State::Scrubbed(result) => result.into(),
+                State::Scrubbed(result) => logged_result(ctx.log(), result.context("scrubbing failed")).into(),
                 State::Faulted => TerminalState::Faulted,
             };
 

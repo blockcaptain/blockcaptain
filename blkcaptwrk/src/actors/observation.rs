@@ -14,7 +14,7 @@ use libblkcapt::{
         EntityId,
     },
 };
-use slog::{o, Logger};
+use slog::{error, o, Logger};
 use std::{borrow::Borrow, convert::TryFrom, convert::TryInto, fmt::Debug, future::Future};
 use xactor::{message, Addr, Broker, Service};
 
@@ -161,9 +161,7 @@ impl BcActorCtrl for HealthchecksActor {
     }
 
     async fn stopped(&mut self, ctx: BcContext<'_, Self>) -> TerminalState {
-        ctx.unsubscribe::<ObservableEventMessage>()
-            .await
-            .expect("can always unsubscribe");
+        let _ = ctx.unsubscribe::<ObservableEventMessage>().await;
 
         TerminalState::Succeeded
     }
@@ -183,24 +181,22 @@ impl BcHandler<ObservableEventMessage> for HealthchecksActor {
 #[async_trait::async_trait]
 impl BcHandler<HeartbeatMessage> for HealthchecksActor {
     async fn handle(&mut self, ctx: BcContext<'_, Self>, _msg: HeartbeatMessage) {
-        let result = self
-            .emitter
-            .emit(
-                self.heartbeat_config
-                    .as_ref()
-                    .expect("heartbeat config exists if heartbeat messages are scheduled")
-                    .healthcheck_id,
-                ObservableEventStage::Succeeded,
-            )
-            .await;
+        if let Some(config) = &self.heartbeat_config {
+            let result = self
+                .emitter
+                .emit(config.healthcheck_id, ObservableEventStage::Succeeded)
+                .await;
 
-        unhandled_result(ctx.log(), result);
+            unhandled_result(ctx.log(), result);
+        } else {
+            error!(ctx.log(), "heartbeat message received without config");
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for HealthchecksActor {
     async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
-        String::from("ok")
+        String::from("idle")
     }
 }

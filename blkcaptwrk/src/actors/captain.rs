@@ -1,7 +1,7 @@
 use super::{observation::HealthchecksActor, server::ServerActor, sync::SyncActor};
 use super::{pool::PoolActor, restic::ResticContainerActor, sync::SyncToContainer};
 use crate::{
-    actorbase::logged_error,
+    actorbase::build_child_actors,
     xactorext::{BcActor, BcActorCtrl, BcContext},
 };
 use crate::{
@@ -11,17 +11,13 @@ use crate::{
     },
 };
 use anyhow::{Context as AnyhowContext, Result};
-use futures_util::{
-    future,
-    stream::{FuturesUnordered, StreamExt},
-};
+use futures_util::future;
 use libblkcapt::{
     create_data_dir,
-    model::{entities::SnapshotSyncEntity, storage, AnyContainer, Entities, Entity, EntityId, EntityStatic},
+    model::{entities::SnapshotSyncEntity, storage, AnyContainer, Entities, Entity, EntityId},
 };
 use slog::{trace, Logger};
 use std::collections::HashMap;
-use std::future::Future;
 use xactor::{Actor, Addr};
 
 pub struct CaptainActor {
@@ -44,57 +40,6 @@ impl CaptainActor {
             },
             log,
         )
-    }
-
-    async fn build_actors<'a, A, M, IM, B, BR>(
-        ctx: &BcContext<'_, Self>, models: IM, builder: B,
-    ) -> HashMap<EntityId, Addr<A>>
-    where
-        BR: Future<Output = Result<A>>,
-        B: Fn(&M) -> BR,
-        IM: Iterator<Item = &'a M>,
-        M: 'a + Entity + EntityStatic,
-        A: Actor,
-    {
-        models
-            .map(|m| {
-                let m = m;
-                let builder = &builder;
-                async move {
-                    let maybe_actor = builder(m).await;
-                    match maybe_actor {
-                        Ok(actor) => match actor.start().await {
-                            Ok(started_actor) => Some((m.id(), started_actor)),
-                            Err(error) => {
-                                logged_error(
-                                    ctx.log(),
-                                    error.context(format!(
-                                        "failed to start {} actor '{}'",
-                                        M::entity_type_static(),
-                                        m.name()
-                                    )),
-                                );
-                                None
-                            }
-                        },
-                        Err(error) => {
-                            logged_error(
-                                ctx.log(),
-                                error.context(format!(
-                                    "failed to create {} actor '{}",
-                                    M::entity_type_static(),
-                                    m.name()
-                                )),
-                            );
-                            None
-                        }
-                    }
-                }
-            })
-            .collect::<FuturesUnordered<_>>()
-            .filter_map(future::ready)
-            .collect::<HashMap<_, _>>()
-            .await
     }
 
     async fn new_sync_actor(
@@ -155,7 +100,7 @@ impl BcActorCtrl for CaptainActor {
 
         if !entities.observers.is_empty() {
             trace!(ctx.log(), "building observer actors");
-            self.healthcheck_actors = CaptainActor::build_actors(&ctx, entities.observers.iter(), |m| {
+            self.healthcheck_actors = build_child_actors(&ctx, entities.observers.iter(), |m| {
                 future::ok(HealthchecksActor::new(m.clone(), ctx.log()))
             })
             .await;
@@ -163,7 +108,7 @@ impl BcActorCtrl for CaptainActor {
 
         if !entities.btrfs_pools.is_empty() {
             trace!(ctx.log(), "building pool actors");
-            self.pool_actors = CaptainActor::build_actors(&ctx, entities.btrfs_pools.iter(), |m| {
+            self.pool_actors = build_child_actors(&ctx, entities.btrfs_pools.iter(), |m| {
                 future::ok(PoolActor::new(m.clone(), ctx.log()))
             })
             .await;
@@ -171,7 +116,7 @@ impl BcActorCtrl for CaptainActor {
 
         if !entities.restic_containers.is_empty() {
             trace!(ctx.log(), "building restic actors");
-            self.restic_actors = CaptainActor::build_actors(&ctx, entities.restic_containers.iter(), |m| {
+            self.restic_actors = build_child_actors(&ctx, entities.restic_containers.iter(), |m| {
                 future::ok(ResticContainerActor::new(m.clone(), ctx.log()))
             })
             .await;
@@ -179,7 +124,7 @@ impl BcActorCtrl for CaptainActor {
 
         if !entities.snapshot_syncs.is_empty() {
             trace!(ctx.log(), "building sync actors");
-            self.sync_actors = CaptainActor::build_actors(&ctx, entities.snapshot_syncs.iter(), |m| {
+            self.sync_actors = build_child_actors(&ctx, entities.snapshot_syncs.iter(), |m| {
                 self.new_sync_actor(&entities, m.clone(), ctx.log())
             })
             .await;

@@ -19,6 +19,16 @@ pub fn create_data_dir() -> Result<PathBuf> {
     Ok(data_dir)
 }
 
+pub fn error_cause(error: &anyhow::Error) -> String {
+    use std::fmt::Write;
+
+    let mut cause_string = String::new();
+    for (index, cause) in error.chain().enumerate().skip(1) {
+        writeln!(&mut cause_string, "cause {}: {}", index, cause).expect("infallible");
+    }
+    cause_string
+}
+
 #[cfg(test)]
 mod tests {
     pub mod prelude {

@@ -665,10 +665,12 @@ impl ObservationEmitter {
             ObservableEventStage::Failed(error) => self.http_client.post(uri, error).await,
         };
 
-        result.map_err(|e| anyhow!(e)).and_then(|r| match r.status() {
-            http::status::StatusCode::OK => Ok(()),
-            e => Err(anyhow!(e)),
-        })
+        result
+            .context("healthcheck network request failed")
+            .and_then(|r| match r.status() {
+                http::status::StatusCode::OK => Ok(()),
+                e => Err(anyhow!(e).context("healthcheck server responded with unsuccessful status")),
+            })
     }
 }
 

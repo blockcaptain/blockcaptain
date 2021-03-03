@@ -310,7 +310,11 @@ impl BcHandler<LocalSenderParentFinishedMessage> for DatasetActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for DatasetActor {
     async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
-        String::from("ok")
+        if self.active_sends_holds.is_empty() {
+            String::from("idle")
+        } else {
+            String::from("active")
+        }
     }
 }
 
@@ -345,6 +349,6 @@ impl BcActorCtrl for DatasetHolderActor {
 #[async_trait::async_trait]
 impl BcHandler<GetActorStatusMessage> for DatasetHolderActor {
     async fn handle(&mut self, _ctx: BcContext<'_, Self>, _msg: GetActorStatusMessage) -> String {
-        String::from("ok")
+        String::from("holding")
     }
 }

@@ -372,7 +372,7 @@ impl Subvolume {
 }
 
 mod operations {
-    use crate::sys::process::exit_status_as_result;
+    use crate::sys::process::{exit_status_as_result, output_to_result};
     use anyhow::{anyhow, Context as AnyhowContext, Result};
     use std::process::Stdio;
     use tokio::{
@@ -388,7 +388,7 @@ mod operations {
     impl SnapshotSender {
         pub(super) fn new(mut command: Command) -> Self {
             command.stdout(Stdio::piped());
-            command.stderr(Stdio::null());
+            command.stderr(Stdio::piped());
             Self { command }
         }
 
@@ -412,8 +412,8 @@ mod operations {
                 .expect("child did not have a handle to stdout")
         }
 
-        pub async fn wait(mut self) -> Result<()> {
-            exit_status_as_result(self.process.wait().await?)
+        pub async fn wait(self) -> Result<()> {
+            output_to_result(self.process.wait_with_output().await)
         }
     }
 
@@ -431,8 +431,9 @@ mod operations {
 
         pub fn start(mut self) -> Result<StartedSnapshotReceiver> {
             self.command.spawn().map_err(|e| anyhow!(e)).map(|mut process| {
-                let name_reader_stdout = Self::spawn_name_reader(process.stdout.take().expect("only taken once"));
-                let name_reader_stderr = Self::spawn_name_reader(process.stderr.take().expect("only taken once"));
+                let name_reader_stdout =
+                    Self::spawn_name_reader(process.stdout.take().expect("only taken once"), false);
+                let name_reader_stderr = Self::spawn_name_reader(process.stderr.take().expect("only taken once"), true);
                 StartedSnapshotReceiver {
                     process,
                     name_reader_stdout,
@@ -441,7 +442,9 @@ mod operations {
             })
         }
 
-        fn spawn_name_reader(handle: impl AsyncRead + Unpin + Send + 'static) -> JoinHandle<Result<Option<String>>> {
+        fn spawn_name_reader(
+            handle: impl AsyncRead + Unpin + Send + 'static, keep_other: bool,
+        ) -> JoinHandle<Result<(Option<String>, String)>> {
             tokio::spawn(async move {
                 const PREFIX1: &str = "At subvol ";
                 const PREFIX1_LEN: usize = PREFIX1.len();
@@ -449,6 +452,7 @@ mod operations {
                 const PREFIX2_LEN: usize = PREFIX2.len();
                 let mut reader = BufReader::new(handle);
                 let mut buffer = String::new();
+                let mut other_buffer = String::new();
                 let mut result = None;
                 while reader.read_line(&mut buffer).await? > 0 {
                     if result.is_none() {
@@ -458,17 +462,20 @@ mod operations {
                             result = Some(buffer[PREFIX2_LEN..].trim().to_string());
                         }
                     }
+                    if keep_other {
+                        other_buffer.push_str(&buffer)
+                    }
                     buffer.clear();
                 }
-                Ok(result)
+                Ok((result, other_buffer))
             })
         }
     }
 
     pub struct StartedSnapshotReceiver {
         process: Child,
-        name_reader_stdout: JoinHandle<Result<Option<String>>>,
-        name_reader_stderr: JoinHandle<Result<Option<String>>>,
+        name_reader_stdout: JoinHandle<Result<(Option<String>, String)>>,
+        name_reader_stderr: JoinHandle<Result<(Option<String>, String)>>,
     }
 
     impl StartedSnapshotReceiver {
@@ -480,13 +487,25 @@ mod operations {
         }
 
         pub async fn wait(mut self) -> Result<String> {
-            exit_status_as_result(self.process.wait().await?)?;
             let stdout_result = self.name_reader_stdout.await.expect("task doesn't panic")?;
             let stderr_result = self.name_reader_stderr.await.expect("task doesn't panic")?;
-            let incoming_snapshot_name = stdout_result
-                .or(stderr_result)
-                .context("failed to find incoming subvol name")?;
-            Ok(incoming_snapshot_name)
+            match exit_status_as_result(self.process.wait().await?) {
+                Ok(_) => {
+                    let incoming_snapshot_name = stdout_result
+                        .0
+                        .or(stderr_result.0)
+                        .context("failed to find incoming subvol name")?;
+                    Ok(incoming_snapshot_name)
+                }
+                Err(e) => {
+                    let stderr = if stderr_result.1.is_empty() {
+                        String::from("unknown error in command. command produced no stderr output")
+                    } else {
+                        stderr_result.1
+                    };
+                    Err(anyhow!(stderr).context(e))
+                }
+            }
         }
     }
 
@@ -514,25 +533,23 @@ mod operations {
     }
 
     impl StartedPoolScrub {
-        pub async fn wait(mut self) -> Result<(), ScrubError> {
-            let exit_status = self.process.wait().await.map_err(|_| ScrubError::Unknown)?;
-            match exit_status.code() {
-                Some(code) => match code {
-                    0 => Ok(()),
-                    3 => Err(ScrubError::UncorrectableErrors),
-                    _ => Err(ScrubError::Unknown),
-                },
-                None => {
-                    slog_scope::error!("scrub process terminated");
-                    Err(ScrubError::Unknown)
+        pub async fn wait(self) -> Result<(), ScrubError> {
+            let result = self.process.wait_with_output().await;
+            if let Ok(output) = &result {
+                if let Some(code) = output.status.code() {
+                    if code == 3 {
+                        return Err(ScrubError::UncorrectableErrors);
+                    }
                 }
             }
+            output_to_result(result).map_err(ScrubError::Unknown)
         }
     }
+
     #[derive(thiserror::Error, Debug)]
     pub enum ScrubError {
         #[error("scrub process failed to complete")]
-        Unknown,
+        Unknown(anyhow::Error),
         #[error("uncorrectable errors were found during scrub")]
         UncorrectableErrors,
     }

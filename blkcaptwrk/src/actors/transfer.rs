@@ -9,7 +9,7 @@ use super::{
     observation::StartedObservation,
 };
 use crate::{
-    actorbase::unhandled_result,
+    actorbase::{log_result, unhandled_result},
     tasks::{WorkerCompleteMessage, WorkerTask},
     xactorext::{BcActor, BcActorCtrl, BcContext, BcHandler, GetActorStatusMessage, TerminalState},
 };
@@ -161,6 +161,9 @@ impl TransferActor {
             observation,
         ) = incoming
         {
+            log_result(ctx.log(), &transfer);
+            log_result(ctx.log(), &sender);
+            log_result(ctx.log(), &receiver);
             let result = transfer.and(sender).and(receiver);
             ctx.stop(None);
             observation.result(&result);

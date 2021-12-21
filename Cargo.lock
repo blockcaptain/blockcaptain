@@ -145,7 +145,7 @@ dependencies = [
  "cron",
  "derive_more",
  "futures-util",
- "heck",
+ "heck 0.4.0",
  "humantime",
  "libblkcapt",
  "libsystemd",
@@ -280,7 +280,7 @@ name = "clap_derive"
 version = "3.0.0-beta.2"
 source = "git+https://github.com/clap-rs/clap?rev=022f18278e67cccff53b73fd96ed45abcda028c3#022f18278e67cccff53b73fd96ed45abcda028c3"
 dependencies = [
- "heck",
+ "heck 0.3.3",
  "proc-macro-error",
  "proc-macro2",
  "quote",
@@ -765,6 +765,12 @@ checksum = "6d621efb26863f0e9924c6ac577e8275e5e6b77455db64ffa6c65c904e9e132c"
 dependencies = [
  "unicode-segmentation",
 ]
+
+[[package]]
+name = "heck"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2540771e65fc8cb83cd6e8a237f70c319bd5c29f78ed1084ba5d50eeac86f7f9"
 
 [[package]]
 name = "hermit-abi"
@@ -1875,7 +1881,7 @@ version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee8bc6b87a5112aeeab1f4a9f7ab634fe6cbefc4850006df31267f4cfb9e3149"
 dependencies = [
- "heck",
+ "heck 0.3.3",
  "proc-macro2",
  "quote",
  "syn",

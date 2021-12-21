@@ -1,5 +1,6 @@
 [workspace]
 members = ["blkcaptctl", "blkcaptwrk", "blkcaptapp", "libblkcapt"]
+#members = ["bc-core", "bc-daemon"]
 
 [profile.release]
 opt-level = 1

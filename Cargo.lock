@@ -294,7 +294,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52a488ea8a8e295a53c7a4514b78a2e54bcff33adf99c15aced97b2a2062d4f8"
 dependencies = [
  "crossterm",
- "strum",
+ "strum 0.20.0",
  "strum_macros",
 ]
 
@@ -1003,7 +1003,7 @@ dependencies = [
  "serial_test",
  "slog",
  "slog-scope",
- "strum",
+ "strum 0.24.0",
  "strum_macros",
  "thiserror",
  "tokio",
@@ -1868,6 +1868,12 @@ name = "strum"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7318c509b5ba57f18533982607f24070a55d353e90d4cae30c467cdb2ad5ac5c"
+
+[[package]]
+name = "strum"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e96acfc1b70604b8b2f1ffa4c57e59176c7dbb05d556c71ecd2f5498a1dee7f8"
 
 [[package]]
 name = "strum_macros"

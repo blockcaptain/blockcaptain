@@ -15,4 +15,4 @@ slog-scope = "4.3.0"
 slog-atomic = "3.0.0"
 
 [dev-dependencies]
-mockall = "0.9.0"
+mockall = "0.11.2"
